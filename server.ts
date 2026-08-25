@@ -2,8 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { createServer as createViteServer } from "vite";
-import { sqlDb } from "./src/db/index.ts";
+import { sqlDb, pool, ensureTablesExist } from "./src/db/index.ts";
 import { appData } from "./src/db/schema.ts";
 import { eq } from "drizzle-orm";
 
@@ -447,35 +446,53 @@ const DEFAULT_DB = {
 // Database state
 let db: any = { ...DEFAULT_DB };
 
-// Load Database from disk & Cloud SQL PostgreSQL
+let isDbLoaded = false;
+let dbLoadPromise: Promise<void> | null = null;
+
+// Load Database from disk & PostgreSQL (Neon / Cloud SQL)
 async function loadDb() {
   try {
-    // 1. Try reading from Cloud SQL PostgreSQL if available
     let loadedFromSql = false;
-    if (sqlDb) {
+    if (sqlDb && pool) {
       try {
+        await ensureTablesExist(pool);
         const rows = await sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
         if (rows && rows.length > 0 && rows[0].data) {
           db = rows[0].data;
           loadedFromSql = true;
-          console.log("Database successfully loaded from Cloud SQL PostgreSQL.");
+          console.log("Database successfully loaded from PostgreSQL.");
         }
       } catch (sqlErr) {
-        console.warn("Could not query Cloud SQL on load, falling back to local store:", sqlErr);
+        console.warn("Could not query PostgreSQL on load, falling back to local store:", sqlErr);
       }
     }
 
-    if (!loadedFromSql && fs.existsSync(DB_PATH)) {
-      const raw = fs.readFileSync(DB_PATH, "utf-8");
-      db = JSON.parse(raw);
-    } else if (!loadedFromSql && !fs.existsSync(DB_PATH)) {
-      db = JSON.parse(JSON.stringify(DEFAULT_DB));
+    if (!loadedFromSql) {
+      try {
+        if (fs.existsSync(DB_PATH)) {
+          const raw = fs.readFileSync(DB_PATH, "utf-8");
+          db = JSON.parse(raw);
+        } else {
+          db = JSON.parse(JSON.stringify(DEFAULT_DB));
+        }
+      } catch {
+        db = JSON.parse(JSON.stringify(DEFAULT_DB));
+      }
     }
 
-    // Ensure all major properties are present
-    if (!db.users) db.users = DEFAULT_DB.users;
-    if (!db.dropdowns) db.dropdowns = { ...DEFAULT_DB.dropdowns };
-    if (!db.dropdownLabels) db.dropdownLabels = { ...DEFAULT_DB.dropdownLabels };
+    // Ensure all major properties are present and safe
+    if (!db || typeof db !== 'object') {
+      db = JSON.parse(JSON.stringify(DEFAULT_DB));
+    }
+    if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
+      db.users = JSON.parse(JSON.stringify(DEFAULT_DB.users));
+    }
+    if (!db.dropdowns || typeof db.dropdowns !== 'object') {
+      db.dropdowns = JSON.parse(JSON.stringify(DEFAULT_DB.dropdowns));
+    }
+    if (!db.dropdownLabels || typeof db.dropdownLabels !== 'object') {
+      db.dropdownLabels = JSON.parse(JSON.stringify(DEFAULT_DB.dropdownLabels));
+    }
 
     // Ensure new core dropdown categories and missing options exist
     for (const key of Object.keys(DEFAULT_DB.dropdowns)) {
@@ -494,10 +511,10 @@ async function loadDb() {
         db.dropdownLabels[key] = (DEFAULT_DB.dropdownLabels as any)[key];
       }
     }
-    if (!db.requests) db.requests = DEFAULT_DB.requests;
-    if (!db.committees) db.committees = DEFAULT_DB.committees;
-    if (!db.auditLogs) db.auditLogs = DEFAULT_DB.auditLogs;
-    if (!db.emailLogs) db.emailLogs = DEFAULT_DB.emailLogs;
+    if (!db.requests || !Array.isArray(db.requests)) db.requests = DEFAULT_DB.requests;
+    if (!db.committees || !Array.isArray(db.committees)) db.committees = DEFAULT_DB.committees;
+    if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = DEFAULT_DB.auditLogs;
+    if (!db.emailLogs || !Array.isArray(db.emailLogs)) db.emailLogs = DEFAULT_DB.emailLogs;
     if (!db.smtpSettings) db.smtpSettings = DEFAULT_DB.smtpSettings;
     if (!db.formulas) {
       db.formulas = DEFAULT_DB.formulas;
@@ -509,7 +526,7 @@ async function loadDb() {
         db.formulas.customPaymentMethods = [];
       }
     }
-    if (!db.customFields) db.customFields = [];
+    if (!db.customFields || !Array.isArray(db.customFields)) db.customFields = [];
     if (!db.labelNames) {
       db.labelNames = DEFAULT_DB.labelNames;
     } else if (!db.labelNames.mobileNumber) {
@@ -541,21 +558,31 @@ async function loadDb() {
   }
 }
 
-// Debounce helper for Cloud SQL sync
+export async function ensureDbLoaded() {
+  if (isDbLoaded) return;
+  if (!dbLoadPromise) {
+    dbLoadPromise = (async () => {
+      await loadDb();
+      isDbLoaded = true;
+    })();
+  }
+  await dbLoadPromise;
+}
+
+// Debounce helper for PostgreSQL sync
 let syncTimeout: any = null;
 
-// Save Database to disk and Cloud SQL PostgreSQL
+// Save Database to disk and PostgreSQL
 function saveDb() {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   } catch (err) {
-    console.error("Error saving database file locally:", err);
+    // Expected on read-only environments like Vercel
   }
 
-  // Cloud SQL background persistence
+  // PostgreSQL background/serverless persistence
   if (sqlDb) {
-    if (syncTimeout) clearTimeout(syncTimeout);
-    syncTimeout = setTimeout(async () => {
+    const doSync = async () => {
       try {
         await sqlDb.insert(appData)
           .values({
@@ -571,31 +598,77 @@ function saveDb() {
             }
           });
       } catch (sqlSyncErr) {
-        console.error("Error persisting to Cloud SQL PostgreSQL:", sqlSyncErr);
+        console.error("Error persisting to PostgreSQL:", sqlSyncErr);
       }
-    }, 150);
+    };
+
+    if (process.env.VERCEL) {
+      doSync();
+    } else {
+      if (syncTimeout) clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(doSync, 150);
+    }
   }
 }
 
-loadDb();
+// Ensure loadDb starts immediately on startup
+ensureDbLoaded();
 
-// Helper to log audit actions
+// Helper to log audit actions safely
 function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
-  const newLog = {
-    id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-    username,
-    name,
-    role,
-    action,
-    details,
-    timestamp: new Date().toISOString(),
-    requestId
-  };
-  db.auditLogs.unshift(newLog);
-  saveDb();
+  try {
+    if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
+      db.auditLogs = [];
+    }
+    const newLog = {
+      id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
+      username,
+      name,
+      role,
+      action,
+      details,
+      timestamp: new Date().toISOString(),
+      requestId
+    };
+    db.auditLogs.unshift(newLog);
+    saveDb();
+  } catch (err) {
+    console.warn("Could not write audit log:", err);
+  }
 }
 
+// Ensure DB is loaded before all API routes
+app.use(async (req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    await ensureDbLoaded();
+  }
+  next();
+});
+
 // --- API Endpoints ---
+
+// Health & connection diagnostics
+app.get("/api/health", async (req, res) => {
+  let dbStatus = "in-memory / file";
+  let dbError = null;
+  if (sqlDb && pool) {
+    try {
+      await pool.query("SELECT 1");
+      dbStatus = "connected-postgres";
+    } catch (e: any) {
+      dbStatus = "error-postgres";
+      dbError = e?.message || String(e);
+    }
+  }
+  res.json({
+    status: "ok",
+    environment: process.env.VERCEL ? "vercel-serverless" : "standard-node",
+    database: dbStatus,
+    dbError,
+    usersCount: Array.isArray(db?.users) ? db.users.length : 0,
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Middleware to check authentication from a mock bearer/token header or custom simple token
 // For extreme ease of development, the token is simply `WD-TOKEN-<username>` which is robust and stateless!
@@ -609,7 +682,7 @@ function getAuthenticatedUser(req: express.Request) {
     return null;
   }
   const username = token.replace("WD-TOKEN-", "");
-  return db.users.find((u) => u.username === username) || null;
+  return db?.users?.find((u: any) => u.username === username) || null;
 }
 
 // Auth Middleware Wrapper
@@ -624,30 +697,41 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
 
 // 1. Auth & Password Routes
 app.post("/api/auth/login", (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
+  try {
+    const { username, password } = req.body || {};
+    if (!username || !password) {
+      return res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
+    }
+
+    if (!db || !Array.isArray(db.users)) {
+      db = { ...DEFAULT_DB, ...db };
+      if (!Array.isArray(db.users)) db.users = DEFAULT_DB.users;
+    }
+
+    const trimmedUser = String(username).trim().toLowerCase();
+    const user = db.users.find((u: any) => u.username && u.username.toLowerCase() === trimmedUser);
+    if (!user) {
+      return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+    }
+
+    const hashedInput = hashPassword(String(password));
+    if (user.password !== hashedInput) {
+      return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+    }
+
+    // Generate simple token
+    const token = `WD-TOKEN-${user.username}`;
+    
+    // Log login
+    logAudit(user.username, user.name, user.role, "تسجيل دخول", `قام المستخدم ${user.name} بتسجيل الدخول`);
+
+    // Return user without password
+    const { password: _, ...userSafe } = user;
+    res.json({ token, user: userSafe });
+  } catch (err: any) {
+    console.error("Login route error:", err);
+    res.status(500).json({ error: "حدث خطأ أثناء معالجة تسجيل الدخول: " + (err?.message || err) });
   }
-
-  const user = db.users.find((u) => u.username.toLowerCase() === username.toLowerCase());
-  if (!user) {
-    return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
-  }
-
-  const hashedInput = hashPassword(password);
-  if (user.password !== hashedInput) {
-    return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
-  }
-
-  // Generate simple token
-  const token = `WD-TOKEN-${user.username}`;
-  
-  // Log login
-  logAudit(user.username, user.name, user.role, "تسجيل دخول", `قام المستخدم ${user.name} بتسجيل الدخول`);
-
-  // Return user without password
-  const { password: _, ...userSafe } = user;
-  res.json({ token, user: userSafe });
 });
 
 app.get("/api/auth/me", requireAuth, (req, res) => {
@@ -2821,9 +2905,24 @@ app.get("/api/logs/audit", requireAuth, (req, res) => {
   res.json(db.auditLogs);
 });
 
+// --- Global Error Handler ---
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("Express API Error:", err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({
+    error: err?.message || "حدث خطأ غير متوقع في معالجة الطلب على الخادم",
+    details: process.env.NODE_ENV === "development" ? String(err) : undefined
+  });
+});
+
 // Vite Middleware for client loading in dev mode
 async function startServer() {
+  await ensureDbLoaded();
+
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

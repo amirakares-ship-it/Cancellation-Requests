@@ -8,24 +8,34 @@ declare global {
 }
 
 // Function to create or retrieve the connection pool.
-export const createPool = () => {
-  if (!global._postgresPool) {
-    const connectionString =
-      process.env.POSTGRES_URL ||
-      process.env.DATABASE_URL ||
-      process.env.POSTGRES_PRISMA_URL ||
-      process.env.POSTGRES_URL_NON_POOLING ||
-      process.env.SQL_URL;
+export const createPool = (): Pool | null => {
+  if (global._postgresPool) {
+    return global._postgresPool;
+  }
 
-    if (connectionString) {
+  const connectionString =
+    process.env.POSTGRES_URL ||
+    process.env.DATABASE_URL ||
+    process.env.POSTGRES_PRISMA_URL ||
+    process.env.POSTGRES_URL_NON_POOLING ||
+    process.env.SQL_URL;
+
+  if (connectionString) {
+    try {
       const isLocalhost = connectionString.includes('localhost') || connectionString.includes('127.0.0.1');
       global._postgresPool = new Pool({
         connectionString,
         ssl: isLocalhost ? false : { rejectUnauthorized: false },
-        max: process.env.VERCEL ? 3 : 10,
-        connectionTimeoutMillis: 15000,
+        max: process.env.VERCEL ? 2 : 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
       });
-    } else if (process.env.SQL_HOST || process.env.POSTGRES_HOST) {
+    } catch (poolErr) {
+      console.error('Failed to initialize pg.Pool with connectionString:', poolErr);
+      return null;
+    }
+  } else if (process.env.SQL_HOST || process.env.POSTGRES_HOST) {
+    try {
       const host = process.env.SQL_HOST || process.env.POSTGRES_HOST;
       const isLocalhost = host === 'localhost' || host === '127.0.0.1';
       const useSsl = process.env.SQL_SSL === 'true' || process.env.POSTGRES_SSL === 'true' || (!isLocalhost && !process.env.SQL_HOST);
@@ -37,29 +47,29 @@ export const createPool = () => {
         database: process.env.SQL_DB_NAME || process.env.POSTGRES_DATABASE,
         port: Number(process.env.SQL_PORT || process.env.POSTGRES_PORT || 5432),
         ssl: useSsl ? { rejectUnauthorized: false } : false,
-        max: process.env.VERCEL ? 3 : 10,
-        connectionTimeoutMillis: 15000,
+        max: process.env.VERCEL ? 2 : 10,
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 10000,
       });
-    }
-
-    if (global._postgresPool) {
-      // Prevent unhandled pool-level errors from crashing the application
-      global._postgresPool.on('error', (err) => {
-        console.error('Unexpected error on idle SQL pool client:', err);
-      });
-
-      // Ensure tables exist on boot
-      ensureTablesExist(global._postgresPool).catch(err => {
-        console.warn('Could not auto-ensure tables:', err?.message || err);
-      });
+    } catch (poolErr) {
+      console.error('Failed to initialize pg.Pool with host config:', poolErr);
+      return null;
     }
   }
-  return global._postgresPool;
+
+  if (global._postgresPool) {
+    // Prevent unhandled pool-level errors from crashing the application
+    global._postgresPool.on('error', (err) => {
+      console.warn('PostgreSQL idle client error (handled):', err?.message || err);
+    });
+  }
+
+  return global._postgresPool || null;
 };
 
-async function ensureTablesExist(pool: Pool) {
+export async function ensureTablesExist(p: Pool) {
   try {
-    await pool.query(`
+    await p.query(`
       CREATE TABLE IF NOT EXISTS app_data (
         key text PRIMARY KEY,
         data jsonb NOT NULL,
@@ -76,13 +86,13 @@ async function ensureTablesExist(pool: Pool) {
         created_at timestamp DEFAULT now() NOT NULL
       );
     `);
-  } catch (err) {
-    // Ignore if table already exists or permission issues
+  } catch (err: any) {
+    console.warn('ensureTablesExist notice:', err?.message || err);
   }
 }
 
 // Create or retrieve the pool instance.
-const pool = createPool();
+export const pool = createPool();
 
 // Initialize Drizzle with the pool and schema.
 export const sqlDb = pool ? drizzle(pool, { schema }) : null;
