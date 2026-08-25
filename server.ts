@@ -2,13 +2,37 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { sqlDb, pool, ensureTablesExist } from "./src/db/index.ts";
-import { appData } from "./src/db/schema.ts";
+import { sqlDb, pool, ensureTablesExist } from "./src/db/index";
+import { appData } from "./src/db/schema";
 import { eq } from "drizzle-orm";
 
 // Initialize express app
 const app = express();
 const PORT = 3000;
+
+// CORS and Preflight handler for Vercel / External Clients
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
+  next();
+});
+
+// URL Normalization for Vercel Serverless rewrites
+app.use((req, res, next) => {
+  if (req.url && !req.url.startsWith("/api") && !req.url.startsWith("/api/")) {
+    const orig = req.originalUrl || "";
+    if (orig.startsWith("/api")) {
+      req.url = orig;
+    } else {
+      req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+    }
+  }
+  next();
+});
 
 // Setup JSON parsing with high limit for signature uploads / bulk imports
 app.use(express.json({ limit: "50mb" }));
@@ -456,14 +480,18 @@ async function loadDb() {
     if (sqlDb && pool) {
       try {
         await ensureTablesExist(pool);
-        const rows = await sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
+        const queryPromise = sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
+        const timeoutPromise = new Promise<any[]>((_, reject) =>
+          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 3500)
+        );
+        const rows = await Promise.race([queryPromise, timeoutPromise]);
         if (rows && rows.length > 0 && rows[0].data) {
           db = rows[0].data;
           loadedFromSql = true;
           console.log("Database successfully loaded from PostgreSQL.");
         }
       } catch (sqlErr) {
-        console.warn("Could not query PostgreSQL on load, falling back to local store:", sqlErr);
+        console.warn("Could not query PostgreSQL on load, falling back to safe local store:", sqlErr);
       }
     }
 

@@ -40,20 +40,24 @@ export default function Login({ onLoginSuccess }: LoginProps) {
       let data: any = {};
       const contentType = res.headers.get('content-type') || '';
       if (contentType.includes('application/json')) {
-        data = await res.json();
+        try {
+          data = await res.json();
+        } catch {
+          data = {};
+        }
       } else {
         const text = await res.text();
         try {
           data = JSON.parse(text);
         } catch {
           if (!res.ok) {
-            throw new Error(`تعذر الاتصال بـ API الخادم (رمز الخطأ ${res.status}). يرجى التأكد من ربط Vercel Serverless Functions أو التحقق من اتصال قاعدة البيانات.`);
+            throw new Error(text && text.length < 200 ? text : `تعذر الاتصال بـ API الخادم (رمز الخطأ ${res.status}).`);
           }
         }
       }
 
       if (!res.ok) {
-        throw new Error(data.error || 'فشل تسجيل الدخول: اسم المستخدم أو كلمة المرور غير صحيحة');
+        throw new Error(data.error || data.message || `فشل تسجيل الدخول (رمز الخطأ ${res.status}): اسم المستخدم أو كلمة المرور غير صحيحة أو تعذر الوصول لقاعدة البيانات`);
       }
 
       // Check if first login force reset is required (default password 123)
