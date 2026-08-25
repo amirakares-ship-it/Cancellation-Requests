@@ -1,0 +1,179 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Cairo:wght@400;600;700;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Print CSS Media Rules */
+@media print {
+  /* Page setup for A4 printing - zero margin suppresses browser default header/footer text */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Hide all non-printable UI elements, browser chrome, and navigation */
+  header,
+  aside,
+  footer,
+  nav,
+  button,
+  input,
+  select,
+  .no-print,
+  .no-print *,
+  .memo-toolbar,
+  .row-controls,
+  .col-resizer,
+  .selected-line,
+  .custom-table-scrollbar::-webkit-scrollbar {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+    width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+  }
+
+  /* Reset layout constraints for paper print */
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    font-family: 'Cairo', 'Inter', 'Calibri', Arial, sans-serif !important;
+    direction: rtl !important;
+  }
+
+  #root, #root > div, main, main > div {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    box-shadow: none !important;
+    border: none !important;
+    display: block !important;
+  }
+
+  /* Ensure the printable A4 memo sheet fits 100% perfectly on A4 without scaling */
+  .sheet-companies,
+  #sheet {
+    border: 3px solid #000000 !important;
+    box-shadow: none !important;
+    margin: 8mm auto !important;
+    padding: 6mm 10mm 4mm 10mm !important;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    min-width: 190mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+    position: relative !important;
+    overflow: visible !important;
+  }
+
+  /* Ensure the printable A4 hub canvas fits perfectly */
+  .print-canvas,
+  #print-hub-canvas-sheet {
+    border: 2px solid #000000 !important;
+    box-shadow: none !important;
+    margin: 8mm auto !important;
+    padding: 8mm 12mm !important;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    min-width: 190mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: flex !important;
+    overflow: visible !important;
+  }
+
+  /* Printable Settlement Statement */
+  .settlement-print-backdrop {
+    position: static !important;
+    inset: auto !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    z-index: auto !important;
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .settlement-print-card,
+  #settlement-statement-print-card {
+    border: 1.5px solid #000000 !important;
+    box-shadow: none !important;
+    margin: 8mm auto !important;
+    padding: 8mm 10mm !important;
+    width: 190mm !important;
+    max-width: 190mm !important;
+    min-width: 190mm !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: block !important;
+  }
+
+  /* Form and table spacing in print */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+
+  .print-canvas table th,
+  .print-canvas table td {
+    border: 1px solid #000000 !important;
+    padding: 6px !important;
+  }
+}
+
+/* Custom Horizontal Table Scrollbar */
+.custom-table-scrollbar::-webkit-scrollbar {
+  height: 8px;
+}
+.custom-table-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+.custom-table-scrollbar::-webkit-scrollbar-thumb {
+  background: #f59e0b;
+  border-radius: 4px;
+}
+.custom-table-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #d97706;
+}

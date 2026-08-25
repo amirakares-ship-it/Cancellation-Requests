@@ -1,0 +1,6 @@
+{
+  "name": "Wadi Degla Cancellation System",
+  "description": "System to manage, review, and approve membership cancellations for Wadi Degla Clubs branches, with dynamic workflow approvals, committee tracking, memo generators, and system reconciliation.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
