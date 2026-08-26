@@ -1369,4 +1369,51 @@ export function printElement(element: HTMLElement | null | string, documentTitle
   }, 1000);
 }
 
+/**
+ * Safely extracts and determines the actual rejection reason for a request.
+ * Prevents positive/approval remarks (e.g. "طلب مستوفي الشروط ومطابق")
+ * from ever being falsely displayed as a rejection reason.
+ */
+export function getRejectionReason(r: any): string {
+  if (!r) return '';
+
+  // 1. Explicit rejection reason fields
+  if (r.rejectionReason && typeof r.rejectionReason === 'string' && r.rejectionReason.trim()) {
+    return r.rejectionReason.trim();
+  }
+  if (r.rejectionNote && typeof r.rejectionNote === 'string' && r.rejectionNote.trim()) {
+    return r.rejectionNote.trim();
+  }
+
+  // 2. First Manager decision comments
+  if (r.firstManagerApproved === false && r.firstManagerComments && typeof r.firstManagerComments === 'string' && r.firstManagerComments.trim()) {
+    return r.firstManagerComments.trim();
+  }
+
+  // 3. Sector Manager decision comments
+  if (r.sectorManagerApproved === false && r.sectorManagerComments && typeof r.sectorManagerComments === 'string' && r.sectorManagerComments.trim()) {
+    return r.sectorManagerComments.trim();
+  }
+
+  // 4. Any direct comments from managers
+  if (r.firstManagerComments && typeof r.firstManagerComments === 'string' && r.firstManagerComments.trim()) {
+    return r.firstManagerComments.trim();
+  }
+  if (r.sectorManagerComments && typeof r.sectorManagerComments === 'string' && r.sectorManagerComments.trim()) {
+    return r.sectorManagerComments.trim();
+  }
+
+  // 5. Admin note ONLY if it is NOT an approval/positive compliance remark
+  if (r.adminNote && typeof r.adminNote === 'string' && r.adminNote.trim()) {
+    const note = r.adminNote.trim();
+    const isApprovalNote = /(مستوف|مطابق|مقبول|تمت الموافقة|صالح|معتمد|جاهز للاعتماد|لا مانع|موافق|استيفاء|تمت المراجعة)/i.test(note);
+    if (!isApprovalNote) {
+      return note;
+    }
+  }
+
+  return '';
+}
+
+
 

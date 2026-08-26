@@ -4,7 +4,7 @@ import {
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip
 } from 'lucide-react';
 
 // Subcomponents
@@ -22,6 +22,7 @@ import FormulasManager from './components/FormulasManager';
 import DropdownsManager from './components/DropdownsManager';
 import CancellationStatusManager from './components/CancellationStatusManager';
 import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
+import AttachmentsArchive from './components/AttachmentsArchive';
 import { ConfirmModal } from './components/ConfirmModal';
 import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
 import SettlementStatementModal from './components/SettlementStatementModal';
@@ -30,7 +31,7 @@ import FirstManagerHub from './components/FirstManagerHub';
 import SendToFirstManagerModal from './components/SendToFirstManagerModal';
 
 import { CustomField } from './types';
-import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom } from './utils';
+import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason } from './utils';
 
 export default function App() {
   // Authentication state
@@ -99,7 +100,7 @@ export default function App() {
   });
 
   // UI Control states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments'>('dashboard');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -154,6 +155,11 @@ export default function App() {
   // First Manager pending count for badge & notifications
   const firstManagerPendingCount = useMemo(() => {
     return requests.filter(r => r.approvalSentToFirstManager && (r.firstManagerApproved === null || r.firstManagerApproved === undefined)).length;
+  }, [requests]);
+
+  // First Manager decided count (accepted or rejected)
+  const firstManagerDecidedCount = useMemo(() => {
+    return requests.filter(r => r.approvalSentToFirstManager && (r.firstManagerApproved === true || r.firstManagerApproved === false)).length;
   }, [requests]);
 
   // Dashboard filtering states
@@ -315,7 +321,7 @@ export default function App() {
       setDashFilters(f => ({ ...f, club: user.club || '' }));
     }
     if (user.role === 'first_manager') {
-      setActiveTab('first_manager_hub');
+      setActiveTab('first_manager_pending');
     }
     if (user.role === 'admin') {
       setShowLoginCommitteePrompt(true);
@@ -1133,7 +1139,7 @@ export default function App() {
         'سبب الإلغاء': r.cancellationReason || r.reasons || '',
         'السبب بالتفصيل': r.cancellationReasonDetail || r.detailedReason || '',
         'قرار اللجنة': r.result === 'Accepted' ? 'موافق' : r.result === 'Rejected' ? 'مرفوض' : 'قيد النظر',
-        'سبب الرفض': r.adminNote || r.firstManagerComments || r.sectorManagerComments || '—',
+        'سبب الرفض': (r.result === 'Rejected' || r.status === 'Rejected' || r.firstManagerApproved === false || r.sectorManagerApproved === false) ? (getRejectionReason(r) || '—') : '—',
         'رقم اللجنة': formatCommitteeWithYear(r.committeeNo, r.committeeYear, r.approvalDate || r.requestDate || r.createdAt),
         'تاريخ موافقة اللجنة': r.approvalDate ? formatDateCustom(r.approvalDate) : '—',
         'قيمة الاشتراك': r.subscriptionValue ?? 0,
@@ -1207,9 +1213,9 @@ export default function App() {
     <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-800 overflow-hidden text-right" dir="rtl">
       
       {/* Sidebar Navigation */}
-      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-68'} bg-neutral-950 text-white flex flex-col shrink-0 no-print transition-all duration-300 ease-in-out border-l border-neutral-900 shadow-xl z-30`} dir="rtl">
+      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-68'} bg-slate-900 text-white flex flex-col shrink-0 no-print transition-all duration-300 ease-in-out border-l border-slate-800 shadow-xl z-30`} dir="rtl">
         {/* Right Sidebar Header */}
-        <div className={`p-4 flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-3' : 'justify-between'} border-b border-neutral-900/80 bg-neutral-950/90 backdrop-blur-xs`}>
+        <div className={`p-4 flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-3' : 'justify-between'} border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-xs`}>
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 bg-linear-to-br from-amber-400 to-amber-500 rounded-xl flex items-center justify-center font-black text-neutral-950 shrink-0 shadow-md ring-2 ring-amber-400/20">
               WDC
@@ -1226,7 +1232,7 @@ export default function App() {
           </div>
           <button
             onClick={toggleSidebar}
-            className="p-2 text-neutral-400 hover:text-amber-400 hover:bg-neutral-900 rounded-xl border border-neutral-900 hover:border-neutral-800 transition-all cursor-pointer shadow-2xs"
+            className="p-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-xl border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-2xs"
             title={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طّي القائمة الجانبية"}
           >
             {isSidebarCollapsed ? <PanelRightOpen className="w-4 h-4 text-amber-400" /> : <PanelRightClose className="w-4 h-4" />}
@@ -1250,7 +1256,7 @@ export default function App() {
             {!isSidebarCollapsed && <span>لوحة المراقبة والإحصائيات</span>}
           </button>
 
-          {/* 2. متابعة طلبات الإلغاء */}
+          {/* 2. متابعة طلبات الإلغاء (متاح لجميع المستخدمين بما في ذلك المدير الأول للاطلاع على كافة الطلبات لجميع الأندية) */}
           <button
             onClick={() => { setActiveTab('requests'); setRequestViewMode('list'); }}
             title="متابعة طلبات الإلغاء"
@@ -1262,39 +1268,79 @@ export default function App() {
           >
             <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <Layers className={`w-4 h-4 shrink-0 ${activeTab === 'requests' && requestViewMode !== 'create' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
-              {!isSidebarCollapsed && <span>متابعة طلبات الإلغاء</span>}
+              {!isSidebarCollapsed && (
+                <span>متابعة طلبات الإلغاء</span>
+              )}
             </div>
-            {currentUser.role === 'first_manager' ? (
-              requests.filter(r => r.approvalSentToFirstManager).length > 0 && (
-                <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
-                  activeTab === 'requests' && requestViewMode !== 'create' ? 'bg-neutral-950 text-amber-400' : 'bg-amber-400 text-neutral-950'
-                }`}>
-                  {requests.filter(r => r.approvalSentToFirstManager).length}
-                </span>
-              )
-            ) : (
-              requests.length > 0 && (
-                <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
-                  activeTab === 'requests' && requestViewMode !== 'create' ? 'bg-neutral-950 text-amber-400' : 'bg-amber-400 text-neutral-950'
-                }`}>
-                  {requests.length}
-                </span>
-              )
+            {requests.length > 0 && (
+              <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
+                activeTab === 'requests' && requestViewMode !== 'create' ? 'bg-neutral-950 text-amber-400' : 'bg-neutral-800 text-amber-400'
+              }`}>
+                {requests.length}
+              </span>
             )}
           </button>
 
-          {/* 3. طلب إلغاء جديد */}
+          {/* 3. طلبات تم اعتمادها (خاص بالمدير الأول: سجل الطلبات التي اتخذ فيها قرار قبول أو رفض) */}
+          {currentUser.role === 'first_manager' && (
+            <button
+              onClick={() => { setActiveTab('first_manager_decided'); setRequestViewMode('list'); }}
+              title="طلبات تم اعتمادها"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'first_manager_decided' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <FileCheck className={`w-4 h-4 shrink-0 ${activeTab === 'first_manager_decided' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>طلبات تم اعتمادها</span>}
+              </div>
+              {firstManagerDecidedCount > 0 && (
+                <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
+                  activeTab === 'first_manager_decided' ? 'bg-neutral-950 text-amber-400' : 'bg-neutral-800 text-emerald-400'
+                }`} title="إجمالي الطلبات المعتمدة والمرفوضة">
+                  {firstManagerDecidedCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* 4. مراجعة واتخاذ قرار (خاص بالمدير الأول: الطلبات المحالة وفي انتظار اتخاذ القرار) */}
+          {currentUser.role === 'first_manager' && (
+            <button
+              onClick={() => { setActiveTab('first_manager_pending'); setRequestViewMode('list'); }}
+              title="مراجعة واتخاذ قرار"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'first_manager_pending' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <ShieldCheck className={`w-4 h-4 shrink-0 ${activeTab === 'first_manager_pending' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>مراجعة واتخاذ قرار</span>}
+              </div>
+              {firstManagerPendingCount > 0 && (
+                <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات بانتظار قرار المدير الأول">
+                  {firstManagerPendingCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* طلب إلغاء جديد (متاح لجميع المستخدمين والمدير الأول) */}
           <button
             onClick={() => { setActiveTab('requests'); setRequestViewMode('create'); }}
-            title="طلب إلغاء جديد"
+            title="تسجيل طلب إلغاء جديد"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'requests' && requestViewMode === 'create' 
                 ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
-                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+                : 'text-neutral-300 hover:bg-slate-800 hover:text-amber-400'
             }`}
           >
             <CheckCircle className={`w-4 h-4 shrink-0 ${activeTab === 'requests' && requestViewMode === 'create' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
-            {!isSidebarCollapsed && <span>طلب إلغاء جديد</span>}
+            {!isSidebarCollapsed && <span>تسجيل طلب إلغاء جديد</span>}
           </button>
 
           {/* 4. إيصال المقدم */}
@@ -1312,6 +1358,20 @@ export default function App() {
               {!isSidebarCollapsed && <span>إيصال المقدم</span>}
             </button>
           )}
+
+          {/* 4.5 أرشيف المستندات والمرفقات */}
+          <button
+            onClick={() => { setActiveTab('attachments'); }}
+            title="أرشيف المستندات والمرفقات"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'attachments' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+            }`}
+          >
+            <Paperclip className={`w-4 h-4 shrink-0 ${activeTab === 'attachments' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+            {!isSidebarCollapsed && <span>أرشيف</span>}
+          </button>
 
           {/* 5. مديونية الشركات */}
           {currentUser.role === 'admin' && (
@@ -1361,8 +1421,8 @@ export default function App() {
             </button>
           )}
 
-          {/* 8. متابعة مهام واعتمادات */}
-          {(currentUser.role === 'first_manager' || currentUser.role === 'admin') && (
+          {/* 8. متابعة مهام واعتمادات (Admin view) */}
+          {currentUser.role === 'admin' && (
             <button
               onClick={() => { setActiveTab('first_manager_hub'); setRequestViewMode('list'); }}
               title="متابعة مهام واعتمادات"
@@ -1462,7 +1522,7 @@ export default function App() {
         </nav>
         
         {/* User Info & Footer */}
-        <div className="p-3.5 border-t border-neutral-900 bg-neutral-950/80">
+        <div className="p-3.5 border-t border-slate-800 bg-slate-900/90">
           <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'}`}>
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-xl bg-amber-400 overflow-hidden border border-amber-300/30 flex items-center justify-center font-black text-[11px] text-neutral-950 shrink-0 shadow-2xs">
@@ -1482,7 +1542,7 @@ export default function App() {
             </div>
             <button
               onClick={handleLogout}
-              className="p-2 text-neutral-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-xl transition-all cursor-pointer"
+              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-xl transition-all cursor-pointer"
               title="تسجيل الخروج"
             >
               <LogOut className="h-4 w-4" />
@@ -1626,9 +1686,40 @@ export default function App() {
           </>
         )}
 
-        {/* Tab: First Manager Approvals & Tasks Hub */}
+        {/* Tab: First Manager Decided Requests (طلبات تم اعتمادها) */}
+        {activeTab === 'first_manager_decided' && (
+          <FirstManagerHub
+            mode="decided"
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            labelNames={labelNames}
+            onRefresh={fetchAllData}
+            onExportExcel={handleExportExcelReport}
+            onFirstManagerDecision={handleFirstManagerDecision}
+            onAttachPdf={handleAttachFirstManagerPdf}
+          />
+        )}
+
+        {/* Tab: First Manager Pending Review & Decision (مراجعة واتخاذ قرار) */}
+        {activeTab === 'first_manager_pending' && (
+          <FirstManagerHub
+            mode="pending"
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            labelNames={labelNames}
+            onRefresh={fetchAllData}
+            onExportExcel={handleExportExcelReport}
+            onFirstManagerDecision={handleFirstManagerDecision}
+            onAttachPdf={handleAttachFirstManagerPdf}
+          />
+        )}
+
+        {/* Tab: First Manager Approvals & Tasks Hub (All view / Admin fallback) */}
         {activeTab === 'first_manager_hub' && (
           <FirstManagerHub
+            mode="all"
             requests={requests}
             user={currentUser}
             dropdowns={dropdowns}
@@ -1652,6 +1743,14 @@ export default function App() {
             }}
             labelNames={labelNames}
             customFields={customFields}
+          />
+        )}
+
+        {/* Tab: Attachments & Documents Search Archive (All Users & All Clubs) */}
+        {activeTab === 'attachments' && (
+          <AttachmentsArchive 
+            user={currentUser}
+            onRefreshRequests={fetchAllData}
           />
         )}
 

@@ -2,13 +2,27 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import { createServer as createViteServer } from "vite";
 import { sqlDb, pool, ensureTablesExist } from "./src/db/index";
 import { appData } from "./src/db/schema";
 import { eq } from "drizzle-orm";
 
+// Safety handlers to prevent server crashes from unhandled network errors (e.g. unreachable external DB)
+process.on("uncaughtException", (err) => {
+  console.warn("Uncaught server exception (retained):", err?.message || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.warn("Unhandled promise rejection (retained):", (reason as any)?.message || reason);
+});
+
 // Initialize express app
 const app = express();
 const PORT = 3000;
+
+// Health check endpoint for ingress & container health monitoring
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
 
 // CORS and Preflight handler for Vercel / External Clients
 app.use((req, res, next) => {
@@ -22,21 +36,18 @@ app.use((req, res, next) => {
 });
 
 // URL Normalization for Vercel Serverless rewrites
-app.use((req, res, next) => {
-  if (req.url && !req.url.startsWith("/api") && !req.url.startsWith("/api/")) {
-    const orig = req.originalUrl || "";
-    if (orig.startsWith("/api")) {
-      req.url = orig;
-    } else {
-      req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+if (process.env.VERCEL) {
+  app.use((req, res, next) => {
+    if (req.originalUrl && req.originalUrl.startsWith("/api") && !req.url.startsWith("/api")) {
+      req.url = req.originalUrl;
     }
-  }
-  next();
-});
+    next();
+  });
+}
 
-// Setup JSON parsing with high limit for signature uploads / bulk imports
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+// Setup JSON parsing with high limit for signature uploads / bulk imports / document attachments
+app.use(express.json({ limit: "100mb" }));
+app.use(express.urlencoded({ limit: "100mb", extended: true }));
 
 // Database File Path
 const DB_PATH = path.join(process.cwd(), "db_store.json");
@@ -481,8 +492,9 @@ async function loadDb() {
       try {
         await ensureTablesExist(pool);
         const queryPromise = sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
+        queryPromise.catch(() => {});
         const timeoutPromise = new Promise<any[]>((_, reject) =>
-          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 3500)
+          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 2500)
         );
         const rows = await Promise.race([queryPromise, timeoutPromise]);
         if (rows && rows.length > 0 && rows[0].data) {
@@ -580,7 +592,6 @@ async function loadDb() {
     if (Array.isArray(db.requests)) {
       db.requests = db.requests.map((r: any) => calculateRequestFields(r, db.formulas));
     }
-    saveDb();
   } catch (err) {
     console.error("Error reading database, using fallback state:", err);
   }
@@ -626,15 +637,17 @@ function saveDb() {
             }
           });
       } catch (sqlSyncErr) {
-        console.error("Error persisting to PostgreSQL:", sqlSyncErr);
+        // Silently capture SQL sync errors so the dev server never crashes if external DB is unreachable
       }
     };
 
     if (process.env.VERCEL) {
-      doSync();
+      doSync().catch(() => {});
     } else {
       if (syncTimeout) clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(doSync, 150);
+      syncTimeout = setTimeout(() => {
+        doSync().catch(() => {});
+      }, 300);
     }
   }
 }
@@ -2401,6 +2414,202 @@ app.delete("/api/requests/:id", requireAuth, (req, res) => {
   res.json({ success: true, requests: db.requests });
 });
 
+// --- Attachments & Documents Archive Management Endpoints ---
+
+// 1. Get all attachments across all cancellation requests (visible to all users across all branches)
+app.get("/api/attachments/all", requireAuth, (req, res) => {
+  try {
+    const allAttachments: any[] = [];
+    
+    (db.requests || []).forEach((r: any) => {
+      const isLocked = Boolean(r.reviewed);
+      const reqAttachments = Array.isArray(r.attachments) ? r.attachments : [];
+      
+      reqAttachments.forEach((att: any) => {
+        allAttachments.push({
+          ...att,
+          isLocked,
+          requestId: r.id,
+          membershipNumber: r.membershipNumber || "",
+          memberName: r.memberName || "",
+          loanUnderName: r.loanUnderName || "",
+          nationalId: r.nationalId || "",
+          externalId: r.externalId || "",
+          mobileNumber: r.mobileNumber || "",
+          club: r.club || "",
+          requestDate: r.requestDate || "",
+          subscriptionDate: r.subscriptionDate || "",
+          membershipType: r.membershipType || "Regular",
+          paymentMethod: r.paymentMethod || "",
+          status: r.status || "Pending",
+          result: r.result || "Pending",
+          reviewed: Boolean(r.reviewed),
+          receiptReceived: Boolean(r.receiptReceived),
+          refundAmount: r.refundAmount ?? 0,
+          cancellationReason: r.cancellationReason || "",
+          cancellationReasonDetail: r.cancellationReasonDetail || "",
+          salesPerson: r.salesPerson || ""
+        });
+      });
+
+      // If there's an official First Manager review PDF attached, include it in the global archive
+      if (r.firstManagerPdfUrl) {
+        allAttachments.push({
+          id: `fm-pdf-${r.id}`,
+          fileName: r.firstManagerPdfName || "مستندات_الطلب_المعتمدة.pdf",
+          fileType: "application/pdf",
+          fileSize: r.firstManagerPdfSize || 0,
+          fileData: r.firstManagerPdfUrl,
+          uploadedAt: r.firstManagerSentAt || r.requestDate || new Date().toISOString(),
+          uploadedBy: r.firstManagerSentBy || "admin",
+          uploaderName: r.firstManagerSentBy || "أدمن النظام",
+          uploaderRole: "admin",
+          uploaderClub: "المركز الرئيسي",
+          category: "ملف مراجعة الإدارة المالية",
+          notes: r.firstManagerSendNotes || "ملف الـ PDF المعتمد المرفق للمدير الأول",
+          isLocked,
+          requestId: r.id,
+          membershipNumber: r.membershipNumber || "",
+          memberName: r.memberName || "",
+          loanUnderName: r.loanUnderName || "",
+          nationalId: r.nationalId || "",
+          externalId: r.externalId || "",
+          mobileNumber: r.mobileNumber || "",
+          club: r.club || "",
+          requestDate: r.requestDate || "",
+          subscriptionDate: r.subscriptionDate || "",
+          membershipType: r.membershipType || "Regular",
+          paymentMethod: r.paymentMethod || "",
+          status: r.status || "Pending",
+          result: r.result || "Pending",
+          reviewed: Boolean(r.reviewed),
+          receiptReceived: Boolean(r.receiptReceived),
+          refundAmount: r.refundAmount ?? 0,
+          cancellationReason: r.cancellationReason || "",
+          cancellationReasonDetail: r.cancellationReasonDetail || "",
+          salesPerson: r.salesPerson || ""
+        });
+      }
+    });
+
+    res.json({
+      success: true,
+      total: allAttachments.length,
+      attachments: allAttachments
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: "فشل استرجاع المرفقات: " + err?.message });
+  }
+});
+
+// 2. Upload attachments to a specific request (any user can upload before or after review)
+app.post("/api/requests/:id/attachments", requireAuth, (req, res) => {
+  const user = (req as any).user;
+  const request = findRequestById(req.params.id);
+  if (!request) {
+    return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
+  }
+
+  const { attachment, attachments } = req.body;
+  const newItems: any[] = [];
+
+  if (attachment && typeof attachment === "object") {
+    newItems.push(attachment);
+  }
+  if (Array.isArray(attachments)) {
+    newItems.push(...attachments);
+  }
+
+  if (newItems.length === 0) {
+    return res.status(400).json({ error: "لم يتم إرسال أي ملفات مرفقة" });
+  }
+
+  if (!Array.isArray(request.attachments)) {
+    request.attachments = [];
+  }
+
+  const processedItems = newItems.map((item) => ({
+    id: item.id || `att-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+    fileName: item.fileName || "مستند_مرفق",
+    fileType: item.fileType || (item.fileName?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
+    fileSize: item.fileSize || (item.fileData ? Math.round(item.fileData.length * 0.75) : 0),
+    fileData: item.fileData || "",
+    uploadedAt: item.uploadedAt || new Date().toISOString(),
+    uploadedBy: user.username,
+    uploaderName: user.name || user.username,
+    uploaderRole: user.role,
+    uploaderClub: user.club || "المركز الرئيسي",
+    category: item.category || "أخرى",
+    notes: item.notes || ""
+  }));
+
+  request.attachments.push(...processedItems);
+  saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "رفع مرفقات للطلب",
+    `تم رفع ${processedItems.length} مرفق جديد لطلب العضوية ${request.membershipNumber} (${request.memberName})`,
+    request.id
+  );
+
+  res.json({
+    success: true,
+    message: "تم رفع وحفظ المرفقات بنجاح",
+    request,
+    attachments: request.attachments,
+    requests: db.requests
+  });
+});
+
+// 3. Delete an attachment (Admin can always delete; non-admin users allowed before Admin Review)
+app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, (req, res) => {
+  const user = (req as any).user;
+  const request = findRequestById(req.params.id);
+  if (!request) {
+    return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
+  }
+
+  // If request is reviewed by Admin, only Admin has permission to delete attachments
+  if (request.reviewed && user.role !== "admin") {
+    return res.status(403).json({
+      error: "لا يمكن حذف هذا المستند المرفق بعد اعتماد مراجعة الأدمن (Review) للطلب إلا بواسطة الأدمن المركزي."
+    });
+  }
+
+  if (!Array.isArray(request.attachments)) {
+    request.attachments = [];
+  }
+
+  const attIndex = request.attachments.findIndex((a: any) => String(a.id) === String(req.params.attachmentId));
+  if (attIndex === -1) {
+    return res.status(404).json({ error: "المرفق المطلوب غير موجود بالطلب" });
+  }
+
+  const deletedAtt = request.attachments[attIndex];
+  request.attachments.splice(attIndex, 1);
+  saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "حذف مرفق من الطلب",
+    `تم حذف المرفق (${deletedAtt.fileName}) من طلب العضوية ${request.membershipNumber} (${request.memberName})`,
+    request.id
+  );
+
+  res.json({
+    success: true,
+    message: "تم حذف المرفق بنجاح",
+    request,
+    attachments: request.attachments,
+    requests: db.requests
+  });
+});
+
 // --- Workflow Operations ---
 
 // 1. Admin sends cancellation to First Manager with attached PDF and notes
@@ -2508,6 +2717,7 @@ app.post("/api/requests/:id/first-manager-action", requireAuth, (req, res) => {
   } else {
     request.firstManagerApproved = false;
     request.firstManagerComments = comments || "";
+    request.rejectionReason = comments || "";
     request.firstManagerDecisionDate = todayStr;
     request.result = "Rejected";
     request.status = "Rejected" as any;
@@ -2574,6 +2784,7 @@ app.post("/api/requests/:id/sector-manager-action", requireAuth, (req, res) => {
   } else {
     request.sectorManagerApproved = false;
     request.sectorManagerComments = comments;
+    request.rejectionReason = comments || "";
     request.result = "Rejected";
     request.status = "Rejected" as any;
   }
@@ -2947,31 +3158,60 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 
 // Vite Middleware for client loading in dev mode
 async function startServer() {
-  await ensureDbLoaded();
+  console.log("startServer invoked. NODE_ENV:", process.env.NODE_ENV);
+  try {
+    // Trigger DB load asynchronously so server listens immediately without blocking on DB timeouts
+    ensureDbLoaded().catch((err) => {
+      console.warn("Notice: ensureDbLoaded initial background load:", err?.message || err);
+    });
 
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Initializing Vite dev server middleware...");
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: "spa",
+      });
+      app.use(vite.middlewares);
+      app.use("*", async (req, res, next) => {
+        const url = req.originalUrl;
+        try {
+          const indexPath = path.resolve(process.cwd(), "index.html");
+          if (fs.existsSync(indexPath)) {
+            let template = fs.readFileSync(indexPath, "utf-8");
+            template = await vite.transformIndexHtml(url, template);
+            res.status(200).set({ "Content-Type": "text/html" }).end(template);
+          } else {
+            next();
+          }
+        } catch (e) {
+          vite.ssrFixStacktrace(e as Error);
+          next(e);
+        }
+      });
+      console.log("Vite middleware mounted successfully.");
+    } else {
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (req, res) => {
+        res.sendFile(path.join(distPath, "index.html"));
+      });
+    }
+
+    const server = app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Wadi Degla Cancellation Server running on http://localhost:${PORT}`);
     });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
+
+    server.on("error", (err: any) => {
+      console.error("HTTP server error on port " + PORT + ":", err);
     });
+  } catch (err) {
+    console.error("Fatal error starting server:", err);
   }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Wadi Degla Cancellation Server running on port ${PORT}`);
-  });
 }
 
 // Only start the HTTP listener if not running in a Serverless environment like Vercel
 if (!process.env.VERCEL) {
-  startServer();
+  startServer().catch((e) => console.error("Unhandled rejection in startServer:", e));
 }
 
 export { app };

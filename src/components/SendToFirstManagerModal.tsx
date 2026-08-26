@@ -43,14 +43,17 @@ export default function SendToFirstManagerModal({
 
   const handleFileChange = (file: File) => {
     if (!file) return;
-    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
-      setError('يرجى اختيار ملف بصيغة PDF فقط (.pdf)');
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    const isImage = file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(file.name);
+
+    if (!isPdf && !isImage) {
+      setError('يرجى اختيار ملف بصيغة PDF أو صورة (JPG, PNG, WebP)');
       return;
     }
 
     // Limit to 20MB
     if (file.size > 20 * 1024 * 1024) {
-      setError('حجم ملف الـ PDF كبير جداً، يرجى اختيار ملف أقل من 20 ميجابايت');
+      setError('حجم الملف كبير جداً، يرجى اختيار ملف أقل من 20 ميجابايت');
       return;
     }
 
@@ -159,25 +162,54 @@ export default function SendToFirstManagerModal({
               <span className="font-bold text-amber-800">{request.type} ({request.days} يوم)</span>
             </div>
           </div>
+
+          {/* Member's Existing Uploaded Attachments */}
+          {Array.isArray(request.attachments) && request.attachments.length > 0 && (
+            <div className="bg-white p-2.5 rounded-xl border border-slate-200 space-y-1.5 pt-2">
+              <div className="flex items-center justify-between text-slate-700">
+                <span className="font-black text-xxs flex items-center gap-1">
+                  <FileText className="w-3.5 h-3.5 text-amber-600" />
+                  المستندات والمرفقات الحالية بالطلب ({request.attachments.length} مستند):
+                </span>
+                <span className="text-xxs text-emerald-700 font-bold">تظهر تلقائياً للمدير الأول</span>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {request.attachments.map((att: any) => (
+                  <div key={att.id} className="inline-flex items-center gap-1 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                    <span className="font-medium text-slate-800 truncate max-w-[140px]">{att.fileName}</span>
+                    <a
+                      href={att.fileData}
+                      download={att.fileName || 'مستند'}
+                      className="text-amber-700 hover:text-amber-900 font-bold"
+                      title="معاينة أو تحميل"
+                    >
+                      معاينة
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4">
           
-          {/* PDF Upload Zone */}
+          {/* Document / Image / PDF Upload Zone */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
               <label className="text-xs font-black text-slate-800 flex items-center gap-1.5">
                 <FileText className="w-4 h-4 text-amber-600" />
-                <span>ملف PDF المرفق للمدير الأول (مستندات وأوراق العضو):</span>
+                <span>ملف أو مستند المرفق للمدير الأول (PDF أو صورة):</span>
               </label>
-              <span className="text-xxs text-slate-400 font-medium">صيغة PDF فقط (حتى 20MB)</span>
+              <span className="text-xxs text-slate-400 font-medium">ملف PDF أو صورة (حتى 20MB)</span>
             </div>
 
             <input
               type="file"
               ref={fileInputRef}
-              accept="application/pdf,.pdf"
+              accept="application/pdf,.pdf,image/*"
               className="hidden"
               onChange={(e) => {
                 if (e.target.files && e.target.files.length > 0) {
@@ -236,10 +268,10 @@ export default function SendToFirstManagerModal({
                   <FileUp className="w-6 h-6" />
                 </div>
                 <p className="text-xs font-black text-slate-800">
-                  اضغط هنا لاختيار ملف PDF أو اسحبه وأفلته هنا
+                  اضغط هنا لاختيار مستند (PDF أو صورة) أو اسحبه وأفلته هنا
                 </p>
                 <p className="text-xxs text-slate-500 mt-1 max-w-sm mx-auto">
-                  ارفق ملف PDF المجمع الذي يحتوي على استمارة الإلغاء، صورة البطاقة، إيصالات السداد، وأي أوراق داعمة
+                  ارفق ملف PDF أو صورة تحتوي على استمارة الإلغاء، صورة البطاقة، إيصالات السداد، أو أي أوراق داعمة
                 </p>
               </div>
             )}

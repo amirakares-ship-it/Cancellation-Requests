@@ -94,6 +94,8 @@ export interface CancellationRequest {
   salesPerson: string; // Sales Person
   clubNote?: string; // Club Note
   adminNote?: string; // Admin Note
+  rejectionReason?: string; // سبب الرفض
+  rejectionNote?: string; // ملاحظات الرفض
   isException?: boolean; // الاستثناء
   exceptions?: string; // تفاصيل الاستثناء
   exceptionType?: string; // نوع الاستثناء
@@ -122,6 +124,23 @@ export interface CancellationRequest {
   sectorManagerComments?: string;
   sectorManagerSignature?: string; // Stamped signature image data URL
   reviewed?: boolean; // Admin reviewed flag
+  attachments?: RequestAttachment[]; // Attached cancellation forms, PDFs, receipts, IDs
+}
+
+export interface RequestAttachment {
+  id: string;
+  fileName: string;
+  fileType: string; // "image/jpeg", "image/png", "application/pdf", etc.
+  fileSize: number;
+  fileData: string; // base64 / data URL
+  uploadedAt: string;
+  uploadedBy: string;
+  uploaderName?: string;
+  uploaderRole?: string;
+  uploaderClub?: string;
+  category: string;
+  notes?: string;
+  isLocked?: boolean;
 }
 
 export interface AuditLog {

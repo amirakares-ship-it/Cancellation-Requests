@@ -84,11 +84,6 @@ export const createPool = (): Pool | null => {
 
 export async function ensureTablesExist(p: Pool): Promise<boolean> {
   try {
-    // Add timeout promise to prevent hanging
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Table creation query timed out')), 4000)
-    );
-
     const queryPromise = p.query(`
       CREATE TABLE IF NOT EXISTS app_data (
         key text PRIMARY KEY,
@@ -106,6 +101,14 @@ export async function ensureTablesExist(p: Pool): Promise<boolean> {
         created_at timestamp DEFAULT now() NOT NULL
       );
     `);
+
+    // Attach catch handler so background network failures don't cause unhandled promise rejections
+    queryPromise.catch(() => {});
+
+    // Add timeout promise to prevent hanging
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Table creation query timed out')), 2500)
+    );
 
     await Promise.race([queryPromise, timeoutPromise]);
     return true;

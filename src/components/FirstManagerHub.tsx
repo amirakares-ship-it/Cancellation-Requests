@@ -16,6 +16,7 @@ interface FirstManagerHubProps {
   user: any;
   dropdowns: any;
   labelNames?: Record<string, string>;
+  mode?: 'pending' | 'decided' | 'all';
   onRefresh: () => Promise<void> | void;
   onExportExcel?: (reqs: any[]) => void;
   onFirstManagerDecision: (reqId: number, approve: boolean, comments: string) => Promise<void>;
@@ -23,20 +24,32 @@ interface FirstManagerHubProps {
   onAttachPdf?: (reqId: number, pdfData: string, pdfName: string, pdfSize: number, notes: string) => Promise<void>;
 }
 
-export type FirstManagerViewTab = 'sent' | 'pending' | 'accepted' | 'rejected' | 'all';
+export type FirstManagerViewTab = 'sent' | 'pending' | 'accepted' | 'rejected' | 'decided_all' | 'all';
 
 export default function FirstManagerHub({
   requests,
   user,
   dropdowns,
   labelNames = {},
+  mode = 'all',
   onRefresh,
   onExportExcel,
   onFirstManagerDecision,
   onBulkDecision,
   onAttachPdf
 }: FirstManagerHubProps) {
-  const [activeView, setActiveView] = useState<FirstManagerViewTab>('sent');
+  const [activeView, setActiveView] = useState<FirstManagerViewTab>(
+    mode === 'decided' ? 'decided_all' : mode === 'pending' ? 'pending' : 'sent'
+  );
+
+  // Sync activeView if mode changes
+  React.useEffect(() => {
+    if (mode === 'decided') {
+      setActiveView('decided_all');
+    } else if (mode === 'pending') {
+      setActiveView('pending');
+    }
+  }, [mode]);
   const [search, setSearch] = useState('');
   const [selectedClubs, setSelectedClubs] = useState<string[]>([]);
   const [selectedPayments, setSelectedPayments] = useState<string[]>([]);
@@ -59,7 +72,7 @@ export default function FirstManagerHub({
   // Check if Admin viewing for read-only monitoring
   const isReadOnly = user?.role === 'admin';
 
-  // Calculate counts for the 5 cards
+  // Calculate counts for cards
   const counts = useMemo(() => {
     let pending = 0;
     let sent = 0;
@@ -85,6 +98,7 @@ export default function FirstManagerHub({
       sent,
       accepted,
       rejected,
+      decided_all: accepted + rejected,
       all
     };
   }, [requests]);
@@ -93,7 +107,11 @@ export default function FirstManagerHub({
   const filteredRequests = useMemo(() => {
     return requests.filter(r => {
       // 1. Primary View Filter
-      if (activeView === 'pending') {
+      if (activeView === 'decided_all') {
+        if (!r.approvalSentToFirstManager || (r.firstManagerApproved !== true && r.firstManagerApproved !== false)) {
+          return false;
+        }
+      } else if (activeView === 'pending') {
         if (!r.approvalSentToFirstManager || (r.firstManagerApproved !== null && r.firstManagerApproved !== undefined)) {
           return false;
         }
@@ -237,31 +255,27 @@ export default function FirstManagerHub({
 
   return (
     <div className="space-y-5 text-right no-print" dir="rtl">
-      
       {/* 1. Dedicated Header Banner */}
-      <div className="bg-slate-900 text-slate-100 p-5 sm:p-6 rounded-2xl border border-slate-800 shadow-lg relative overflow-hidden">
+      <div className="bg-slate-800 text-slate-100 p-5 rounded-2xl border border-slate-700 shadow-md relative overflow-hidden">
         <div className="relative z-10 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex items-start gap-3.5">
-            <div className="p-3 bg-amber-400 text-slate-950 rounded-xl shadow-sm shrink-0">
-              <ShieldCheck className="w-6 h-6 sm:w-7 sm:h-7" />
+          <div className="flex items-center gap-3.5">
+            <div className="p-2.5 bg-amber-400 text-slate-950 rounded-xl shadow-sm shrink-0">
+              {mode === 'decided' ? <FileCheck className="w-6 h-6" /> : <ShieldCheck className="w-6 h-6" />}
             </div>
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/15 text-amber-300 border border-amber-400/25">
-                  {isReadOnly ? 'متابعة اعتمادات المدير الأول (عرض ومتابعة)' : 'لوحة المراجعة المالية والاعتمادات'}
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-400/20 text-amber-300 border border-amber-400/30">
+                  {mode === 'decided' 
+                    ? 'سجل القرارات والاعتمادات' 
+                    : mode === 'pending'
+                    ? (isReadOnly ? 'متابعة مهام واعتمادات المدير الأول' : 'لوحة المراجعة المالية واتخاذ القرار')
+                    : (isReadOnly ? 'متابعة اعتمادات المدير الأول' : 'لوحة المراجعة المالية والاعتمادات')}
                 </span>
                 <span className="text-xs text-slate-400">حالات الاشتراك &gt; 3 شهور</span>
               </div>
               <h1 className="text-xl sm:text-2xl font-black text-white mt-1">
-                متابعة مهام واعتمادات
+                {mode === 'decided' ? 'طلبات تم اعتمادها' : mode === 'pending' ? 'مراجعة واتخاذ قرار' : 'متابعة مهام واعتمادات'}
               </h1>
-              <p className="text-xs text-slate-300 mt-1 max-w-2xl leading-relaxed">
-                {isReadOnly ? (
-                  'استعراض كافة الطلبات المرسلة للمدير الأول وحالتها وقرارات الاعتماد أو الرفض والمستندات وكشوف الحساب.'
-                ) : (
-                  <>استعراض كافة الطلبات المرسلة للمدير الأول وحالتها، ومراجعة أوراق ومستندات العضو المرفقة (PDF) وكشف الحساب لاتخاذ قرار الاعتماد (<span className="text-emerald-400 font-bold">Accept</span>) أو الرفض (<span className="text-rose-400 font-bold">Reject</span>).</>
-                )}
-              </p>
             </div>
           </div>
 
@@ -270,7 +284,7 @@ export default function FirstManagerHub({
               <button
                 type="button"
                 onClick={() => onExportExcel(filteredRequests)}
-                className="flex items-center gap-2 px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs rounded-xl border border-slate-700 transition-colors shadow-xs cursor-pointer"
+                className="flex items-center gap-2 px-3.5 py-2 bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs rounded-xl border border-slate-600 transition-colors shadow-xs cursor-pointer"
               >
                 <Download className="w-4 h-4" />
                 <span>تصدير Excel ({filteredRequests.length})</span>
@@ -280,7 +294,7 @@ export default function FirstManagerHub({
             <button
               type="button"
               onClick={() => onRefresh()}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800/80 hover:bg-slate-700 text-slate-200 font-medium text-xs rounded-xl border border-slate-700 transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-700/80 hover:bg-slate-600 text-slate-200 font-medium text-xs rounded-xl border border-slate-600 transition-colors cursor-pointer"
             >
               <RotateCcw className="w-4 h-4 text-slate-400" />
               <span>تحديث</span>
@@ -289,159 +303,307 @@ export default function FirstManagerHub({
         </div>
       </div>
 
-      {/* 2. The 5 Organized Interactive View Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        
-        {/* Card 1: كل المرسل للمدير الأول */}
-        <button
-          type="button"
-          onClick={() => setActiveView('sent')}
-          className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
-            activeView === 'sent'
-              ? 'bg-slate-900 text-white border-slate-900 shadow-sm ring-1 ring-slate-700/50'
-              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className={`p-2 rounded-lg ${activeView === 'sent' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-slate-100 text-slate-700'}`}>
-              <Layers className="w-4 h-4" />
+      {/* 2. Organized Interactive View Cards based on Mode */}
+      {mode === 'decided' ? (
+        /* Cards for 'طلبات تم اعتمادها' mode */
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Card 1: كل القرارات المتخذة */}
+          <button
+            type="button"
+            onClick={() => setActiveView('decided_all')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'decided_all'
+                ? 'bg-slate-800 text-white border-slate-700 shadow-sm ring-1 ring-amber-400/40'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'decided_all' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-slate-100 text-slate-700'}`}>
+                <Layers className="w-4 h-4" />
+              </div>
+              <span className={`text-xl font-bold font-mono ${activeView === 'decided_all' ? 'text-amber-300' : 'text-slate-800'}`}>
+                {counts.decided_all}
+              </span>
             </div>
-            <span className={`text-xl font-bold font-mono ${activeView === 'sent' ? 'text-amber-300' : 'text-slate-800'}`}>
-              {counts.sent}
-            </span>
-          </div>
-          <div>
-            <h3 className={`text-xs font-bold ${activeView === 'sent' ? 'text-white' : 'text-slate-900'}`}>كل المرسل للمدير الأول</h3>
-            <p className={`text-[11px] mt-0.5 ${activeView === 'sent' ? 'text-slate-300' : 'text-slate-500'}`}>كافة الطلبات المحولة للمدير الأول وحالتها</p>
-          </div>
-          {activeView === 'sent' && (
-            <div className="mt-2.5 pt-2 border-t border-slate-700 flex items-center gap-1 text-[10px] font-bold text-amber-300">
-              <Check className="w-3 h-3" />
-              <span>العرض الحالي</span>
+            <div>
+              <h3 className={`text-xs font-bold ${activeView === 'decided_all' ? 'text-white' : 'text-slate-900'}`}>كل القرارات المتخذة</h3>
             </div>
-          )}
-        </button>
+            {activeView === 'decided_all' && (
+              <div className="mt-2.5 pt-2 border-t border-slate-700 flex items-center gap-1 text-[10px] font-bold text-amber-300">
+                <Check className="w-3 h-3" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
 
-        {/* Card 2: بانتظار القرار */}
-        <button
-          type="button"
-          onClick={() => setActiveView('pending')}
-          className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between relative ${
-            activeView === 'pending'
-              ? 'bg-amber-50/70 border-amber-400 shadow-sm ring-1 ring-amber-400/30'
-              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className={`p-2 rounded-lg ${activeView === 'pending' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-amber-50 text-amber-700 border border-amber-200/60'}`}>
-              <Clock className="w-4 h-4" />
+          {/* Card 2: المعتمدة فقط (Accept) */}
+          <button
+            type="button"
+            onClick={() => setActiveView('accepted')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'accepted'
+                ? 'bg-emerald-50/70 border-emerald-400 shadow-sm ring-1 ring-emerald-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'accepted' ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'}`}>
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <span className="text-xl font-bold font-mono text-emerald-700">
+                {counts.accepted}
+              </span>
             </div>
-            <span className={`text-xl font-bold font-mono ${counts.pending > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
-              {counts.pending}
-            </span>
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-900">بانتظار القرار</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">طلبات مرسلة بانتظار الاعتماد أو الرفض</p>
-          </div>
-          {activeView === 'pending' && (
-            <div className="mt-2.5 pt-2 border-t border-amber-200/70 flex items-center gap-1 text-[10px] font-bold text-amber-900">
-              <Check className="w-3 h-3 text-amber-600" />
-              <span>العرض الحالي</span>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">الطلبات المقبولة (Accept)</h3>
             </div>
-          )}
-        </button>
+            {activeView === 'accepted' && (
+              <div className="mt-2.5 pt-2 border-t border-emerald-200 flex items-center gap-1 text-[10px] font-bold text-emerald-800">
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
 
-        {/* Card 3: المعتمدة (Accept) */}
-        <button
-          type="button"
-          onClick={() => setActiveView('accepted')}
-          className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
-            activeView === 'accepted'
-              ? 'bg-emerald-50/70 border-emerald-400 shadow-sm ring-1 ring-emerald-400/30'
-              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className={`p-2 rounded-lg ${activeView === 'accepted' ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'}`}>
-              <CheckCircle2 className="w-4 h-4" />
+          {/* Card 3: المرفوضة فقط (Reject) */}
+          <button
+            type="button"
+            onClick={() => setActiveView('rejected')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'rejected'
+                ? 'bg-rose-50/70 border-rose-400 shadow-sm ring-1 ring-rose-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'rejected' ? 'bg-rose-600 text-white font-bold' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`}>
+                <XCircle className="w-4 h-4" />
+              </div>
+              <span className="text-xl font-bold font-mono text-rose-700">
+                {counts.rejected}
+              </span>
             </div>
-            <span className="text-xl font-bold font-mono text-emerald-700">
-              {counts.accepted}
-            </span>
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-900">المعتمدة (Accept)</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">الطلبات التي تم اعتمادها بنجاح</p>
-          </div>
-          {activeView === 'accepted' && (
-            <div className="mt-2.5 pt-2 border-t border-emerald-200 flex items-center gap-1 text-[10px] font-bold text-emerald-800">
-              <Check className="w-3 h-3 text-emerald-600" />
-              <span>العرض الحالي</span>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">الطلبات المرفوضة (Reject)</h3>
             </div>
-          )}
-        </button>
+            {activeView === 'rejected' && (
+              <div className="mt-2.5 pt-2 border-t border-rose-200 flex items-center gap-1 text-[10px] font-bold text-rose-800">
+                <Check className="w-3 h-3 text-rose-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+        </div>
+      ) : mode === 'pending' ? (
+        /* Cards for 'مراجعة واتخاذ قرار' mode */
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Card 1: بانتظار القرار */}
+          <button
+            type="button"
+            onClick={() => setActiveView('pending')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between relative ${
+              activeView === 'pending'
+                ? 'bg-amber-50/70 border-amber-400 shadow-sm ring-1 ring-amber-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'pending' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-amber-50 text-amber-700 border border-amber-200/60'}`}>
+                <Clock className="w-4 h-4" />
+              </div>
+              <span className={`text-xl font-bold font-mono ${counts.pending > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                {counts.pending}
+              </span>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">طلبات بانتظار اتخاذ القرار</h3>
+            </div>
+            {activeView === 'pending' && (
+              <div className="mt-2.5 pt-2 border-t border-amber-200/70 flex items-center gap-1 text-[10px] font-bold text-amber-900">
+                <Check className="w-3 h-3 text-amber-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
 
-        {/* Card 4: المرفوضة (Reject) */}
-        <button
-          type="button"
-          onClick={() => setActiveView('rejected')}
-          className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
-            activeView === 'rejected'
-              ? 'bg-rose-50/70 border-rose-400 shadow-sm ring-1 ring-rose-400/30'
-              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className={`p-2 rounded-lg ${activeView === 'rejected' ? 'bg-rose-600 text-white font-bold' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`}>
-              <XCircle className="w-4 h-4" />
+          {/* Card 2: إجمالي المحال للمدير الأول */}
+          <button
+            type="button"
+            onClick={() => setActiveView('sent')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'sent'
+                ? 'bg-slate-800 text-white border-slate-700 shadow-sm ring-1 ring-amber-400/40'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'sent' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-slate-100 text-slate-700'}`}>
+                <Layers className="w-4 h-4" />
+              </div>
+              <span className={`text-xl font-bold font-mono ${activeView === 'sent' ? 'text-amber-300' : 'text-slate-800'}`}>
+                {counts.sent}
+              </span>
             </div>
-            <span className="text-xl font-bold font-mono text-rose-700">
-              {counts.rejected}
-            </span>
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-900">المرفوضة (Reject)</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">الطلبات التي تم رفضها</p>
-          </div>
-          {activeView === 'rejected' && (
-            <div className="mt-2.5 pt-2 border-t border-rose-200 flex items-center gap-1 text-[10px] font-bold text-rose-800">
-              <Check className="w-3 h-3 text-rose-600" />
-              <span>العرض الحالي</span>
+            <div>
+              <h3 className={`text-xs font-bold ${activeView === 'sent' ? 'text-white' : 'text-slate-900'}`}>إجمالي المحال للمدير الأول</h3>
             </div>
-          )}
-        </button>
+            {activeView === 'sent' && (
+              <div className="mt-2.5 pt-2 border-t border-slate-700 flex items-center gap-1 text-[10px] font-bold text-amber-300">
+                <Check className="w-3 h-3" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+        </div>
+      ) : (
+        /* Standard 5 Cards for 'all' mode */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          {/* Card 1: كل المرسل للمدير الأول */}
+          <button
+            type="button"
+            onClick={() => setActiveView('sent')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'sent'
+                ? 'bg-slate-800 text-white border-slate-700 shadow-sm ring-1 ring-amber-400/40'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'sent' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-slate-100 text-slate-700'}`}>
+                <Layers className="w-4 h-4" />
+              </div>
+              <span className={`text-xl font-bold font-mono ${activeView === 'sent' ? 'text-amber-300' : 'text-slate-800'}`}>
+                {counts.sent}
+              </span>
+            </div>
+            <div>
+              <h3 className={`text-xs font-bold ${activeView === 'sent' ? 'text-white' : 'text-slate-900'}`}>كل المرسل للمدير الأول</h3>
+            </div>
+            {activeView === 'sent' && (
+              <div className="mt-2.5 pt-2 border-t border-slate-700 flex items-center gap-1 text-[10px] font-bold text-amber-300">
+                <Check className="w-3 h-3" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
 
-        {/* Card 5: كافة طلبات النظام */}
-        <button
-          type="button"
-          onClick={() => setActiveView('all')}
-          className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
-            activeView === 'all'
-              ? 'bg-indigo-50/70 border-indigo-400 shadow-sm ring-1 ring-indigo-400/30'
-              : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
-          }`}
-        >
-          <div className="flex items-center justify-between mb-2.5">
-            <div className={`p-2 rounded-lg ${activeView === 'all' ? 'bg-indigo-600 text-white font-bold' : 'bg-indigo-50 text-indigo-700 border border-indigo-200/60'}`}>
-              <Database className="w-4 h-4" />
+          {/* Card 2: بانتظار القرار */}
+          <button
+            type="button"
+            onClick={() => setActiveView('pending')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between relative ${
+              activeView === 'pending'
+                ? 'bg-amber-50/70 border-amber-400 shadow-sm ring-1 ring-amber-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'pending' ? 'bg-amber-400 text-slate-950 font-bold' : 'bg-amber-50 text-amber-700 border border-amber-200/60'}`}>
+                <Clock className="w-4 h-4" />
+              </div>
+              <span className={`text-xl font-bold font-mono ${counts.pending > 0 ? 'text-amber-700' : 'text-slate-400'}`}>
+                {counts.pending}
+              </span>
             </div>
-            <span className="text-xl font-bold font-mono text-indigo-900">
-              {counts.all}
-            </span>
-          </div>
-          <div>
-            <h3 className="text-xs font-bold text-slate-900">كافة طلبات النظام</h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">عرض شامل لجميع الطلبات</p>
-          </div>
-          {activeView === 'all' && (
-            <div className="mt-2.5 pt-2 border-t border-indigo-200 flex items-center gap-1 text-[10px] font-bold text-indigo-800">
-              <Check className="w-3 h-3 text-indigo-600" />
-              <span>العرض الحالي</span>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">بانتظار القرار</h3>
             </div>
-          )}
-        </button>
-      </div>
+            {activeView === 'pending' && (
+              <div className="mt-2.5 pt-2 border-t border-amber-200/70 flex items-center gap-1 text-[10px] font-bold text-amber-900">
+                <Check className="w-3 h-3 text-amber-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+
+          {/* Card 3: المعتمدة (Accept) */}
+          <button
+            type="button"
+            onClick={() => setActiveView('accepted')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'accepted'
+                ? 'bg-emerald-50/70 border-emerald-400 shadow-sm ring-1 ring-emerald-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'accepted' ? 'bg-emerald-600 text-white font-bold' : 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'}`}>
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+              <span className="text-xl font-bold font-mono text-emerald-700">
+                {counts.accepted}
+              </span>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">المعتمدة (Accept)</h3>
+            </div>
+            {activeView === 'accepted' && (
+              <div className="mt-2.5 pt-2 border-t border-emerald-200 flex items-center gap-1 text-[10px] font-bold text-emerald-800">
+                <Check className="w-3 h-3 text-emerald-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+
+          {/* Card 4: المرفوضة (Reject) */}
+          <button
+            type="button"
+            onClick={() => setActiveView('rejected')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'rejected'
+                ? 'bg-rose-50/70 border-rose-400 shadow-sm ring-1 ring-rose-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'rejected' ? 'bg-rose-600 text-white font-bold' : 'bg-rose-50 text-rose-700 border border-rose-200/60'}`}>
+                <XCircle className="w-4 h-4" />
+              </div>
+              <span className="text-xl font-bold font-mono text-rose-700">
+                {counts.rejected}
+              </span>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">المرفوضة (Reject)</h3>
+            </div>
+            {activeView === 'rejected' && (
+              <div className="mt-2.5 pt-2 border-t border-rose-200 flex items-center gap-1 text-[10px] font-bold text-rose-800">
+                <Check className="w-3 h-3 text-rose-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+
+          {/* Card 5: كافة طلبات النظام */}
+          <button
+            type="button"
+            onClick={() => setActiveView('all')}
+            className={`p-4 rounded-xl text-right transition-all cursor-pointer border flex flex-col justify-between ${
+              activeView === 'all'
+                ? 'bg-indigo-50/70 border-indigo-400 shadow-sm ring-1 ring-indigo-400/30'
+                : 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-2xs'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2.5">
+              <div className={`p-2 rounded-lg ${activeView === 'all' ? 'bg-indigo-600 text-white font-bold' : 'bg-indigo-50 text-indigo-700 border border-indigo-200/60'}`}>
+                <Database className="w-4 h-4" />
+              </div>
+              <span className="text-xl font-bold font-mono text-indigo-900">
+                {counts.all}
+              </span>
+            </div>
+            <div>
+              <h3 className="text-xs font-bold text-slate-900">كافة طلبات النظام</h3>
+            </div>
+            {activeView === 'all' && (
+              <div className="mt-2.5 pt-2 border-t border-indigo-200 flex items-center gap-1 text-[10px] font-bold text-indigo-800">
+                <Check className="w-3 h-3 text-indigo-600" />
+                <span>العرض الحالي</span>
+              </div>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* 3. Sub-filters and Search section */}
       <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
@@ -549,7 +711,7 @@ export default function FirstManagerHub({
 
       {/* 4. Bulk Actions Bar */}
       {selectedIds.length > 0 && (
-        <div className="bg-slate-900 text-white p-3.5 sm:p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-3 shadow-md border border-slate-800 animate-in fade-in slide-in-from-bottom-2">
+        <div className="bg-slate-800 text-white p-3.5 sm:p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-3 shadow-md border border-slate-700 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-slate-300">
               تم تحديد <span className="font-mono text-sm font-bold text-amber-300 px-1">{selectedIds.length}</span> طلب {isReadOnly && '(للعرض والتصدير فقط)'}
@@ -566,7 +728,7 @@ export default function FirstManagerHub({
                       const selectedReqs = requests.filter(r => selectedIds.includes(r.id));
                       onExportExcel(selectedReqs);
                     }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-amber-300 font-bold text-xs rounded-lg transition-colors cursor-pointer border border-slate-700"
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-amber-300 font-bold text-xs rounded-lg transition-colors cursor-pointer border border-slate-600"
                   >
                     <Download className="w-3.5 h-3.5" />
                     <span>تصدير المحدد ({selectedIds.length})</span>
@@ -683,7 +845,7 @@ export default function FirstManagerHub({
                 <th className="py-3 px-3 font-bold text-center text-slate-200">المستندات</th>
                 <th className="py-3 px-4 font-bold text-slate-200">سبب الإلغاء</th>
                 <th className="py-3 px-3 font-bold text-center text-slate-200">كشف الحساب</th>
-                <th className="py-3 px-3 font-bold text-center text-slate-200">أوراق العضو (PDF)</th>
+                <th className="py-3 px-3 font-bold text-center text-slate-200">المرفقات والمستندات</th>
                 <th className="py-3 px-4 font-bold text-center whitespace-nowrap text-amber-300">القرار</th>
               </tr>
             </thead>
@@ -702,6 +864,12 @@ export default function FirstManagerHub({
                 filteredRequests.map((r) => {
                   const isAmberHighlight = r.days >= 90 && r.days <= 120;
                   const isSelected = selectedIds.includes(r.id);
+
+                  // Check for any available attachments or documents (uploaded at registration or by admin)
+                  const hasFirstManagerDoc = Boolean(r.firstManagerPdfUrl);
+                  const hasAttachments = Array.isArray(r.attachments) && r.attachments.length > 0;
+                  const totalAttachmentsCount = (hasFirstManagerDoc ? 1 : 0) + (hasAttachments ? r.attachments!.length : 0);
+                  const hasAnyDoc = totalAttachmentsCount > 0;
 
                   return (
                     <tr 
@@ -771,16 +939,11 @@ export default function FirstManagerHub({
                         </span>
                       </td>
 
-                      {/* 7. Cancellation Reason */}
-                      <td className="py-3 px-4 max-w-[180px]">
-                        <span className="text-slate-800 font-medium block truncate text-xs" title={r.cancellationReasonDetail || r.cancellationReason}>
-                          {r.cancellationReason || '—'}
+                      {/* 7. Cancellation Reason (Displays only "تعثر مادي") */}
+                      <td className="py-3 px-4 max-w-[150px]">
+                        <span className="text-slate-800 font-bold block text-xs" title="تعثر مادي">
+                          تعثر مادي
                         </span>
-                        {r.cancellationReasonDetail && (
-                          <span className="text-slate-500 text-[10px] block truncate" title={r.cancellationReasonDetail}>
-                            {r.cancellationReasonDetail}
-                          </span>
-                        )}
                       </td>
 
                       {/* Settlement Statement button */}
@@ -796,27 +959,32 @@ export default function FirstManagerHub({
                         </button>
                       </td>
 
-                      {/* PDF Documents review button */}
+                      {/* Attachments / Documents column (placed right next to Settlement Statement) */}
                       <td className="py-3 px-3 text-center">
-                        {r.firstManagerPdfUrl ? (
+                        {hasAnyDoc ? (
                           <button
                             type="button"
                             onClick={() => setPdfModalTarget(r)}
-                            className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold rounded-lg text-xxs flex items-center justify-center gap-1 cursor-pointer transition-all border border-amber-300 mx-auto"
-                            title="الاطلاع على مستندات وأوراق العضو المرفقة بصيغة PDF"
+                            className="px-2.5 py-1 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg text-xxs flex items-center justify-center gap-1.5 cursor-pointer transition-all shadow-2xs mx-auto"
+                            title="معاينة وعرض أو تنزيل المرفقات والمستندات (PDF / صور)"
                           >
-                            <FileCheck className="h-3.5 w-3.5 text-amber-700 shrink-0" />
-                            <span>أوراق العضو (PDF)</span>
+                            <FileCheck className="h-3.5 w-3.5 text-neutral-950 shrink-0" />
+                            <span>عرض المرفق</span>
+                            {totalAttachmentsCount > 1 && (
+                              <span className="bg-neutral-900 text-amber-300 px-1 py-0.2 rounded-full text-[9px] font-mono">
+                                {totalAttachmentsCount}
+                              </span>
+                            )}
                           </button>
                         ) : (
                           <button
                             type="button"
                             onClick={() => setPdfModalTarget(r)}
-                            className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-600 border border-slate-200 font-medium rounded-lg text-xxs flex items-center justify-center gap-1 cursor-pointer transition-colors mx-auto"
-                            title="معاينة أو إرفاق مستندات وأوراق العضو بصيغة PDF"
+                            className="px-2.5 py-1 bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200 font-medium rounded-lg text-xxs flex items-center justify-center gap-1 cursor-pointer transition-colors mx-auto"
+                            title="معاينة أو إرفاق المستندات"
                           >
                             <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-                            <span>مستندات (PDF)</span>
+                            <span>لا يوجد مرفق</span>
                           </button>
                         )}
                       </td>

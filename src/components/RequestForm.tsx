@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
-  ArrowRight, Calculator, Check, AlertCircle, RefreshCw, Layers, Info 
+  ArrowRight, Calculator, Check, AlertCircle, RefreshCw, Layers, Info,
+  Upload, Paperclip, FileText, Image as ImageIcon, Trash2, Eye, Lock, Plus, X, ShieldCheck
 } from 'lucide-react';
 import { calculateAllFields, CalculationInput, toInputDateStr, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, isSameClub, isSameMembershipNumber, isArabicOnly, isValidExternalId, cleanLeadingZero, isBankPaymentMethod, isInternationalRequest } from '../utils';
-import { CustomField } from '../types';
+import { CustomField, RequestAttachment } from '../types';
+import DocumentViewerModal from './DocumentViewerModal';
 
 interface RequestFormProps {
   request?: any; // Undefined if creating
@@ -164,6 +166,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
   const [useVisaOverride, setUseVisaOverride] = useState(false);
   const [visaFeeOverride, setVisaFeeOverride] = useState(0);
 
+  // Attachments State
+  const [attachments, setAttachments] = useState<RequestAttachment[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [activeViewerAttachment, setActiveViewerAttachment] = useState<any | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Validation state
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -274,10 +282,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
         setUseVisaOverride(false);
         setVisaFeeOverride(request.visaFees2Percent ?? 0);
       }
+      setAttachments(Array.isArray(request.attachments) ? request.attachments : []);
     } else {
       setMobileNumber('');
       setCommitteeNo('');
       setCommitteeYear('');
+      setAttachments([]);
       if (user.role === 'international_user') {
         setMembershipType('International');
         setCurrency('ريال سعودى');
@@ -517,6 +527,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       paymentMethod,
       accountNumber: (paymentMethod === 'ABK' || paymentMethod === 'المشرق') ? accountNumber : '',
       documents,
+      attachments,
       cancellationReason,
       cancellationReasonDetail,
       salesPerson,
@@ -555,6 +566,85 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
     };
 
     onSave(payload);
+  };
+
+  const isRequestReviewed = Boolean(request?.reviewed);
+
+  const readFileAsDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleProcessIncomingAttachments = async (files: FileList | File[]) => {
+    const validFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i];
+      const isAllowed = f.type.startsWith('image/') || f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
+      if (isAllowed) {
+        validFiles.push(f);
+      }
+    }
+
+    if (validFiles.length === 0) {
+      setErrorMessage('يرجى اختيار صور (JPG/PNG) أو ملفات PDF فقط');
+      return;
+    }
+
+    setErrorMessage('');
+    const newItems: RequestAttachment[] = [];
+
+    for (const file of validFiles) {
+      try {
+        const fileData = await readFileAsDataUrl(file);
+        newItems.push({
+          id: `att-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+          fileName: file.name,
+          fileType: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
+          fileSize: file.size,
+          fileData,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: user?.username || 'user',
+          uploaderName: user?.name || user?.username || 'مستخدم',
+          uploaderRole: user?.role || 'club',
+          uploaderClub: user?.club || club || 'المركز الرئيسي',
+          category: 'طلب الإلغاء الموقع',
+          notes: '',
+          isLocked: false
+        });
+      } catch (err) {
+        console.error('Failed reading attachment:', err);
+      }
+    }
+
+    setAttachments(prev => [...prev, ...newItems]);
+  };
+
+  const handleRemoveAttachment = (attId: string) => {
+    const target = attachments.find(a => a.id === attId);
+    if (isRequestReviewed && target?.isLocked) {
+      setErrorMessage('لا يمكن حذف هذا المستند نظراً لاعتماد مراجعة الأدمن للطلب لحماية السجلات المالية.');
+      return;
+    }
+    setAttachments(prev => prev.filter(a => a.id !== attId));
+  };
+
+  const handleUpdateAttachmentCategory = (attId: string, category: string) => {
+    setAttachments(prev => prev.map(a => a.id === attId ? { ...a, category } : a));
+  };
+
+  const handleUpdateAttachmentNotes = (attId: string, notes: string) => {
+    setAttachments(prev => prev.map(a => a.id === attId ? { ...a, notes } : a));
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return '—';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
   return (
@@ -1245,6 +1335,166 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               {renderCustomFieldsForSection('notes')}
             </div>
           </div>
+
+          {/* Card 3.5: Attachments & Official Documents (صور / ملفات PDF) */}
+          <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-50 pb-2">
+              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-amber-500" />
+                <span>المرفقات والمستندات الرسمية (صور / ملفات PDF)</span>
+                <span className="px-2 py-0.5 rounded-full text-xxs font-bold bg-amber-100 text-amber-900 border border-amber-300">
+                  {attachments.length} مرفق
+                </span>
+              </h3>
+              {isRequestReviewed && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                  <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  تمت مراجعة الطلب (المستندات السابقة محمية)
+                </span>
+              )}
+            </div>
+
+            <p className="text-xs text-slate-500">
+              يمكنك رفع استمارة طلب الإلغاء الموقعة، وصور بطاقة الرقم القومي، وإيصالات السداد، والتقارير الطبية/الاستثناءات بصيغة صور أو ملفات PDF.
+            </p>
+
+            {/* Dropzone */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragOver(false);
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                  handleProcessIncomingAttachments(e.dataTransfer.files);
+                }
+              }}
+              onClick={() => fileInputRef.current?.click()}
+              className={`border-2 border-dashed rounded-2xl p-5 text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
+                isDragOver 
+                  ? 'border-amber-500 bg-amber-50/80' 
+                  : 'border-slate-200 hover:border-amber-400 hover:bg-slate-50/60'
+              }`}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/*,.pdf"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    handleProcessIncomingAttachments(e.target.files);
+                  }
+                }}
+                className="hidden"
+              />
+              <div className="p-2.5 bg-amber-100 text-amber-700 rounded-xl">
+                <Upload className="w-5 h-5" />
+              </div>
+              <div className="text-xs">
+                <span className="font-bold text-slate-800">اسحب وأفلت الملفات هنا أو انقر لاختيارها من جهازك</span>
+                <span className="text-slate-400 block text-[11px] mt-0.5">يدعم ملفات الصور (JPG, PNG) وملفات PDF</span>
+              </div>
+            </div>
+
+            {/* Attachments List */}
+            {attachments.length > 0 && (
+              <div className="space-y-3 pt-2">
+                <div className="text-xs font-bold text-slate-700">المستندات المرفقة الحالية ({attachments.length}):</div>
+                <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1">
+                  {attachments.map((att) => {
+                    const isPdf = att.fileType === 'application/pdf' || att.fileName.toLowerCase().endsWith('.pdf');
+                    const isLocked = isRequestReviewed && att.isLocked !== false;
+
+                    return (
+                      <div 
+                        key={att.id}
+                        className={`p-3 rounded-xl border text-xs space-y-2 transition-all ${
+                          isLocked 
+                            ? 'bg-slate-50/80 border-slate-200' 
+                            : 'bg-amber-50/30 border-amber-200/60'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <div className="p-2 bg-white rounded-lg border border-slate-200 text-slate-600 shrink-0">
+                              {isPdf ? <FileText className="w-4 h-4 text-rose-500" /> : <ImageIcon className="w-4 h-4 text-blue-500" />}
+                            </div>
+                            <div className="truncate">
+                              <span className="font-bold text-slate-800 truncate block">{att.fileName}</span>
+                              <span className="text-[10px] text-slate-500">{formatFileSize(att.fileSize)}</span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setActiveViewerAttachment(att)}
+                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer"
+                              title="معاينة"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+
+                            {isLocked ? (
+                              <span 
+                                className="p-1.5 text-slate-400 cursor-not-allowed"
+                                title="تمت مراجعة الطلب بواسطة الأدمن (Reviewed) - المستند محمي ولا يمكن حذفه"
+                              >
+                                <Lock className="w-4 h-4" />
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveAttachment(att.id)}
+                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                title="حذف المرفق"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Category & Notes editing */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 border-t border-slate-200/60">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">نوع المستند:</label>
+                            <select
+                              value={att.category || 'طلب الإلغاء الموقع'}
+                              disabled={isLocked}
+                              onChange={(e) => handleUpdateAttachmentCategory(att.id, e.target.value)}
+                              className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:border-amber-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                            >
+                              <option value="طلب الإلغاء الموقع">طلب الإلغاء الموقع</option>
+                              <option value="صورة بطاقة الرقم القومي">صورة بطاقة الرقم القومي</option>
+                              <option value="إيصال سداد / مخالصة">إيصال سداد / مخالصة</option>
+                              <option value="إقرار وتنازل معتمد">إقرار وتنازل معتمد</option>
+                              <option value="تقرير طبي / مستندات استثناء">تقرير طبي / مستندات استثناء</option>
+                              <option value="شيكات / مستندات بنكية">شيكات / مستندات بنكية</option>
+                              <option value="أخرى">أخرى</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">ملاحظة / وصف:</label>
+                            <input
+                              type="text"
+                              value={att.notes || ''}
+                              disabled={isLocked}
+                              onChange={(e) => handleUpdateAttachmentNotes(att.id, e.target.value)}
+                              placeholder="وصف مختصر للورقة..."
+                              className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 text-slate-800 focus:outline-none focus:border-amber-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Column 2: Financial Grid & Instantly calculated results */}
@@ -1609,6 +1859,19 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
           {isEditing ? 'حفظ وتعديل بيانات الطلب' : 'تسجيل وإرسال الطلب للمراجعة'}
         </button>
       </div>
+
+      {/* Document Viewer Modal for instant preview */}
+      {activeViewerAttachment && (
+        <DocumentViewerModal
+          attachment={activeViewerAttachment}
+          onClose={() => setActiveViewerAttachment(null)}
+          canDelete={!isRequestReviewed || !activeViewerAttachment.isLocked}
+          onDelete={(attId) => {
+            handleRemoveAttachment(attId);
+            setActiveViewerAttachment(null);
+          }}
+        />
+      )}
     </form>
   );
 }

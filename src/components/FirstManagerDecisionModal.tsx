@@ -139,59 +139,62 @@ export default function FirstManagerDecisionModal({
 
             {/* 6. المستندات */}
             <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-              <span className="text-slate-400 text-xxs block font-bold">6. المستندات المرفقة:</span>
-              <span className="font-bold text-slate-800 text-xs truncate block">{request.documents || 'مستندات مكتملة'}</span>
+              <span className="text-slate-400 text-xxs block font-bold">6. المستندات:</span>
+              <span className="font-bold text-slate-800 text-xs truncate block">
+                {request.documents || 'مستندات الطلب'}
+              </span>
             </div>
 
             {/* 7. سبب الالغاء */}
             <div className="bg-white p-2.5 rounded-lg border border-slate-200 sm:col-span-2">
               <span className="text-slate-400 text-xxs block font-bold">7. سبب الإلغاء:</span>
-              <span className="font-semibold text-slate-800 text-xs block">
-                {request.cancellationReason}
-                {request.cancellationReasonDetail && ` — ${request.cancellationReasonDetail}`}
+              <span className="font-bold text-slate-900 text-xs block">
+                {request.cancellationReason || 'تعثر مالي'}
               </span>
             </div>
           </div>
 
-          {/* Quick Access to Statement & Attached PDF */}
+          {/* Quick Access to Statement & Documents */}
           <div className="pt-2 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
-              {onOpenPDF && (
-                <button
-                  type="button"
-                  onClick={() => onOpenPDF(request)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 font-black text-xxs rounded-lg cursor-pointer transition-colors shadow-xs ${
-                    request.firstManagerPdfUrl
-                      ? 'bg-amber-400 hover:bg-amber-500 text-neutral-950 ring-2 ring-amber-300'
-                      : 'bg-slate-800 hover:bg-slate-900 text-white'
-                  }`}
-                >
-                  <FileCheck className="h-3.5 w-3.5" />
-                  <span>
-                    {request.firstManagerPdfUrl ? 'مراجعة مستندات وأوراق العضو (PDF المرفق)' : 'عرض تقرير ومستندات PDF'}
-                  </span>
-                </button>
-              )}
-
               {onOpenStatement && (
                 <button
                   type="button"
                   onClick={() => onOpenStatement(request)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xxs rounded-lg cursor-pointer transition-colors border border-slate-200"
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-lg cursor-pointer transition-colors shadow-xs"
                 >
-                  <FileText className="h-3.5 w-3.5 text-amber-600" />
-                  <span>فتح كشف الحساب</span>
+                  <FileText className="h-4 w-4 text-amber-400" />
+                  <span>فتح كشف الحساب التفصيلي</span>
+                </button>
+              )}
+
+              {onOpenPDF && (
+                <button
+                  type="button"
+                  onClick={() => onOpenPDF(request)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 font-bold text-xs rounded-lg cursor-pointer transition-colors shadow-xs ${
+                    request.firstManagerPdfUrl || (Array.isArray(request.attachments) && request.attachments.length > 0)
+                      ? 'bg-amber-400 hover:bg-amber-500 text-neutral-950 ring-2 ring-amber-300'
+                      : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300'
+                  }`}
+                >
+                  <FileCheck className="h-4 w-4 text-amber-700" />
+                  <span>
+                    {request.firstManagerPdfUrl || (Array.isArray(request.attachments) && request.attachments.length > 0)
+                      ? 'معاينة المرفقات والأوراق'
+                      : 'المستندات والمرفقات'}
+                  </span>
                 </button>
               )}
             </div>
 
-            {request.firstManagerPdfUrl ? (
+            {request.firstManagerPdfUrl || (Array.isArray(request.attachments) && request.attachments.length > 0) ? (
               <span className="text-xxs text-emerald-700 font-bold flex items-center gap-1">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>ملف PDF المرفق متوفر للمراجعة</span>
+                <span>المستندات متوفرة للمراجعة</span>
               </span>
             ) : (
-              <span className="text-xxs text-slate-400 font-medium">مرفق كشف الحساب والبيانات</span>
+              <span className="text-xxs text-slate-500 font-medium">كشف الحساب والبيانات جاهزة</span>
             )}
           </div>
 

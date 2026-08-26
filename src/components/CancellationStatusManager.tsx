@@ -203,6 +203,21 @@ export default function CancellationStatusManager({
     }
   };
 
+  // Calculate Aggregates for Selected Memberships (Requested: إجمالي مبلغ الاسترداد للعضويات المختارة فقط)
+  const selectedStats = useMemo(() => {
+    if (selectedIds.length === 0) return null;
+    const selectedRequests = requests.filter(r => selectedIds.includes(r.id));
+    const totalRefund = selectedRequests.reduce((sum, r) => {
+      const val = parseFloat(String(r.refundAmount || (r as any).totalRefund || 0)) || 0;
+      return sum + val;
+    }, 0);
+
+    return {
+      count: selectedRequests.length,
+      totalRefund
+    };
+  }, [requests, selectedIds]);
+
   // Reset all search filters
   const handleResetFilters = () => {
     setMemberNameSearch('');
@@ -483,6 +498,41 @@ export default function CancellationStatusManager({
             </button>
           )}
         </div>
+
+        {/* Selected Memberships Refund Summary (Clean & Focused on Total Refund) */}
+        {selectedStats && (
+          <div className="bg-emerald-50/60 border border-emerald-200/90 rounded-2xl p-4 sm:p-5 shadow-xs animate-in fade-in transition-all">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-3 text-right w-full sm:w-auto">
+                <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-emerald-950">
+                      إجمالي مبلغ الاسترداد للعضويات المحددة:
+                    </span>
+                    <span className="text-[11px] font-black bg-emerald-100/90 text-emerald-800 px-2 py-0.5 rounded-full border border-emerald-300/60">
+                      {selectedStats.count} {selectedStats.count === 1 ? 'عضوية' : selectedStats.count === 2 ? 'عضويتان' : 'عضويات'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-700/80 mt-0.5">
+                    المبلغ الإجمالي المستحق للاسترداد وفقاً لبيانات العقود المختارة
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-baseline gap-2 bg-white px-5 py-2.5 rounded-xl border border-emerald-300 shadow-2xs shrink-0">
+                <span className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono tracking-tight">
+                  {selectedStats.totalRefund.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span className="text-xs font-bold text-emerald-900 font-sans">
+                  جنيه مصري
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
           {/* Status Dropdown */}
@@ -853,6 +903,48 @@ export default function CancellationStatusManager({
           request={statementTarget}
           onClose={() => setStatementTarget(null)}
         />
+      )}
+
+      {/* Floating Sticky Quick Action & Refund Summary Bar when selections exist */}
+      {selectedStats && (
+        <div className="fixed bottom-4 left-4 right-4 sm:left-8 sm:right-8 z-40 bg-slate-900/95 text-white p-3.5 sm:p-4 rounded-2xl shadow-2xl border border-slate-700 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-3 animate-in slide-in-from-bottom-5 duration-200">
+          <div className="flex items-center gap-3 sm:gap-6 flex-wrap justify-center sm:justify-start text-xs">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span className="font-bold text-slate-300">
+                العضويات المحددة: <strong className="text-white font-mono text-sm px-2 py-0.5 bg-slate-800 rounded-lg border border-slate-700">{selectedStats.count}</strong>
+              </span>
+            </div>
+
+            <div className="h-4 w-px bg-slate-700 hidden sm:block"></div>
+
+            <div className="flex items-center gap-2">
+              <span className="text-slate-300 font-bold">إجمالي مبلغ الاسترداد:</span>
+              <span className="font-mono text-emerald-400 font-black text-base sm:text-lg">
+                {selectedStats.totalRefund.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-sans text-emerald-300">ج.م</span>
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold rounded-xl transition-colors cursor-pointer border border-slate-700"
+            >
+              الانتقال لشريط التحديث ⬆
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedIds([])}
+              className="px-3.5 py-1.5 bg-rose-950/80 hover:bg-rose-900 text-rose-300 text-xs font-bold rounded-xl transition-colors cursor-pointer border border-rose-800/50"
+            >
+              إلغاء التحديد ✕
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
