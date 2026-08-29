@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
-import { createServer as createViteServer } from "vite";
 import { sqlDb, pool, ensureTablesExist } from "./src/db/index.js";
 import { appData } from "./src/db/schema.js";
 import { eq } from "drizzle-orm";
@@ -3167,6 +3166,7 @@ async function startServer() {
 
     if (process.env.NODE_ENV !== "production") {
       console.log("Initializing Vite dev server middleware...");
+      const { createServer: createViteServer } = await import("vite");
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
