@@ -3,8 +3,8 @@ import path from "path";
 import fs from "fs";
 import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
-import { sqlDb, pool, ensureTablesExist } from "./src/db/index";
-import { appData } from "./src/db/schema";
+import { sqlDb, pool, ensureTablesExist } from "./src/db/index.js";
+import { appData } from "./src/db/schema.js";
 import { eq } from "drizzle-orm";
 
 // Safety handlers to prevent server crashes from unhandled network errors (e.g. unreachable external DB)
