@@ -19,6 +19,25 @@
     print-color-adjust: exact !important;
     box-sizing: border-box !important;
   }
+    /* Isolate the actively-printing element: hide everything, then re-show only the print target */
+  body * {
+    visibility: hidden !important;
+  }
+  .settlement-print-backdrop, .settlement-print-backdrop *,
+  .sheet-companies, .sheet-companies *,
+  #sheet, #sheet *,
+  .print-canvas, .print-canvas *,
+  #print-hub-canvas-sheet, #print-hub-canvas-sheet * {
+    visibility: visible !important;
+  }
+  .settlement-print-backdrop {
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+  }
+
+  /* Hide all non-printable UI elements, browser chrome, and navigation */
+  header,
 
   /* Hide all non-printable UI elements, browser chrome, and navigation */
   header,
