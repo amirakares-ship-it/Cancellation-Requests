@@ -2063,7 +2063,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             }
             @media print {
               body * { visibility: hidden !important; }
-              .sheet-companies, .sheet-companies *, #sheet, #sheet * { visibility: visible !important; }
+              .sheet-companies, .sheet-companies *, #sheet, #sheet *,
+              .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
               body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; visibility: hidden !important; }
               body { background: #fff !important; padding: 0 !important; }
