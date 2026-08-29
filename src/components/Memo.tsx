@@ -1841,7 +1841,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             .note-line { margin: var(--section-gap) 0; line-height:1.8; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 
             table.deduct {
-              width: 100%;
+              width: ${showSideTable && (sideTablePosition === 'right' || sideTablePosition === 'left') ? `calc(100% - ${sideTableWidth + sideTableGap}px)` : '100%'};
               border-collapse: collapse;
               margin: var(--table-margin) 0;
             }
@@ -1924,17 +1924,18 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
 
             .footer-flex {
               display: flex;
+              width: fit-content;
               gap: 16px;
               align-items: flex-start;
               margin-top: var(--table-margin);
             }
             .footer-table.narrow {
-              width: 58%;
+              width: 340px;
               margin-top: 0;
               flex-shrink: 0;
             }
             .sign-block {
-              flex: 1;
+              flex: 0 0 220px;
               display: flex;
               flex-direction: column;
             }
@@ -2061,9 +2062,14 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               background: #fff7ed;
             }
             @media print {
+              body * { visibility: hidden !important; }
+              .sheet-companies, .sheet-companies *, #sheet, #sheet * { visibility: visible !important; }
+              body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; visibility: hidden !important; }
               body { background: #fff !important; padding: 0 !important; }
               .sheet-companies, #sheet {
+                position: fixed !important;
+                inset: 0 !important;
                 border: 3px solid #000 !important;
                 width: 190mm !important;
                 max-width: 190mm !important;
