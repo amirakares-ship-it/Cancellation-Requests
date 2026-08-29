@@ -146,6 +146,10 @@
     display: block !important;
     width: 100% !important;
   }
+    body:has(.settlement-print-backdrop) #root {
+    height: 0 !important;
+    overflow: hidden !important;
+  }
 
   .settlement-print-card,
   #settlement-statement-print-card {
