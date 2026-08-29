@@ -136,8 +136,8 @@
 
   /* Printable Settlement Statement */
   .settlement-print-backdrop {
-    position: static !important;
-    inset: auto !important;
+    position: fixed !important;
+    inset: 0 !important;
     background: #ffffff !important;
     padding: 0 !important;
     margin: 0 !important;
