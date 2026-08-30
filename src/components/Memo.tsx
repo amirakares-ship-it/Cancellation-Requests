@@ -1911,6 +1911,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
 
             .footer-table {
               width:100%;
+              table-layout: fixed;
               border-collapse: collapse;
               margin-top: var(--table-margin);
             }
