@@ -1766,6 +1766,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             .grid-table-wrapper {
               position: relative;
               display: flex;
+              width: 100%;
               flex-direction: ${sideTablePosition === 'left' ? 'row-reverse' : sideTablePosition === 'top' ? 'column-reverse' : sideTablePosition === 'bottom' ? 'column' : 'row'};
               align-items: flex-start;
               gap: ${sideTableGap}px;
@@ -3044,12 +3045,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                     className="label sign-name-text"
                     contentEditable={true}
                     suppressContentEditableWarning={true}
+                    style={{ display: 'block', textAlign: 'center', width: '100%' }}
                     onBlur={(e) => {
                       const val = e.currentTarget.textContent?.replace(/\u00a0/g, ' ')?.trim();
                       if (val) setMemoTexts(prev => ({ ...prev, signName: val }));
                     }}
                   >
-                    &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; {memoTexts.signName || 'صفوت رجائى'}
+                    {memoTexts.signName || 'صفوت رجائى'}
                   </span>
                 </div>
                 <div className="signature-space"></div>
