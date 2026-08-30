@@ -2930,14 +2930,22 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                             {dRow.tag}
                             <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'deductCol1', deductCol1Width)} />
                           </td>
-                          <td className="amount placeholder" style={isRowBold ? { fontWeight: 'bold' } : undefined}>
-                            {dRow.amount || ''}{dRow.amount && dRow.amount.trim() !== '' && dRow.amount !== '-' && !dRow.amount.startsWith('[') && dRow.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {dRow.unit}</span> : ''}
-                            <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'deductCol2', deductCol2Width)} />
-                          </td>
-                          <td className="desc" style={isRowBold ? { fontWeight: 'bold' } : undefined}>
-                            {dRow.desc}
-                            <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'deductCol4', deductCol4Width)} />
-                          </td>
+                          {isLastSpecialRow ? (
+                            <td className="amount placeholder" colSpan={2} style={{ ...(isRowBold ? { fontWeight: 'bold' } : undefined), whiteSpace: 'normal', textAlign: 'center' }}>
+                              {dRow.desc} {dRow.amount || ''}{dRow.amount && dRow.amount.trim() !== '' && dRow.amount !== '-' && !dRow.amount.startsWith('[') && dRow.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {dRow.unit}</span> : ''}
+                            </td>
+                          ) : (
+                            <>
+                              <td className="amount placeholder" style={isRowBold ? { fontWeight: 'bold' } : undefined}>
+                                {dRow.amount || ''}{dRow.amount && dRow.amount.trim() !== '' && dRow.amount !== '-' && !dRow.amount.startsWith('[') && dRow.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {dRow.unit}</span> : ''}
+                                <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'deductCol2', deductCol2Width)} />
+                              </td>
+                              <td className="desc" style={isRowBold ? { fontWeight: 'bold' } : undefined}>
+                                {dRow.desc}
+                                <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'deductCol4', deductCol4Width)} />
+                              </td>
+                            </>
+                          )}
                         </tr>
                       );
                     })}
