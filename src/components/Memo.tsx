@@ -2928,7 +2928,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                         <tr key={idx} style={isRowBold ? { fontWeight: 'bold' } : undefined}>
                           {isLastSpecialRow ? (
                             <td className="amount placeholder" colSpan={3} style={{ ...(isRowBold ? { fontWeight: 'bold' } : undefined), whiteSpace: 'normal', textAlign: 'center' }}>
-                              {dRow.desc} {dRow.amount || ''}{dRow.amount && dRow.amount.trim() !== '' && dRow.amount !== '-' && !dRow.amount.startsWith('[') && dRow.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {dRow.unit}</span> : ''} {dRow.tag}
+                              {dRow.tag} {dRow.amount || ''}{dRow.amount && dRow.amount.trim() !== '' && dRow.amount !== '-' && !dRow.amount.startsWith('[') && dRow.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {dRow.unit}</span> : ''} {dRow.desc}
                             </td>
                           ) : (
                             <>
