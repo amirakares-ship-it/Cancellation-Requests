@@ -1842,6 +1842,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
 
             table.deduct {
               width: ${showSideTable && (sideTablePosition === 'right' || sideTablePosition === 'left') ? `calc(100% - ${sideTableWidth + sideTableGap}px)` : '100%'};
+              table-layout: fixed;
               border-collapse: collapse;
               margin: var(--table-margin) 0;
             }
