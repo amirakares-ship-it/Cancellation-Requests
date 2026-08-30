@@ -2070,6 +2070,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
               body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; visibility: hidden !important; }
+              .sign-name-print-only { display: block !important; visibility: visible !important; }
               body { background: #fff !important; padding: 0 !important; }
               .sheet-companies, #sheet {
                 position: fixed !important;
@@ -3051,7 +3052,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               <div className="sign-block">
                 <div className="field-line">
                   <span
-                    className="label sign-name-text"
+                    className="label sign-name-text no-print"
                     contentEditable={true}
                     suppressContentEditableWarning={true}
                     style={{ display: 'block', textAlign: 'center', width: '100%' }}
@@ -3059,6 +3060,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                       const val = e.currentTarget.textContent?.replace(/\u00a0/g, ' ')?.trim();
                       if (val) setMemoTexts(prev => ({ ...prev, signName: val }));
                     }}
+                  >
+                    {memoTexts.signName || 'صفوت رجائى'}
+                  </span>
+                  <span
+                    className="label sign-name-print-only"
+                    style={{ display: 'none', textAlign: 'center', width: '100%', color: '#000', fontWeight: 'bold' }}
                   >
                     {memoTexts.signName || 'صفوت رجائى'}
                   </span>
