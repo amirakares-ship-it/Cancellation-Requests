@@ -1842,10 +1842,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             .note-line { margin: var(--section-gap) 0; line-height:1.8; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 
             table.deduct {
-              width: ${showSideTable && (sideTablePosition === 'right' || sideTablePosition === 'left') ? `calc(100% - ${sideTableWidth + sideTableGap}px)` : '100%'};
+              width: fit-content;
               table-layout: fixed;
               border-collapse: collapse;
-              margin: var(--table-margin) 0;
+              margin: var(--table-margin) 0 var(--table-margin) auto;
             }
             table.deduct td, table.deduct th {
               border: var(--tbl-border-w) solid var(--tbl-border-c);
