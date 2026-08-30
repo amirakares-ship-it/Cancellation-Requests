@@ -2065,7 +2065,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               background: #fff7ed;
             }
             @media print {
-              body * { visibility: hidden !important; }
+              body * { visibility: hidden !important; transform: none !important; overflow: visible !important; max-height: none !important; }
               .sheet-companies, .sheet-companies *, #sheet, #sheet *,
               .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
               body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
