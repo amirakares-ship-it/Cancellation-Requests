@@ -1671,7 +1671,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               --tbl-border-w: ${tableBorderWidth};
               --tbl-border-c: ${tableBorderColor};
             }
-            @page { size: A4; margin: 12mm; }
+            @page { size: A4; margin: 6mm; }
             .sheet-companies {
               font-family: var(--font-family, 'Calibri'), 'Calibri', 'Arial', sans-serif;
               font-size: var(--font-size);
@@ -2072,15 +2072,17 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 position: fixed !important;
                 inset: 0 !important;
                 border: 3px solid #000 !important;
-                width: 190mm !important;
-                max-width: 190mm !important;
-                min-width: 190mm !important;
-                margin: 8mm auto !important;
-                padding: 6mm 10mm 4mm 10mm !important;
+                width: 198mm !important;
+                max-width: 198mm !important;
+                min-width: 198mm !important;
+                margin: 4mm auto !important;
+                padding: 4mm 5mm 2mm 5mm !important;
                 box-sizing: border-box !important;
                 box-shadow: none !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
+                transform: scale(0.97) !important;
+                transform-origin: top center !important;
               }
             }
           `}</style>
