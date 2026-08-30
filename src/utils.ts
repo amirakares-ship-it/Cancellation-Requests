@@ -1352,21 +1352,55 @@ export function cleanLeadingZero(val: string | number): string {
  * selection highlight cleanup, and instant native print preview triggering.
  */
 export function printElement(element: HTMLElement | null | string, documentTitle: string = 'طباعة المستند') {
-  // Remove any visual editing selection highlights
-  document.querySelectorAll('.selected-line').forEach(el => el.classList.remove('selected-line'));
+  const el: HTMLElement | null =
+    typeof element === 'string' ? document.getElementById(element) : element;
 
-  const originalTitle = document.title;
-  if (documentTitle) {
-    document.title = documentTitle;
+  if (!el) {
+    console.error('printElement: target element not found');
+    return;
   }
 
-  // Trigger native browser print dialog directly
-  window.focus();
-  window.print();
+  // Remove any visual editing selection highlights before capturing content
+  document.querySelectorAll('.selected-line').forEach((node) => node.classList.remove('selected-line'));
 
-  setTimeout(() => {
-    document.title = originalTitle;
-  }, 1000);
+  // Grab every <style> and <link rel="stylesheet"> currently in the page so the
+  // print window has identical styling to what's on screen.
+  const styleNodes = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
+    .map((node) => node.outerHTML)
+    .join('\n');
+
+  const printWindow = window.open('', '_blank', 'width=900,height=1000');
+  if (!printWindow) {
+    alert('يرجى السماح للنوافذ المنبثقة (Pop-ups) في المتصفح لإتمام عملية الطباعة');
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(`<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8" />
+<title>${documentTitle}</title>
+${styleNodes}
+<style>
+  html, body { margin: 0; padding: 0; background: #fff; }
+  body { display: flex; justify-content: center; padding: 12px 0; }
+</style>
+</head>
+<body>
+${el.outerHTML}
+</body>
+</html>`);
+  printWindow.document.close();
+
+  printWindow.onload = () => {
+    printWindow.focus();
+    printWindow.print();
+  };
+
+  printWindow.onafterprint = () => {
+    printWindow.close();
+  };
 }
 
 /**
