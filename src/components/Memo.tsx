@@ -2073,7 +2073,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               body { background: #fff !important; padding: 0 !important; }
               .sheet-companies, #sheet {
                 position: fixed !important;
-                inset: 0 !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: auto !important;
                 border: 3px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
