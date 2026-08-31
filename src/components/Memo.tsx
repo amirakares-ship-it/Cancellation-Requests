@@ -2077,14 +2077,16 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .sign-block { display: table-cell !important; vertical-align: top !important; width: 340px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
-              .footer-table.narrow td.lbl { width: 130px !important; }
-              panies, #sheet {
+              .footer-table.narrow td.lbl { width: 100px !important; }
+              .sheet-companies, #sheet {
                 position: fixed !important;
                 top: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
                 height: auto !important;
-                border: 3px solid #000 !important;
+                print-color-adjust: exact !important;
+  -webkit-print-color-adjust: exact !important;
+  border: 4px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
                 min-width: 780px !important;
