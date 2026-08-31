@@ -2073,7 +2073,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .sign-name-print-only { display: block !important; visibility: visible !important; }
               .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
               .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 220px !important; padding-right: 16px !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 280px !important; padding-right: 30px !important; text-align: center !important; }
+              table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               body { background: #fff !important; padding: 0 !important; }
               .sheet-companies, #sheet {
                 position: fixed !important;
