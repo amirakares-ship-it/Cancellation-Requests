@@ -2074,7 +2074,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .sign-name-print-only { display: block !important; visibility: visible !important; }
               .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
               .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 340px !important; padding-right: 30px !important; text-align: center !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 420px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               .footer-table.narrow td.lbl { width: 100px !important; }
@@ -2090,7 +2090,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 width: 780px !important;
                 max-width: 780px !important;
                 min-width: 780px !important;
-                margin: 0 auto !important;
+                margin: 0 auto 20mm auto !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 box-shadow: none !important;
