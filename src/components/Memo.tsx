@@ -2065,38 +2065,27 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               outline: 2px solid #d97706 !important;
               background: #fff7ed;
             }
-            @media print {
-              body * { visibility: hidden !important; transform: none !important; overflow: visible !important; max-height: none !important; }
-              .sheet-companies, .sheet-companies *, #sheet, #sheet *,
-              .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
-              body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
-              .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; visibility: hidden !important; }
-              .sign-name-print-only { display: block !important; visibility: visible !important; }
-              .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
-              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 420px !important; padding-right: 30px !important; text-align: center !important; }
-              table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
-              table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
-              .footer-table.narrow td.lbl { width: 100px !important; }
+                        @media print {
+              .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
+              body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
-                position: fixed !important;
-                top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
-                height: auto !important;
-                print-color-adjust: exact !important;
-  -webkit-print-color-adjust: exact !important;
-  border: 4px solid #000 !important;
+                border: 4px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
-                min-width: 780px !important;
                 margin: 0 auto 20mm auto !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
-                box-shadow: none !important;
-                page-break-inside: avoid !important;
-                break-inside: avoid !important;
+                print-color-adjust: exact !important;
+                -webkit-print-color-adjust: exact !important;
               }
+              .sign-name-text { display: none !important; }
+              .sign-name-print-only { display: block !important; }
+              .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
+              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
+              .footer-table.narrow td.lbl { width: 100px !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 420px !important; padding-right: 30px !important; text-align: center !important; }
+              table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
+              .doc-footer { border-top: none !important; }
             }
           `}</style>
 
