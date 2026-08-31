@@ -1923,7 +1923,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               vertical-align: middle;
               white-space: nowrap !important;
             }
-            .footer-table td.lbl { font-weight:bold; width: 190px; text-align:right; }
+            .footer-table td.lbl { font-weight:bold; width: 130px; text-align:right; }
 
             .footer-flex {
               display: flex;
@@ -1942,13 +1942,14 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               flex-direction: column;
             }
+            .doc-footer {
             .signature-space {
               height: 70px;
               border-bottom: 1px solid #999;
               margin-top: 4px;
             }
 
-            .doc-footer {
+            
               border-top: 2px solid #000;
               margin-top: 20px;
               padding: 10px 0;
@@ -1962,7 +1963,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             .doc-control-box {
               border: 1.5px solid #e05a5a;
               color:#e05a5a;
-              padding: 8px 14px;
+              padding: 14px 14px 22px 14px;
               font-size: 0.8em;
               font-weight: 600;
               text-align:center;
@@ -2075,8 +2076,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
               .sign-block { display: table-cell !important; vertical-align: top !important; width: 340px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
-              body { background: #fff !important; padding: 0 !important; }
-              .sheet-companies, #sheet {
+              table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
+              .footer-table.narrow td.lbl { width: 130px !important; }
+              panies, #sheet {
                 position: fixed !important;
                 top: 0 !important;
                 left: 0 !important;
