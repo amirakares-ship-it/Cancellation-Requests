@@ -2071,6 +2071,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; visibility: hidden !important; }
               .sign-name-print-only { display: block !important; visibility: visible !important; }
+              .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
+              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 220px !important; padding-right: 16px !important; }
               body { background: #fff !important; padding: 0 !important; }
               .sheet-companies, #sheet {
                 position: fixed !important;
