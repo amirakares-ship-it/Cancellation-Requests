@@ -2075,17 +2075,29 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                    (safely inside the printable area) and centered with
                    left:50% + translateX(-50%), which -- unlike
                    left:0;right:0;margin:auto -- centers correctly even
-                   when the box is close to the page width. */
+                   when the box is close to the page width.
+
+                   min-height (instead of a fixed height) makes the border
+                   box stretch down to fill almost the whole printable page
+                   when a form's content happens to be short (e.g. "Diff"
+                   without the loan line), instead of leaving a big blank
+                   gap under the border -- while still letting the box
+                   grow taller for forms/requests with more lines, since
+                   min-height only sets a floor, not a ceiling. The 15mm
+                   fixed bottom margin was removed since it was fighting
+                   against this (asking for a full page PLUS 15mm more,
+                   which can't fit on one sheet). */
                 position: fixed !important;
                 top: 0 !important;
                 left: 50% !important;
                 right: auto !important;
                 transform: translateX(-50%) !important;
                 height: auto !important;
+                min-height: 283mm !important;
                 border: 3px solid #000 !important;
                 width: 740px !important;
                 max-width: 740px !important;
-                margin: 0 0 15mm 0 !important;
+                margin: 0 !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
                 padding: 14px 22px 0 22px !important;
