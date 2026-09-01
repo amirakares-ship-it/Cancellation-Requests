@@ -2077,8 +2077,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 margin: 0 auto 15mm auto !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                transform: scale(0.96) !important;
-                transform-origin: top center !important;
+                transform: scale(0.94) !important;
+                transform-origin: center center !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
@@ -2087,9 +2087,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               .footer-flex { display: table !important; width: fit-content !important; table-layout: fixed !important; border-collapse: collapse !important; }
-              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 380px !important; }
+              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 380px !important; min-width: 380px !important; max-width: 380px !important; }
               .footer-table.narrow td.lbl { width: 100px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; padding-right: 30px !important; text-align: center !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; min-width: 480px !important; max-width: 480px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               .doc-footer { border-top: none !important; }
             }
