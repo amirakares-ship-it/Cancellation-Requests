@@ -2114,6 +2114,16 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                  centered content leftward). */
               .sign-name-print-only { text-align: center !important; padding-right: 40px !important; padding-left: 0 !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
+              /* Companies form has an extra line ("القرض بإسم /") that the
+                 other forms don't. Its default spacing (5px margin above
+                 and below every .field-line) pushed the total content
+                 just tall enough to spill onto a second printed page --
+                 which is why the bottom border wasn't showing on page 1.
+                 Tightening the gap right around this one line specifically
+                 (instead of shrinking every field's spacing) brings it
+                 back to a single page. */
+              .name-field-line { margin-bottom: 0 !important; }
+              .loan-field-line { margin-top: 0 !important; margin-bottom: 2px !important; }
               .doc-footer { border-top: none !important; }
             }
           `}</style>
