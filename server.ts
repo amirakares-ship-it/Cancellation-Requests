@@ -479,6 +479,7 @@ const DEFAULT_DB = {
 
 // Database state
 let db: any = { ...DEFAULT_DB };
+let dbSourceIsSafe = false;
 
 let isDbLoaded = false;
 let dbLoadPromise: Promise<void> | null = null;
@@ -486,6 +487,7 @@ let dbLoadPromise: Promise<void> | null = null;
 // Load Database from disk & PostgreSQL (Neon / Cloud SQL)
 async function loadDb() {
   try {
+    dbSourceIsSafe = false;
     let loadedFromSql = false;
     if (sqlDb && pool) {
       try {
@@ -493,13 +495,17 @@ async function loadDb() {
         const queryPromise = sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
         queryPromise.catch(() => {});
         const timeoutPromise = new Promise<any[]>((_, reject) =>
-          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 2500)
+          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 15000)
         );
         const rows = await Promise.race([queryPromise, timeoutPromise]);
         if (rows && rows.length > 0 && rows[0].data) {
           db = rows[0].data;
           loadedFromSql = true;
+          dbSourceIsSafe = true;
           console.log("Database successfully loaded from PostgreSQL.");
+        } else if (rows && rows.length === 0) {
+          // Genuinely empty database (first-ever run) - safe to initialize with defaults
+          dbSourceIsSafe = true;
         }
       } catch (sqlErr) {
         console.warn("Could not query PostgreSQL on load, falling back to safe local store:", sqlErr);
@@ -616,6 +622,11 @@ function saveDb() {
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   } catch (err) {
     // Expected on read-only environments like Vercel
+  }
+
+  if (!dbSourceIsSafe) {
+    console.error("BLOCKED: refusing to sync to PostgreSQL because the in-memory data was not confirmed loaded from the real database (avoids overwriting real data with a stale/default fallback).");
+    return;
   }
 
   // PostgreSQL background/serverless persistence
