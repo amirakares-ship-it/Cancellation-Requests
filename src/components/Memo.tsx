@@ -1671,7 +1671,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               --tbl-border-w: ${tableBorderWidth};
               --tbl-border-c: ${tableBorderColor};
             }
-            @page { size: A4; margin: 2mm; }
+            @page { size: A4; margin: 5mm; }
             .sheet-companies {
               font-family: var(--font-family, 'Calibri'), 'Calibri', 'Arial', sans-serif;
               font-size: var(--font-size);
@@ -2077,7 +2077,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 margin: 0 auto 15mm auto !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                transform: scale(0.985) !important;
+                transform: scale(0.96) !important;
                 transform-origin: top center !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
