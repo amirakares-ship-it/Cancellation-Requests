@@ -1735,6 +1735,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
 
             table.grid {
               width: 100%;
+              table-layout: fixed;
               border-collapse: collapse;
               margin: var(--table-margin) 0;
             }
@@ -1942,15 +1943,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               flex-direction: column;
             }
-            .doc-footer {
             .signature-space {
               height: 70px;
               border-bottom: 1px solid #999;
               margin-top: 4px;
             }
-
-            
-              border-top: 2px solid #000;
+            .doc-footer {
               margin-top: 20px;
               padding: 10px 0;
               display: flex;
@@ -2065,14 +2063,14 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               outline: 2px solid #d97706 !important;
               background: #fff7ed;
             }
-                        @media print {
+            @media print {
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
               body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
                 border: 4px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
-                margin: 0 auto 20mm auto !important;
+                margin: 0 auto 25mm auto !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
@@ -2083,7 +2081,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
               .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
               .footer-table.narrow td.lbl { width: 100px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 420px !important; padding-right: 30px !important; text-align: center !important; }
+              .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               .doc-footer { border-top: none !important; }
             }
