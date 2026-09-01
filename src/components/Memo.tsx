@@ -2067,20 +2067,39 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
               body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
+                /* A4 minus the 5mm @page margins on each side leaves about
+                   ~756px of printable width. The box was fixed at 780px
+                   (wider than that), so it always overflowed off one edge
+                   no matter how it was centered -- which is why the left
+                   border kept looking cut off/missing. It's now 740px
+                   (safely inside the printable area) and centered with
+                   left:50% + translateX(-50%), which -- unlike
+                   left:0;right:0;margin:auto -- centers correctly even
+                   when the box is close to the page width.
+
+                   min-height (instead of a fixed height) makes the border
+                   box stretch down to fill almost the whole printable page
+                   when a form's content happens to be short (e.g. "Diff"
+                   without the loan line), instead of leaving a big blank
+                   gap under the border -- while still letting the box
+                   grow taller for forms/requests with more lines, since
+                   min-height only sets a floor, not a ceiling. The 15mm
+                   fixed bottom margin was removed since it was fighting
+                   against this (asking for a full page PLUS 15mm more,
+                   which can't fit on one sheet). */
                 position: fixed !important;
                 top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
+                left: 50% !important;
+                right: auto !important;
+                transform: translateX(-50%) !important;
                 height: auto !important;
-                border: 4px solid #000 !important;
-                width: 780px !important;
-                max-width: 780px !important;
-                margin: 0 auto 15mm auto !important;
+                min-height: 283mm !important;
+                border: 3px solid #000 !important;
+                width: 740px !important;
+                max-width: 740px !important;
+                margin: 0 !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                transform: scale(0.94) !important;
-                transform-origin: center center !important;
-                margin-left: 25mm !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
@@ -2088,11 +2107,41 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
-              .footer-flex { display: table !important; width: fit-content !important; table-layout: fixed !important; border-collapse: collapse !important; }
-              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 380px !important; min-width: 380px !important; max-width: 380px !important; }
-              .footer-table.narrow td.lbl { width: 100px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; min-width: 480px !important; max-width: 480px !important; padding-right: 80px !important; text-align: center !important; }
+              /* Footer/signatures block: 340px (labels table) + 300px
+                 (signature column) = 640px, safely inside the 740px page
+                 above with room to spare. */
+              .footer-flex { display: flex !important; width: fit-content !important; gap: 16px !important; align-items: flex-start !important; }
+              /* table-layout:auto (instead of the base .footer-table's
+                 "fixed") lets the label column size itself to fit
+                 whichever label text is actually longest ("ملاحظات
+                 الإدارة المالية :") instead of a fixed px guess -- which
+                 is exactly why text was spilling into the empty value
+                 cell next to it. */
+              .footer-table.narrow { width: 340px !important; min-width: 340px !important; max-width: 340px !important; flex-shrink: 0 !important; table-layout: auto !important; }
+              .footer-table.narrow td.lbl { width: auto !important; white-space: nowrap !important; }
+              .sign-block { flex: 0 0 300px !important; width: 300px !important; display: flex !important; flex-direction: column !important; }
+              /* Keep "صفوت رجائى" centered in the empty space, but nudged
+                 a bit to the left (padding-right shrinks the box it's
+                 centered within from the right side, which visually pulls
+                 centered content leftward). */
+              .sign-name-print-only { text-align: center !important; padding-right: 40px !important; padding-left: 0 !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
+              /* Companies form has an extra line ("القرض بإسم /") that the
+                 other forms don't. Its default spacing (5px margin above
+                 and below every .field-line) pushed the total content
+                 just tall enough to spill onto a second printed page --
+                 which is why the bottom border wasn't showing on page 1.
+                 Tightening the gap right around this one line specifically
+                 (instead of shrinking every field's spacing) brings it
+                 back to a single page. */
+              .name-field-line { margin-bottom: 0 !important; }
+              .loan-field-line { margin-top: 0 !important; margin-bottom: 2px !important; }
+              /* Trim the (fairly large, 20px + 35px) margins around the
+                 very last element -- the "Document Control" bar -- which
+                 sits right after the signatures table and was adding
+                 enough extra height on its own to push the page over one
+                 A4 sheet. */
+              .doc-footer { margin-top: 8px !important; padding: 4px 0 !important; margin-bottom: 4px !important; }
               .doc-footer { border-top: none !important; }
             }
           `}</style>
