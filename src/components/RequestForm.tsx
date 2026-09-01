@@ -711,8 +711,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   onChange={(e) => {
                     let val = e.target.value;
                     if (user.role !== 'international_user') {
-                      // Club users: digits only, no letters or dashes
+                      // All non-international users (including admin/managers): digits only
                       val = val.replace(/[^0-9]/g, '');
+                      // Block any value starting with the reserved prefix 00400
+                      if (val.startsWith('00400')) {
+                        return; // Ignore this keystroke entirely
+                      }
                     }
                     setMembershipNumber(val);
                   }}
