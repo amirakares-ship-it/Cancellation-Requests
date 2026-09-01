@@ -2086,8 +2086,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
-              .footer-flex { display: table !important; width: fit-content !important; border-collapse: collapse !important; }
-              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 340px !important; }
+              .footer-flex { display: table !important; width: fit-content !important; table-layout: fixed !important; border-collapse: collapse !important; }
+              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 380px !important; }
               .footer-table.narrow td.lbl { width: 100px !important; }
               .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; padding-right: 30px !important; text-align: center !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
