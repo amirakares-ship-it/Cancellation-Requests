@@ -2067,22 +2067,25 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
               body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
-                /* Print now mirrors the on-screen ".sheet-companies" rule
-                   exactly: same 780px width, same 3px border, same
-                   centering via "margin: 0 auto", and no artificial
-                   scale/shift. Previously this block scaled the memo down
-                   to 94% and pushed it 25mm to the side, which made the
-                   printed page look different from what was shown on
-                   screen. */
+                /* A4 minus the 5mm @page margins on each side leaves about
+                   ~756px of printable width. The box was fixed at 780px
+                   (wider than that), so it always overflowed off one edge
+                   no matter how it was centered -- which is why the left
+                   border kept looking cut off/missing. It's now 740px
+                   (safely inside the printable area) and centered with
+                   left:50% + translateX(-50%), which -- unlike
+                   left:0;right:0;margin:auto -- centers correctly even
+                   when the box is close to the page width. */
                 position: fixed !important;
                 top: 0 !important;
-                left: 0 !important;
-                right: 0 !important;
+                left: 50% !important;
+                right: auto !important;
+                transform: translateX(-50%) !important;
                 height: auto !important;
                 border: 3px solid #000 !important;
-                width: 780px !important;
-                max-width: 780px !important;
-                margin: 0 auto 15mm auto !important;
+                width: 740px !important;
+                max-width: 740px !important;
+                margin: 0 0 15mm 0 !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
                 padding: 14px 22px 0 22px !important;
@@ -2092,21 +2095,24 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
-              /* The previous print-only footer widths (380px + 480px =
-                 860px) added up to MORE than the printable page width
-                 (~730px), so the signatures block overflowed past the
-                 sheet's left border -- which is exactly why that border
-                 looked missing. These new widths (340px + 300px = 656px)
-                 fit safely inside the page, widen the signatures block a
-                 bit versus the on-screen 220px (per request), and keep
-                 everything inside the border. */
+              /* Footer/signatures block: 340px (labels table) + 300px
+                 (signature column) = 640px, safely inside the 740px page
+                 above with room to spare. */
               .footer-flex { display: flex !important; width: fit-content !important; gap: 16px !important; align-items: flex-start !important; }
-              .footer-table.narrow { width: 340px !important; min-width: 340px !important; max-width: 340px !important; flex-shrink: 0 !important; }
-              .footer-table.narrow td.lbl { width: 100px !important; }
+              /* table-layout:auto (instead of the base .footer-table's
+                 "fixed") lets the label column size itself to fit
+                 whichever label text is actually longest ("ملاحظات
+                 الإدارة المالية :") instead of a fixed px guess -- which
+                 is exactly why text was spilling into the empty value
+                 cell next to it. */
+              .footer-table.narrow { width: 340px !important; min-width: 340px !important; max-width: 340px !important; flex-shrink: 0 !important; table-layout: auto !important; }
+              .footer-table.narrow td.lbl { width: auto !important; white-space: nowrap !important; }
               .sign-block { flex: 0 0 300px !important; width: 300px !important; display: flex !important; flex-direction: column !important; }
-              /* Shift "صفوت رجائى" a bit to the right instead of dead
-                 center inside the (now wider) signatures block. */
-              .sign-name-print-only { text-align: right !important; padding-right: 36px !important; }
+              /* Keep "صفوت رجائى" centered in the empty space, but nudged
+                 a bit to the left (padding-right shrinks the box it's
+                 centered within from the right side, which visually pulls
+                 centered content leftward). */
+              .sign-name-print-only { text-align: center !important; padding-right: 40px !important; padding-left: 0 !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               .doc-footer { border-top: none !important; }
             }
