@@ -2064,9 +2064,18 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               background: #fff7ed;
             }
             @media print {
+              body * { visibility: hidden !important; }
+              .sheet-companies, .sheet-companies *, #sheet, #sheet *,
+              .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
+              body:has(.sheet-companies) #root, body:has(#sheet) #root { height: 0 !important; overflow: hidden !important; }
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
               body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
+                position: fixed !important;
+                top: 0 !important;
+                left: 0 !important;
+                right: 0 !important;
+                height: auto !important;
                 border: 4px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;

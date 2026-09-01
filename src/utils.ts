@@ -1352,64 +1352,22 @@ export function cleanLeadingZero(val: string | number): string {
  * selection highlight cleanup, and instant native print preview triggering.
  */
 export function printElement(element: HTMLElement | null | string, documentTitle: string = 'طباعة المستند') {
-  const el: HTMLElement | null =
-    typeof element === 'string' ? document.getElementById(element) : element;
+  // Remove any visual editing selection highlights
+  document.querySelectorAll('.selected-line').forEach(el => el.classList.remove('selected-line'));
 
-  if (!el) {
-    console.error('printElement: target element not found');
-    return;
+  const originalTitle = document.title;
+  if (documentTitle) {
+    document.title = documentTitle;
   }
 
-  // Remove any visual editing selection highlights before capturing content
-  document.querySelectorAll('.selected-line').forEach((node) => node.classList.remove('selected-line'));
+  // Trigger native browser print dialog directly
+  window.focus();
+  window.print();
 
-  // Grab every <style> and <link rel="stylesheet"> currently in the page so the
-  // print window has identical styling to what's on screen.
-  const styleNodes = Array.from(document.querySelectorAll('style, link[rel="stylesheet"]'))
-    .map((node) => {
-      if (node.tagName === 'LINK') {
-        const href = node.getAttribute('href') || '';
-        const absoluteHref = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
-        return `<link rel="stylesheet" href="${absoluteHref}">`;
-      }
-      return node.outerHTML;
-    })
-    .join('\n');
-
-  const printWindow = window.open('', '_blank', 'width=900,height=1000');
-  if (!printWindow) {
-    alert('يرجى السماح للنوافذ المنبثقة (Pop-ups) في المتصفح لإتمام عملية الطباعة');
-    return;
-  }
-
-  printWindow.document.open();
-  printWindow.document.write(`<!DOCTYPE html>
-<html dir="rtl" lang="ar">
-<head>
-<meta charset="utf-8" />
-<title>${documentTitle}</title>
-${styleNodes}
-<style>
-  html, body { margin: 0; padding: 0; background: #fff; }
-  body { display: flex; justify-content: center; padding: 12px 0; }
-</style>
-</head>
-<body>
-${el.outerHTML}
-</body>
-</html>`);
-  printWindow.document.close();
-
-  printWindow.onload = () => {
-    printWindow.focus();
-    printWindow.print();
-  };
-
-  printWindow.onafterprint = () => {
-    printWindow.close();
-  };
+  setTimeout(() => {
+    document.title = originalTitle;
+  }, 1000);
 }
-
 /**
  * Safely extracts and determines the actual rejection reason for a request.
  * Prevents positive/approval remarks (e.g. "طلب مستوفي الشروط ومطابق")
