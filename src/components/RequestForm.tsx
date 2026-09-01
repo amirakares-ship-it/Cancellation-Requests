@@ -405,6 +405,24 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       return;
     }
 
+    // Membership number format rules by user type
+    const trimmedMem = membershipNumber.trim();
+    if (user.role === 'international_user') {
+      if (!trimmedMem.toUpperCase().startsWith('WDI')) {
+        setErrorMessage('رقم العضوية للعضويات الدولية يجب أن يبدأ بـ WDI');
+        return;
+      }
+    } else {
+      if (!/^[0-9]+$/.test(trimmedMem)) {
+        setErrorMessage('رقم العضوية يجب أن يتكون من أرقام فقط');
+        return;
+      }
+      if (trimmedMem.startsWith('00400')) {
+        setErrorMessage('رقم العضوية غير صحيح، لا يمكن أن يبدأ بـ 00400');
+        return;
+      }
+    }
+
     // Duplicate Membership Number Validation
     const dupInfo = getMembershipDuplicateInfo(membershipNumber);
     if (dupInfo.isDuplicate && !dupInfo.isAllowedReReview && dupInfo.activeRequest) {
@@ -690,8 +708,15 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   type="text"
                   required
                   value={membershipNumber}
-                  onChange={(e) => setMembershipNumber(e.target.value)}
-                  placeholder="مثال: WD-10500"
+                  onChange={(e) => {
+                    let val = e.target.value;
+                    if (user.role !== 'international_user') {
+                      // Club users: digits only, no letters or dashes
+                      val = val.replace(/[^0-9]/g, '');
+                    }
+                    setMembershipNumber(val);
+                  }}
+                  placeholder={user.role === 'international_user' ? 'مثال: WDI-1050' : 'مثال: 10500'}
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
                 />
 
