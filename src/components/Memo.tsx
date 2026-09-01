@@ -1671,7 +1671,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               --tbl-border-w: ${tableBorderWidth};
               --tbl-border-c: ${tableBorderColor};
             }
-            @page { size: A4; margin: 1mm; }
+            @page { size: A4; margin: 8mm; }
             .sheet-companies {
               font-family: var(--font-family, 'Calibri'), 'Calibri', 'Arial', sans-serif;
               font-size: var(--font-size);
@@ -1943,11 +1943,6 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               flex-direction: column;
             }
-            .signature-space {
-              height: 70px;
-              border-bottom: 1px solid #999;
-              margin-top: 4px;
-            }
             .doc-footer {
               margin-top: 20px;
               padding: 10px 0;
@@ -2079,7 +2074,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 border: 4px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
-                margin: 0 auto 25mm auto !important;
+                margin: 0 auto 15mm auto !important;
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
@@ -3074,7 +3071,6 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                     {memoTexts.signName || 'صفوت رجائى'}
                   </span>
                 </div>
-                <div className="signature-space"></div>
               </div>
             </div>
 
