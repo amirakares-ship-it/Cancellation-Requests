@@ -2124,6 +2124,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                  back to a single page. */
               .name-field-line { margin-bottom: 0 !important; }
               .loan-field-line { margin-top: 0 !important; margin-bottom: 2px !important; }
+              /* Trim the (fairly large, 20px + 35px) margins around the
+                 very last element -- the "Document Control" bar -- which
+                 sits right after the signatures table and was adding
+                 enough extra height on its own to push the page over one
+                 A4 sheet. */
+              .doc-footer { margin-top: 8px !important; padding: 4px 0 !important; margin-bottom: 4px !important; }
               .doc-footer { border-top: none !important; }
             }
           `}</style>
