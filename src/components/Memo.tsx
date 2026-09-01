@@ -2067,20 +2067,24 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .no-print, .memo-toolbar, .row-controls, .col-resizer, .selected-line { display: none !important; }
               body { margin: 0; padding: 0; background: #fff; }
               .sheet-companies, #sheet {
+                /* Print now mirrors the on-screen ".sheet-companies" rule
+                   exactly: same 780px width, same 3px border, same
+                   centering via "margin: 0 auto", and no artificial
+                   scale/shift. Previously this block scaled the memo down
+                   to 94% and pushed it 25mm to the side, which made the
+                   printed page look different from what was shown on
+                   screen. */
                 position: fixed !important;
                 top: 0 !important;
                 left: 0 !important;
                 right: 0 !important;
                 height: auto !important;
-                border: 4px solid #000 !important;
+                border: 3px solid #000 !important;
                 width: 780px !important;
                 max-width: 780px !important;
                 margin: 0 auto 15mm auto !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                transform: scale(0.94) !important;
-                transform-origin: center center !important;
-                margin-left: 25mm !important;
                 padding: 14px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
