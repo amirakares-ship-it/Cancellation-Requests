@@ -2092,10 +2092,21 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
-              .footer-flex { display: table !important; width: fit-content !important; table-layout: fixed !important; border-collapse: collapse !important; }
-              .footer-table.narrow { display: table-cell !important; vertical-align: top !important; width: 380px !important; min-width: 380px !important; max-width: 380px !important; }
+              /* The previous print-only footer widths (380px + 480px =
+                 860px) added up to MORE than the printable page width
+                 (~730px), so the signatures block overflowed past the
+                 sheet's left border -- which is exactly why that border
+                 looked missing. These new widths (340px + 300px = 656px)
+                 fit safely inside the page, widen the signatures block a
+                 bit versus the on-screen 220px (per request), and keep
+                 everything inside the border. */
+              .footer-flex { display: flex !important; width: fit-content !important; gap: 16px !important; align-items: flex-start !important; }
+              .footer-table.narrow { width: 340px !important; min-width: 340px !important; max-width: 340px !important; flex-shrink: 0 !important; }
               .footer-table.narrow td.lbl { width: 100px !important; }
-              .sign-block { display: table-cell !important; vertical-align: top !important; width: 480px !important; min-width: 480px !important; max-width: 480px !important; padding-right: 80px !important; text-align: center !important; }
+              .sign-block { flex: 0 0 300px !important; width: 300px !important; display: flex !important; flex-direction: column !important; }
+              /* Shift "صفوت رجائى" a bit to the right instead of dead
+                 center inside the (now wider) signatures block. */
+              .sign-name-print-only { text-align: right !important; padding-right: 36px !important; }
               table.deduct { width: 430px !important; margin-right: 0 !important; margin-left: auto !important; }
               .doc-footer { border-top: none !important; }
             }
