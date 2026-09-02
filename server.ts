@@ -613,11 +613,12 @@ export async function ensureDbLoaded() {
   await dbLoadPromise;
 }
 
-// Debounce helper for PostgreSQL sync
-let syncTimeout: any = null;
-
-// Save Database to disk and PostgreSQL
-function saveDb() {
+// Save Database to disk and PostgreSQL.
+// IMPORTANT: this is awaited by every caller. On serverless platforms the
+// function execution can be frozen the instant the HTTP response is sent, so
+// a "fire and forget" write risks silently losing data. Awaiting here
+// guarantees the write reaches PostgreSQL before we ever respond.
+async function saveDb() {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   } catch (err) {
@@ -629,35 +630,23 @@ function saveDb() {
     return;
   }
 
-  // PostgreSQL background/serverless persistence
   if (sqlDb) {
-    const doSync = async () => {
-      try {
-        await sqlDb.insert(appData)
-          .values({
-            key: 'main_store',
+    try {
+      await sqlDb.insert(appData)
+        .values({
+          key: 'main_store',
+          data: db,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: appData.key,
+          set: {
             data: db,
             updatedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: appData.key,
-            set: {
-              data: db,
-              updatedAt: new Date(),
-            }
-          });
-      } catch (sqlSyncErr) {
-        // Silently capture SQL sync errors so the dev server never crashes if external DB is unreachable
-      }
-    };
-
-    if (process.env.VERCEL) {
-      doSync().catch(() => {});
-    } else {
-      if (syncTimeout) clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(() => {
-        doSync().catch(() => {});
-      }, 300);
+          }
+        });
+    } catch (sqlSyncErr) {
+      console.error("Error persisting to PostgreSQL:", sqlSyncErr);
     }
   }
 }
@@ -666,7 +655,7 @@ function saveDb() {
 ensureDbLoaded();
 
 // Helper to log audit actions safely
-function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
+async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
   try {
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
       db.auditLogs = [];
@@ -682,7 +671,7 @@ function logAudit(username: string, name: string, role: string, action: string, 
       requestId
     };
     db.auditLogs.unshift(newLog);
-    saveDb();
+    await saveDb();
   } catch (err) {
     console.warn("Could not write audit log:", err);
   }
@@ -693,6 +682,53 @@ app.use(async (req, res, next) => {
   if (req.path.startsWith("/api/")) {
     await ensureDbLoaded();
   }
+  next();
+});
+
+// --- Concurrency safety: serialize write requests with a PostgreSQL advisory lock ---
+// A single fixed lock ID is used for the whole app's data store. Any request that can
+// modify data (POST/PUT/DELETE/PATCH) must acquire this lock before it's allowed to
+// proceed, and must release it once the response has been sent. While one write is
+// holding the lock, any other concurrent write simply waits its turn instead of
+// racing on a stale in-memory copy of the data and silently overwriting the first
+// write when it saves. Right after acquiring the lock we also force a genuinely
+// fresh reload from PostgreSQL, so the handler always mutates the very latest data,
+// even if this server instance's cached copy was from a moment ago.
+const DB_ADVISORY_LOCK_ID = 727272;
+const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || !pool) {
+    return next();
+  }
+
+  let lockClient: any = null;
+  try {
+    lockClient = await pool.connect();
+    await lockClient.query("SELECT pg_advisory_lock($1)", [DB_ADVISORY_LOCK_ID]);
+    // We now hold the exclusive lock: reload the true latest data before this
+    // request's handler mutates anything.
+    await loadDb();
+  } catch (lockErr) {
+    console.warn("Could not acquire database lock, proceeding without it:", lockErr);
+    if (lockClient) {
+      try { lockClient.release(); } catch {}
+      lockClient = null;
+    }
+  }
+
+  const releaseLock = async () => {
+    if (!lockClient) return;
+    try {
+      await lockClient.query("SELECT pg_advisory_unlock($1)", [DB_ADVISORY_LOCK_ID]);
+    } catch {}
+    try { lockClient.release(); } catch {}
+    lockClient = null;
+  };
+
+  res.on("finish", releaseLock);
+  res.on("close", releaseLock);
+
   next();
 });
 
@@ -810,7 +846,7 @@ app.post("/api/auth/change-password", requireAuth, (req, res) => {
   dbUser.password = hashPassword(newPassword);
   dbUser.firstLogin = false;
   dbUser.passwordChanged = true;
-  saveDb();
+  await saveDb();
 
   logAudit(dbUser.username, dbUser.name, dbUser.role, "تغيير كلمة المرور", `قام المستخدم بتغيير كلمة المرور الخاصة به بنجاح`);
   res.json({ success: true, message: "تم تغيير كلمة المرور بنجاح" });
@@ -836,7 +872,7 @@ app.post("/api/auth/reset-password", requireAuth, (req, res) => {
   dbUser.password = DEFAULT_HASH;
   dbUser.firstLogin = true;
   dbUser.passwordChanged = false;
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إعادة تعيين كلمة مرور", `تم إعادة تعيين كلمة مرور المستخدم ${dbUser.name} إلى كلمة المرور الافتراضية 123`);
   res.json({ success: true, message: `تم إعادة تعيين كلمة مرور المستخدم إلى كلمة المرور الافتراضية (123)` });
@@ -881,7 +917,7 @@ app.post("/api/users", requireAuth, (req, res) => {
   };
 
   db.users.push(newUser);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء حساب مستخدم جديد", `تم إنشاء حساب مستخدم جديد باسم ${name} ودور ${role}`);
   res.json({ success: true, user: { id: newUser.id, username, name, role, club, allowedPages: newUser.allowedPages } });
@@ -910,7 +946,7 @@ app.put("/api/users/:id", requireAuth, (req, res) => {
   if (signatureUrl !== undefined && dbUser.role === "sector_manager") {
     dbUser.signatureUrl = signatureUrl;
   }
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حساب مستخدم", `تم تعديل بيانات الحساب لـ ${dbUser.name}`);
   res.json({ success: true, user: { id: dbUser.id, username: dbUser.username, name: dbUser.name, role: dbUser.role, club: dbUser.club, signatureUrl: dbUser.signatureUrl, allowedPages: dbUser.allowedPages } });
@@ -933,7 +969,7 @@ app.delete("/api/users/:id", requireAuth, (req, res) => {
   }
 
   db.users.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حساب مستخدم", `تم حذف حساب المستخدم ${targetUser.name}`);
   res.json({ success: true });
@@ -973,7 +1009,7 @@ app.post("/api/dropdowns/categories/create", requireAuth, (req, res) => {
   db.dropdowns[key] = (initialOption && initialOption.trim()) ? [initialOption.trim()] : ["خيار 1"];
   db.dropdownLabels[key] = categoryLabel.trim();
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة قائمة جديدة", `تم إنشاء قائمة اختيار جديدة: ${categoryLabel.trim()}`);
   res.json({ 
     success: true, 
@@ -1002,7 +1038,7 @@ app.delete("/api/dropdowns/categories/:category", requireAuth, (req, res) => {
     delete db.dropdownLabels[category];
   }
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف قائمة اختيار", `تم حذف قائمة الاختيار: ${category}`);
   res.json({ 
     success: true, 
@@ -1026,7 +1062,7 @@ app.post("/api/label-names", requireAuth, (req, res) => {
     ...(db.labelNames || DEFAULT_DB.labelNames),
     ...req.body
   };
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل تسميات الحقول", "تم تعديل بعض تسميات حقول الإدخال والتقارير");
   res.json({ success: true, labelNames: db.labelNames });
@@ -1059,7 +1095,7 @@ app.post("/api/custom-fields", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إدارة الحقول المخصصة", "تم تحديث أو إضافة حقول مخصصة للنظام");
   res.json({ success: true, customFields: db.customFields });
 });
@@ -1074,7 +1110,7 @@ app.delete("/api/custom-fields/:id", requireAuth, (req, res) => {
   if (db.customFields) {
     db.customFields = db.customFields.filter((f: any) => f.id !== id);
   }
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حقل مخصص", `تم حذف الحقل المخصص: ${id}`);
   res.json({ success: true, customFields: db.customFields || [] });
 });
@@ -1103,7 +1139,7 @@ app.post("/api/dropdowns/:category", requireAuth, (req, res) => {
   }
 
   list.push(option.trim());
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة خيار لقائمة", `تم إضافة "${option.trim()}" إلى قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns, dropdownLabels: db.dropdownLabels });
@@ -1133,7 +1169,7 @@ app.put("/api/dropdowns/:category/rename", requireAuth, (req, res) => {
   }
 
   list[index] = newOption.trim();
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل خيار لقائمة", `تم تعديل الاسم من "${oldOption}" إلى "${newOption.trim()}" في قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns });
@@ -1163,7 +1199,7 @@ app.delete("/api/dropdowns/:category", requireAuth, (req, res) => {
   }
 
   list.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف خيار من قائمة", `تم حذف "${option}" من قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns });
@@ -1201,7 +1237,7 @@ app.post("/api/committees", requireAuth, (req, res) => {
   };
 
   db.committees.push(newComm);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء لجنة جديدة", `تم فتح لجنة جديدة برقم ${number}`);
   res.json({ success: true, committee: newComm, committees: db.committees });
@@ -1234,7 +1270,7 @@ app.put("/api/committees/:id", requireAuth, (req, res) => {
     });
   }
   
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حالة اللجنة", `تم تعديل اللجنة ${comm.number}-${comm.year}: الحالة=${comm.status}`);
   res.json({ success: true, committees: db.committees, requests: db.requests });
@@ -1283,7 +1319,7 @@ app.put("/api/formulas", requireAuth, (req, res) => {
     });
   }
 
-  saveDb();
+  await saveDb();
 
   logAudit(
     reqUser.username, 
@@ -2182,7 +2218,7 @@ app.post("/api/requests", requireAuth, (req, res) => {
   });
 
   db.requests.push(processedData);
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "إنشاء طلب إلغاء", `تم إنشاء طلب إلغاء جديد برقم عضوية ${membershipNumber} للمشترك ${processedData.memberName}`, newId);
   res.json({ success: true, request: processedData });
@@ -2265,7 +2301,7 @@ app.put("/api/requests/:id", requireAuth, (req, res) => {
   });
 
   db.requests[reqIndex] = updatedRequest;
-  saveDb();
+  await saveDb();
 
   // Audit and notification triggers
   let auditAction = "تعديل طلب إلغاء";
@@ -2305,7 +2341,7 @@ app.post("/api/requests/bulk-review", requireAuth, (req, res) => {
   });
 
   if (updatedCount > 0) {
-    saveDb();
+    await saveDb();
     logAudit(
       user.username,
       user.name,
@@ -2360,7 +2396,7 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, (req, res) => {
   });
 
   if (updatedCount > 0) {
-    saveDb();
+    await saveDb();
     logAudit(
       user.username,
       user.name,
@@ -2386,7 +2422,7 @@ app.post("/api/requests/bulk-delete", requireAuth, (req, res) => {
 
   db.requests = (db.requests || []).filter(r => !idsSet.has(String(r.id)));
   const deletedCount = initialCount - db.requests.length;
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "حذف جماعي للطلبات", `تم حذف عدد ${deletedCount} طلب إلغاء دفعة واحدة`);
   res.json({ success: true, count: deletedCount, requests: db.requests });
@@ -2397,7 +2433,7 @@ app.delete("/api/requests/clear-all", requireAuth, (req, res) => {
 
   const prevCount = db.requests ? db.requests.length : 0;
   db.requests = [];
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "مسح كافة طلبات الإلغاء", `تم مسح جميع طلبات الإلغاء من قاعدة البيانات (عدد ${prevCount} طلب)`);
   res.json({ success: true, count: prevCount, requests: [] });
@@ -2418,7 +2454,7 @@ app.delete("/api/requests/:id", requireAuth, (req, res) => {
   }
 
   db.requests.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "حذف طلب إلغاء", `تم حذف طلب إلغاء للمشترك ${targetReq.memberName} رقم العضوية ${targetReq.membershipNumber}`, targetReq.id);
   res.json({ success: true, requests: db.requests });
@@ -2554,7 +2590,7 @@ app.post("/api/requests/:id/attachments", requireAuth, (req, res) => {
   }));
 
   request.attachments.push(...processedItems);
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2600,7 +2636,7 @@ app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, (req, res
 
   const deletedAtt = request.attachments[attIndex];
   request.attachments.splice(attIndex, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2651,7 +2687,7 @@ app.post("/api/requests/:id/send-first-manager", requireAuth, (req, res) => {
   request.firstManagerSentAt = new Date().toISOString();
   request.firstManagerSentBy = user.name || user.username;
 
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2686,7 +2722,7 @@ app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, (req, res) =
     request.firstManagerSendNotes = notes || "";
   }
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -2737,7 +2773,7 @@ app.post("/api/requests/:id/first-manager-action", requireAuth, (req, res) => {
     request.sectorManagerApproved = null;
   }
   
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, approve ? "اعتماد المدير المالي الأول" : "رفض المدير المالي الأول", `تم ${approve ? 'اعتماد (Accept)' : 'رفض (Reject)'} طلب العضوية ${request.membershipNumber} - ملاحظات: ${comments || 'لا توجد'}`, request.id);
   res.json({ success: true, request });
@@ -2758,7 +2794,7 @@ app.post("/api/requests/:id/send-sector-manager", requireAuth, (req, res) => {
   request.approvalSentToSectorManager = true;
   request.sectorManagerApproved = null;
   request.result = "Pending";
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "إرسال لرئيس القطاع", `تم تحويل الطلب رقم ${request.membershipNumber} مباشرة لرئيس قطاع الشؤون المالية للاعتماد النهائي`, request.id);
   res.json({ success: true, request });
@@ -2799,7 +2835,7 @@ app.post("/api/requests/:id/sector-manager-action", requireAuth, (req, res) => {
     request.status = "Rejected" as any;
   }
 
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, approve ? "اعتماد رئيس قطاع المالية" : "رفض رئيس قطاع المالية", `تم الاعتماد النهائي للطلب ${request.membershipNumber} مع وضع الختم الإلكتروني وتاريخ المراجعة`, request.id);
   res.json({ success: true, request });
@@ -2836,7 +2872,7 @@ app.post("/api/emails/send", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
   res.json({ success: true, email: newEmail });
 });
@@ -2862,7 +2898,7 @@ app.post("/api/requests/reconcile-system-status", requireAuth, (req, res) => {
     }
   });
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, "مطابقة حالة النظام", `تم تحديث حالة النظام الداخلي لعدد ${updatedCount} عضوية بناءً على رفع ملف إكسل للمطابقة`);
   res.json({ success: true, updatedCount, requests: db.requests });
 });
@@ -2957,7 +2993,7 @@ app.post("/api/requests/import-company-debts", requireAuth, (req, res) => {
     }
   });
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -3004,7 +3040,7 @@ app.post("/api/requests/:id/status-date", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -3111,7 +3147,7 @@ app.post("/api/requests/import", requireAuth, (req, res) => {
     importedCount++;
   });
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, "استيراد بيانات مجمع", `تم استيراد ${importedCount} طلب جديد وتحديث ${updatedCount} طلب، وتخطي ${skippedCount} سجلات`);
   res.json({ success: true, importedCount: importedCount + updatedCount, skippedCount, requests: db.requests });
 });
@@ -3139,7 +3175,7 @@ app.post("/api/backup/restore", requireAuth, (req, res) => {
   }
 
   db = { ...restoredDb };
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "استرجاع قاعدة البيانات", `تم استرجاع وتطبيق نسخة احتياطية خارجية لقاعدة بيانات النظام بالكامل بنجاح`);
   res.json({ success: true, message: "تم استعادة قاعدة البيانات بالكامل بنجاح" });
