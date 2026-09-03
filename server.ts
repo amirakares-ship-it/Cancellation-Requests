@@ -19,7 +19,7 @@ const app = express();
 const PORT = 3000;
 
 // Health check endpoint for ingress & container health monitoring
-app.get("/api/health", (req, res) => {
+app.get("/api/health", async (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
@@ -613,11 +613,12 @@ export async function ensureDbLoaded() {
   await dbLoadPromise;
 }
 
-// Debounce helper for PostgreSQL sync
-let syncTimeout: any = null;
-
-// Save Database to disk and PostgreSQL
-function saveDb() {
+// Save Database to disk and PostgreSQL.
+// IMPORTANT: this is awaited by every caller. On serverless platforms the
+// function execution can be frozen the instant the HTTP response is sent, so
+// a "fire and forget" write risks silently losing data. Awaiting here
+// guarantees the write reaches PostgreSQL before we ever respond.
+async function saveDb() {
   try {
     fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
   } catch (err) {
@@ -629,35 +630,23 @@ function saveDb() {
     return;
   }
 
-  // PostgreSQL background/serverless persistence
   if (sqlDb) {
-    const doSync = async () => {
-      try {
-        await sqlDb.insert(appData)
-          .values({
-            key: 'main_store',
+    try {
+      await sqlDb.insert(appData)
+        .values({
+          key: 'main_store',
+          data: db,
+          updatedAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: appData.key,
+          set: {
             data: db,
             updatedAt: new Date(),
-          })
-          .onConflictDoUpdate({
-            target: appData.key,
-            set: {
-              data: db,
-              updatedAt: new Date(),
-            }
-          });
-      } catch (sqlSyncErr) {
-        // Silently capture SQL sync errors so the dev server never crashes if external DB is unreachable
-      }
-    };
-
-    if (process.env.VERCEL) {
-      doSync().catch(() => {});
-    } else {
-      if (syncTimeout) clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(() => {
-        doSync().catch(() => {});
-      }, 300);
+          }
+        });
+    } catch (sqlSyncErr) {
+      console.error("Error persisting to PostgreSQL:", sqlSyncErr);
     }
   }
 }
@@ -666,7 +655,7 @@ function saveDb() {
 ensureDbLoaded();
 
 // Helper to log audit actions safely
-function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
+async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
   try {
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
       db.auditLogs = [];
@@ -682,7 +671,7 @@ function logAudit(username: string, name: string, role: string, action: string, 
       requestId
     };
     db.auditLogs.unshift(newLog);
-    saveDb();
+    await saveDb();
   } catch (err) {
     console.warn("Could not write audit log:", err);
   }
@@ -705,6 +694,53 @@ app.use(async (req, res, next) => {
   if (req.path.startsWith("/api/")) {
     await ensureDbLoaded();
   }
+  next();
+});
+
+// --- Concurrency safety: serialize write requests with a PostgreSQL advisory lock ---
+// A single fixed lock ID is used for the whole app's data store. Any request that can
+// modify data (POST/PUT/DELETE/PATCH) must acquire this lock before it's allowed to
+// proceed, and must release it once the response has been sent. While one write is
+// holding the lock, any other concurrent write simply waits its turn instead of
+// racing on a stale in-memory copy of the data and silently overwriting the first
+// write when it saves. Right after acquiring the lock we also force a genuinely
+// fresh reload from PostgreSQL, so the handler always mutates the very latest data,
+// even if this server instance's cached copy was from a moment ago.
+const DB_ADVISORY_LOCK_ID = 727272;
+const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+app.use(async (req, res, next) => {
+  if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || !pool) {
+    return next();
+  }
+
+  let lockClient: any = null;
+  try {
+    lockClient = await pool.connect();
+    await lockClient.query("SELECT pg_advisory_lock($1)", [DB_ADVISORY_LOCK_ID]);
+    // We now hold the exclusive lock: reload the true latest data before this
+    // request's handler mutates anything.
+    await loadDb();
+  } catch (lockErr) {
+    console.warn("Could not acquire database lock, proceeding without it:", lockErr);
+    if (lockClient) {
+      try { lockClient.release(); } catch {}
+      lockClient = null;
+    }
+  }
+
+  const releaseLock = async () => {
+    if (!lockClient) return;
+    try {
+      await lockClient.query("SELECT pg_advisory_unlock($1)", [DB_ADVISORY_LOCK_ID]);
+    } catch {}
+    try { lockClient.release(); } catch {}
+    lockClient = null;
+  };
+
+  res.on("finish", releaseLock);
+  res.on("close", releaseLock);
+
   next();
 });
 
@@ -759,7 +795,7 @@ const requireAuth = (req: express.Request, res: express.Response, next: express.
 };
 
 // 1. Auth & Password Routes
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", async (req, res) => {
   try {
     const { username, password } = req.body || {};
     if (!username || !password) {
@@ -797,12 +833,12 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-app.get("/api/auth/me", requireAuth, (req, res) => {
+app.get("/api/auth/me", requireAuth, async (req, res) => {
   const { password: _, ...userSafe } = (req as any).user;
   res.json({ user: userSafe });
 });
 
-app.post("/api/auth/change-password", requireAuth, (req, res) => {
+app.post("/api/auth/change-password", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { currentPassword, newPassword } = req.body;
 
@@ -822,14 +858,14 @@ app.post("/api/auth/change-password", requireAuth, (req, res) => {
   dbUser.password = hashPassword(newPassword);
   dbUser.firstLogin = false;
   dbUser.passwordChanged = true;
-  saveDb();
+  await saveDb();
 
   logAudit(dbUser.username, dbUser.name, dbUser.role, "تغيير كلمة المرور", `قام المستخدم بتغيير كلمة المرور الخاصة به بنجاح`);
   res.json({ success: true, message: "تم تغيير كلمة المرور بنجاح" });
 });
 
 // Admin reset any user password
-app.post("/api/auth/reset-password", requireAuth, (req, res) => {
+app.post("/api/auth/reset-password", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح - هذه الصلاحية للأدمن فقط" });
@@ -848,14 +884,14 @@ app.post("/api/auth/reset-password", requireAuth, (req, res) => {
   dbUser.password = DEFAULT_HASH;
   dbUser.firstLogin = true;
   dbUser.passwordChanged = false;
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إعادة تعيين كلمة مرور", `تم إعادة تعيين كلمة مرور المستخدم ${dbUser.name} إلى كلمة المرور الافتراضية 123`);
   res.json({ success: true, message: `تم إعادة تعيين كلمة مرور المستخدم إلى كلمة المرور الافتراضية (123)` });
 });
 
 // User Management (Admin Only)
-app.get("/api/users", requireAuth, (req, res) => {
+app.get("/api/users", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح" });
@@ -864,7 +900,7 @@ app.get("/api/users", requireAuth, (req, res) => {
   res.json(safeUsers);
 });
 
-app.post("/api/users", requireAuth, (req, res) => {
+app.post("/api/users", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح" });
@@ -893,13 +929,13 @@ app.post("/api/users", requireAuth, (req, res) => {
   };
 
   db.users.push(newUser);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء حساب مستخدم جديد", `تم إنشاء حساب مستخدم جديد باسم ${name} ودور ${role}`);
   res.json({ success: true, user: { id: newUser.id, username, name, role, club, allowedPages: newUser.allowedPages } });
 });
 
-app.put("/api/users/:id", requireAuth, (req, res) => {
+app.put("/api/users/:id", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin" && reqUser.id !== req.params.id) {
     return res.status(403).json({ error: "غير مصرح" });
@@ -922,13 +958,13 @@ app.put("/api/users/:id", requireAuth, (req, res) => {
   if (signatureUrl !== undefined && dbUser.role === "sector_manager") {
     dbUser.signatureUrl = signatureUrl;
   }
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حساب مستخدم", `تم تعديل بيانات الحساب لـ ${dbUser.name}`);
   res.json({ success: true, user: { id: dbUser.id, username: dbUser.username, name: dbUser.name, role: dbUser.role, club: dbUser.club, signatureUrl: dbUser.signatureUrl, allowedPages: dbUser.allowedPages } });
 });
 
-app.delete("/api/users/:id", requireAuth, (req, res) => {
+app.delete("/api/users/:id", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح" });
@@ -945,14 +981,14 @@ app.delete("/api/users/:id", requireAuth, (req, res) => {
   }
 
   db.users.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حساب مستخدم", `تم حذف حساب المستخدم ${targetUser.name}`);
   res.json({ success: true });
 });
 
 // 2. Dynamic Dropdowns Routes
-app.get("/api/dropdowns", (req, res) => {
+app.get("/api/dropdowns", async (req, res) => {
   res.json({
     dropdowns: db.dropdowns || DEFAULT_DB.dropdowns,
     dropdownLabels: db.dropdownLabels || DEFAULT_DB.dropdownLabels
@@ -960,7 +996,7 @@ app.get("/api/dropdowns", (req, res) => {
 });
 
 // Create new dropdown category
-app.post("/api/dropdowns/categories/create", requireAuth, (req, res) => {
+app.post("/api/dropdowns/categories/create", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لإضافة قائمة اختيار جديدة" });
@@ -985,7 +1021,7 @@ app.post("/api/dropdowns/categories/create", requireAuth, (req, res) => {
   db.dropdowns[key] = (initialOption && initialOption.trim()) ? [initialOption.trim()] : ["خيار 1"];
   db.dropdownLabels[key] = categoryLabel.trim();
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة قائمة جديدة", `تم إنشاء قائمة اختيار جديدة: ${categoryLabel.trim()}`);
   res.json({ 
     success: true, 
@@ -995,7 +1031,7 @@ app.post("/api/dropdowns/categories/create", requireAuth, (req, res) => {
 });
 
 // Delete custom dropdown category
-app.delete("/api/dropdowns/categories/:category", requireAuth, (req, res) => {
+app.delete("/api/dropdowns/categories/:category", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف قائمة اختيار" });
@@ -1014,7 +1050,7 @@ app.delete("/api/dropdowns/categories/:category", requireAuth, (req, res) => {
     delete db.dropdownLabels[category];
   }
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف قائمة اختيار", `تم حذف قائمة الاختيار: ${category}`);
   res.json({ 
     success: true, 
@@ -1024,11 +1060,11 @@ app.delete("/api/dropdowns/categories/:category", requireAuth, (req, res) => {
 });
 
 // Dynamic Field Labels Customization Routes
-app.get("/api/label-names", (req, res) => {
+app.get("/api/label-names", async (req, res) => {
   res.json(db.labelNames || DEFAULT_DB.labelNames);
 });
 
-app.post("/api/label-names", requireAuth, (req, res) => {
+app.post("/api/label-names", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل تسميات الحقول" });
@@ -1038,18 +1074,18 @@ app.post("/api/label-names", requireAuth, (req, res) => {
     ...(db.labelNames || DEFAULT_DB.labelNames),
     ...req.body
   };
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل تسميات الحقول", "تم تعديل بعض تسميات حقول الإدخال والتقارير");
   res.json({ success: true, labelNames: db.labelNames });
 });
 
 // Custom Fields Routes
-app.get("/api/custom-fields", (req, res) => {
+app.get("/api/custom-fields", async (req, res) => {
   res.json(db.customFields || []);
 });
 
-app.post("/api/custom-fields", requireAuth, (req, res) => {
+app.post("/api/custom-fields", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل الحقول المخصصة" });
@@ -1071,12 +1107,12 @@ app.post("/api/custom-fields", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إدارة الحقول المخصصة", "تم تحديث أو إضافة حقول مخصصة للنظام");
   res.json({ success: true, customFields: db.customFields });
 });
 
-app.delete("/api/custom-fields/:id", requireAuth, (req, res) => {
+app.delete("/api/custom-fields/:id", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف الحقول المخصصة" });
@@ -1086,12 +1122,12 @@ app.delete("/api/custom-fields/:id", requireAuth, (req, res) => {
   if (db.customFields) {
     db.customFields = db.customFields.filter((f: any) => f.id !== id);
   }
-  saveDb();
+  await saveDb();
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حقل مخصص", `تم حذف الحقل المخصص: ${id}`);
   res.json({ success: true, customFields: db.customFields || [] });
 });
 
-app.post("/api/dropdowns/:category", requireAuth, (req, res) => {
+app.post("/api/dropdowns/:category", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل قوائم الاختيار" });
@@ -1115,13 +1151,13 @@ app.post("/api/dropdowns/:category", requireAuth, (req, res) => {
   }
 
   list.push(option.trim());
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة خيار لقائمة", `تم إضافة "${option.trim()}" إلى قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns, dropdownLabels: db.dropdownLabels });
 });
 
-app.put("/api/dropdowns/:category/rename", requireAuth, (req, res) => {
+app.put("/api/dropdowns/:category/rename", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح" });
@@ -1145,13 +1181,13 @@ app.put("/api/dropdowns/:category/rename", requireAuth, (req, res) => {
   }
 
   list[index] = newOption.trim();
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل خيار لقائمة", `تم تعديل الاسم من "${oldOption}" إلى "${newOption.trim()}" في قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns });
 });
 
-app.delete("/api/dropdowns/:category", requireAuth, (req, res) => {
+app.delete("/api/dropdowns/:category", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف خيارات قوائم الاختيار" });
@@ -1175,18 +1211,18 @@ app.delete("/api/dropdowns/:category", requireAuth, (req, res) => {
   }
 
   list.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف خيار من قائمة", `تم حذف "${option}" من قائمة ${category}`);
   res.json({ success: true, dropdowns: db.dropdowns });
 });
 
 // 3. Committees Routes
-app.get("/api/committees", (req, res) => {
+app.get("/api/committees", async (req, res) => {
   res.json(db.committees);
 });
 
-app.post("/api/committees", requireAuth, (req, res) => {
+app.post("/api/committees", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية التحكم باللجان" });
@@ -1213,13 +1249,13 @@ app.post("/api/committees", requireAuth, (req, res) => {
   };
 
   db.committees.push(newComm);
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء لجنة جديدة", `تم فتح لجنة جديدة برقم ${number}`);
   res.json({ success: true, committee: newComm, committees: db.committees });
 });
 
-app.put("/api/committees/:id", requireAuth, (req, res) => {
+app.put("/api/committees/:id", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية التحكم باللجان" });
@@ -1246,18 +1282,18 @@ app.put("/api/committees/:id", requireAuth, (req, res) => {
     });
   }
   
-  saveDb();
+  await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حالة اللجنة", `تم تعديل اللجنة ${comm.number}-${comm.year}: الحالة=${comm.status}`);
   res.json({ success: true, committees: db.committees, requests: db.requests });
 });
 
 // --- Formulas API Endpoints ---
-app.get("/api/formulas", requireAuth, (req, res) => {
+app.get("/api/formulas", requireAuth, async (req, res) => {
   res.json(db.formulas || DEFAULT_DB.formulas);
 });
 
-app.put("/api/formulas", requireAuth, (req, res) => {
+app.put("/api/formulas", requireAuth, async (req, res) => {
   const reqUser = (req as any).user;
   if (reqUser.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل معادلات النظام" });
@@ -1295,7 +1331,7 @@ app.put("/api/formulas", requireAuth, (req, res) => {
     });
   }
 
-  saveDb();
+  await saveDb();
 
   logAudit(
     reqUser.username, 
@@ -2060,7 +2096,7 @@ function isInternationalRequest(r: any): boolean {
 
 // 4. Requests CRUD Endpoints
 // Check membership duplicate globally across all branches
-app.get("/api/requests/check-membership", requireAuth, (req, res) => {
+app.get("/api/requests/check-membership", requireAuth, async (req, res) => {
   const { number, excludeId } = req.query;
   const numStr = String(number || "").trim();
   if (!numStr) {
@@ -2094,7 +2130,7 @@ app.get("/api/requests/check-membership", requireAuth, (req, res) => {
   });
 });
 
-app.get("/api/requests", requireAuth, (req, res) => {
+app.get("/api/requests", requireAuth, async (req, res) => {
   const user = (req as any).user;
   let resultRequests = [...db.requests];
 
@@ -2108,7 +2144,7 @@ app.get("/api/requests", requireAuth, (req, res) => {
   res.json(resultRequests);
 });
 
-app.post("/api/requests", requireAuth, (req, res) => {
+app.post("/api/requests", requireAuth, async (req, res) => {
   const user = (req as any).user;
   
   // Create default Serial No.
@@ -2194,7 +2230,7 @@ app.post("/api/requests", requireAuth, (req, res) => {
   });
 
   db.requests.push(processedData);
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "إنشاء طلب إلغاء", `تم إنشاء طلب إلغاء جديد برقم عضوية ${membershipNumber} للمشترك ${processedData.memberName}`, newId);
   res.json({ success: true, request: processedData });
@@ -2213,7 +2249,7 @@ function findRequestById(rawId: any) {
   return db.requests.find((r) => String(r.id) === strId || r.id == rawId || (!isNaN(numId) && r.id === numId));
 }
 
-app.put("/api/requests/:id", requireAuth, (req, res) => {
+app.put("/api/requests/:id", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const rawId = req.params.id;
   const reqIndex = findRequestIndexById(rawId);
@@ -2277,7 +2313,7 @@ app.put("/api/requests/:id", requireAuth, (req, res) => {
   });
 
   db.requests[reqIndex] = updatedRequest;
-  saveDb();
+  await saveDb();
 
   // Audit and notification triggers
   let auditAction = "تعديل طلب إلغاء";
@@ -2296,7 +2332,7 @@ app.put("/api/requests/:id", requireAuth, (req, res) => {
 });
 
 // Bulk Review Route (Admin only)
-app.post("/api/requests/bulk-review", requireAuth, (req, res) => {
+app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تحديد مراجعة الطلبات" });
@@ -2317,7 +2353,7 @@ app.post("/api/requests/bulk-review", requireAuth, (req, res) => {
   });
 
   if (updatedCount > 0) {
-    saveDb();
+    await saveDb();
     logAudit(
       user.username,
       user.name,
@@ -2331,7 +2367,7 @@ app.post("/api/requests/bulk-review", requireAuth, (req, res) => {
 });
 
 // Bulk Cancellation Status Route (Admin & Managers)
-app.post("/api/requests/bulk-cancellation-status", requireAuth, (req, res) => {
+app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin" && user.role !== "first_manager" && user.role !== "sector_manager") {
     return res.status(403).json({ error: "غير مصرح لك بتحديث حالات الإلغاء" });
@@ -2372,7 +2408,7 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, (req, res) => {
   });
 
   if (updatedCount > 0) {
-    saveDb();
+    await saveDb();
     logAudit(
       user.username,
       user.name,
@@ -2385,7 +2421,7 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, (req, res) => {
   res.json({ success: true, updatedCount, requests: db.requests });
 });
 
-app.post("/api/requests/bulk-delete", requireAuth, (req, res) => {
+app.post("/api/requests/bulk-delete", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { ids } = req.body;
 
@@ -2398,24 +2434,24 @@ app.post("/api/requests/bulk-delete", requireAuth, (req, res) => {
 
   db.requests = (db.requests || []).filter(r => !idsSet.has(String(r.id)));
   const deletedCount = initialCount - db.requests.length;
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "حذف جماعي للطلبات", `تم حذف عدد ${deletedCount} طلب إلغاء دفعة واحدة`);
   res.json({ success: true, count: deletedCount, requests: db.requests });
 });
 
-app.delete("/api/requests/clear-all", requireAuth, (req, res) => {
+app.delete("/api/requests/clear-all", requireAuth, async (req, res) => {
   const user = (req as any).user;
 
   const prevCount = db.requests ? db.requests.length : 0;
   db.requests = [];
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "مسح كافة طلبات الإلغاء", `تم مسح جميع طلبات الإلغاء من قاعدة البيانات (عدد ${prevCount} طلب)`);
   res.json({ success: true, count: prevCount, requests: [] });
 });
 
-app.delete("/api/requests/:id", requireAuth, (req, res) => {
+app.delete("/api/requests/:id", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const rawId = req.params.id;
   const index = findRequestIndexById(rawId);
@@ -2430,7 +2466,7 @@ app.delete("/api/requests/:id", requireAuth, (req, res) => {
   }
 
   db.requests.splice(index, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "حذف طلب إلغاء", `تم حذف طلب إلغاء للمشترك ${targetReq.memberName} رقم العضوية ${targetReq.membershipNumber}`, targetReq.id);
   res.json({ success: true, requests: db.requests });
@@ -2439,7 +2475,7 @@ app.delete("/api/requests/:id", requireAuth, (req, res) => {
 // --- Attachments & Documents Archive Management Endpoints ---
 
 // 1. Get all attachments across all cancellation requests (visible to all users across all branches)
-app.get("/api/attachments/all", requireAuth, (req, res) => {
+app.get("/api/attachments/all", requireAuth, async (req, res) => {
   try {
     const allAttachments: any[] = [];
     
@@ -2525,7 +2561,7 @@ app.get("/api/attachments/all", requireAuth, (req, res) => {
 });
 
 // 2. Upload attachments to a specific request (any user can upload before or after review)
-app.post("/api/requests/:id/attachments", requireAuth, (req, res) => {
+app.post("/api/requests/:id/attachments", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const request = findRequestById(req.params.id);
   if (!request) {
@@ -2566,7 +2602,7 @@ app.post("/api/requests/:id/attachments", requireAuth, (req, res) => {
   }));
 
   request.attachments.push(...processedItems);
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2587,7 +2623,7 @@ app.post("/api/requests/:id/attachments", requireAuth, (req, res) => {
 });
 
 // 3. Delete an attachment (Admin can always delete; non-admin users allowed before Admin Review)
-app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, (req, res) => {
+app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const request = findRequestById(req.params.id);
   if (!request) {
@@ -2612,7 +2648,7 @@ app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, (req, res
 
   const deletedAtt = request.attachments[attIndex];
   request.attachments.splice(attIndex, 1);
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2635,7 +2671,7 @@ app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, (req, res
 // --- Workflow Operations ---
 
 // 1. Admin sends cancellation to First Manager with attached PDF and notes
-app.post("/api/requests/:id/send-first-manager", requireAuth, (req, res) => {
+app.post("/api/requests/:id/send-first-manager", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن المركزي فقط يمكنه إرسال طلبات الاعتماد" });
@@ -2663,7 +2699,7 @@ app.post("/api/requests/:id/send-first-manager", requireAuth, (req, res) => {
   request.firstManagerSentAt = new Date().toISOString();
   request.firstManagerSentBy = user.name || user.username;
 
-  saveDb();
+  await saveDb();
 
   logAudit(
     user.username,
@@ -2677,7 +2713,7 @@ app.post("/api/requests/:id/send-first-manager", requireAuth, (req, res) => {
 });
 
 // Admin attach or update PDF for First Manager review
-app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, (req, res) => {
+app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط يمكنه إرفاق أو تعديل ملف الـ PDF" });
@@ -2698,7 +2734,7 @@ app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, (req, res) =
     request.firstManagerSendNotes = notes || "";
   }
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -2711,7 +2747,7 @@ app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, (req, res) =
 });
 
 // 2. First Manager approves or rejects (Days > 90/3 months only)
-app.post("/api/requests/:id/first-manager-action", requireAuth, (req, res) => {
+app.post("/api/requests/:id/first-manager-action", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "first_manager") {
     return res.status(403).json({ error: "صلاحية المدير المالي الأول فقط هي المصرح لها باتخاذ أو تعديل القرار" });
@@ -2749,14 +2785,14 @@ app.post("/api/requests/:id/first-manager-action", requireAuth, (req, res) => {
     request.sectorManagerApproved = null;
   }
   
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, approve ? "اعتماد المدير المالي الأول" : "رفض المدير المالي الأول", `تم ${approve ? 'اعتماد (Accept)' : 'رفض (Reject)'} طلب العضوية ${request.membershipNumber} - ملاحظات: ${comments || 'لا توجد'}`, request.id);
   res.json({ success: true, request });
 });
 
 // 3. Admin sends directly to Sector Manager (for <3 months, which skips First Manager)
-app.post("/api/requests/:id/send-sector-manager", requireAuth, (req, res) => {
+app.post("/api/requests/:id/send-sector-manager", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "غير مصرح" });
@@ -2770,14 +2806,14 @@ app.post("/api/requests/:id/send-sector-manager", requireAuth, (req, res) => {
   request.approvalSentToSectorManager = true;
   request.sectorManagerApproved = null;
   request.result = "Pending";
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "إرسال لرئيس القطاع", `تم تحويل الطلب رقم ${request.membershipNumber} مباشرة لرئيس قطاع الشؤون المالية للاعتماد النهائي`, request.id);
   res.json({ success: true, request });
 });
 
 // 4. Sector Manager approves or rejects (Final approval with digital signature)
-app.post("/api/requests/:id/sector-manager-action", requireAuth, (req, res) => {
+app.post("/api/requests/:id/sector-manager-action", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "sector_manager" && user.role !== "admin") {
     return res.status(403).json({ error: "صلاحية رئيس القطاع المالي مطلوبة للاعتماد النهائي" });
@@ -2811,18 +2847,18 @@ app.post("/api/requests/:id/sector-manager-action", requireAuth, (req, res) => {
     request.status = "Rejected" as any;
   }
 
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, approve ? "اعتماد رئيس قطاع المالية" : "رفض رئيس قطاع المالية", `تم الاعتماد النهائي للطلب ${request.membershipNumber} مع وضع الختم الإلكتروني وتاريخ المراجعة`, request.id);
   res.json({ success: true, request });
 });
 
 // --- Emails Simulation ---
-app.get("/api/emails", requireAuth, (req, res) => {
+app.get("/api/emails", requireAuth, async (req, res) => {
   res.json(db.emailLogs);
 });
 
-app.post("/api/emails/send", requireAuth, (req, res) => {
+app.post("/api/emails/send", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { requestId, type, recipient, subject, body } = req.body;
 
@@ -2848,13 +2884,13 @@ app.post("/api/emails/send", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
   res.json({ success: true, email: newEmail });
 });
 
 // --- System Status Reconciliation (Excel upload update) ---
-app.post("/api/requests/reconcile-system-status", requireAuth, (req, res) => {
+app.post("/api/requests/reconcile-system-status", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه هذه الصلاحية" });
@@ -2874,13 +2910,13 @@ app.post("/api/requests/reconcile-system-status", requireAuth, (req, res) => {
     }
   });
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, "مطابقة حالة النظام", `تم تحديث حالة النظام الداخلي لعدد ${updatedCount} عضوية بناءً على رفع ملف إكسل للمطابقة`);
   res.json({ success: true, updatedCount, requests: db.requests });
 });
 
 // --- Bulk Company / Bank Debts Import Endpoint ---
-app.post("/api/requests/import-company-debts", requireAuth, (req, res) => {
+app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin" && user.role !== "auditor") {
     return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
@@ -2969,7 +3005,7 @@ app.post("/api/requests/import-company-debts", requireAuth, (req, res) => {
     }
   });
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -2992,7 +3028,7 @@ app.post("/api/requests/import-company-debts", requireAuth, (req, res) => {
 });
 
 // Update single request statusDate (Admin only)
-app.post("/api/requests/:id/status-date", requireAuth, (req, res) => {
+app.post("/api/requests/:id/status-date", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل تاريخ الحالة" });
@@ -3016,7 +3052,7 @@ app.post("/api/requests/:id/status-date", requireAuth, (req, res) => {
     }
   }
 
-  saveDb();
+  await saveDb();
   logAudit(
     user.username,
     user.name,
@@ -3030,7 +3066,7 @@ app.post("/api/requests/:id/status-date", requireAuth, (req, res) => {
 });
 
 // --- Excel Bulk Import Endpoints ---
-app.post("/api/requests/import", requireAuth, (req, res) => {
+app.post("/api/requests/import", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط يمكنه استيراد البيانات" });
@@ -3123,13 +3159,13 @@ app.post("/api/requests/import", requireAuth, (req, res) => {
     importedCount++;
   });
 
-  saveDb();
+  await saveDb();
   logAudit(user.username, user.name, user.role, "استيراد بيانات مجمع", `تم استيراد ${importedCount} طلب جديد وتحديث ${updatedCount} طلب، وتخطي ${skippedCount} سجلات`);
   res.json({ success: true, importedCount: importedCount + updatedCount, skippedCount, requests: db.requests });
 });
 
 // --- Full Database Backup / Restore API ---
-app.get("/api/backup", requireAuth, (req, res) => {
+app.get("/api/backup", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتصدير نسخة احتياطية" });
@@ -3139,7 +3175,7 @@ app.get("/api/backup", requireAuth, (req, res) => {
   res.json(db);
 });
 
-app.post("/api/backup/restore", requireAuth, (req, res) => {
+app.post("/api/backup/restore", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لاستعادة نسخة احتياطية" });
@@ -3151,14 +3187,14 @@ app.post("/api/backup/restore", requireAuth, (req, res) => {
   }
 
   db = { ...restoredDb };
-  saveDb();
+  await saveDb();
 
   logAudit(user.username, user.name, user.role, "استرجاع قاعدة البيانات", `تم استرجاع وتطبيق نسخة احتياطية خارجية لقاعدة بيانات النظام بالكامل بنجاح`);
   res.json({ success: true, message: "تم استعادة قاعدة البيانات بالكامل بنجاح" });
 });
 
 // --- Audit logs fetch ---
-app.get("/api/logs/audit", requireAuth, (req, res) => {
+app.get("/api/logs/audit", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
     return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
