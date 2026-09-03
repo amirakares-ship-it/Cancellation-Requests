@@ -480,6 +480,22 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       setErrorMessage('رقم الموبايل غير صحيح (يجب أن يتكون من 11 رقماً)');
       return;
     }
+    if (!mobileNumber.startsWith('01')) {
+      setErrorMessage('رقم الموبايل يجب أن يبدأ بـ 01');
+      return;
+    }
+    if (!mobileNumber.startsWith('01')) {
+      setErrorMessage('رقم الموبايل يجب أن يبدأ بـ 01');
+      return;
+    }
+    if (!mobileNumber.startsWith('01')) {
+      setErrorMessage('رقم الموبايل يجب أن يبدأ بـ 01');
+      return;
+    }
+    if (!mobileNumber.startsWith('01')) {
+      setErrorMessage('رقم الموبايل يجب أن يبدأ بـ 01');
+      return;
+    }
     if (!subscriptionDate) {
       setErrorMessage('تاريخ الاشتراك مطلوب');
       return;
@@ -713,8 +729,9 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                     if (user.role !== 'international_user') {
                       // All non-international users (including admin/managers): digits only
                       val = val.replace(/[^0-9]/g, '');
-                      // Block any value starting with the reserved prefix 00400
-                      if (val.startsWith('00400')) {
+                      // Block any value that IS a prefix of, or starts with, the reserved sequence 00400
+                      // (so typing 0, 00, 004, 0040, or 00400... is rejected at every step)
+                      if (val && ('00400'.startsWith(val) || val.startsWith('00400'))) {
                         return; // Ignore this keystroke entirely
                       }
                     }
@@ -890,7 +907,14 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   required
                   maxLength={11}
                   value={mobileNumber}
-                  onChange={(e) => setMobileNumber(e.target.value.replace(/\D/g, ''))}
+                  onChange={(e) => {
+                    let val = e.target.value.replace(/\D/g, '');
+                    // Block any value that doesn't match the start of "01" (so typing 0, 02, 03... etc is rejected)
+                    if (val && !('01'.startsWith(val) || val.startsWith('01'))) {
+                      return;
+                    }
+                    setMobileNumber(val);
+                  }}
                   placeholder="01XXXXXXXXX"
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono focus:outline-none focus:ring-2 focus:ring-amber-400"
                 />
