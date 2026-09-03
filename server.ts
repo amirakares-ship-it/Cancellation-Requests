@@ -688,6 +688,18 @@ function logAudit(username: string, name: string, role: string, action: string, 
   }
 }
 
+// Prevent any caching layer (browser or CDN) from serving stale API responses
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
+  next();
+});
+
+// Ensure DB is loaded before all API routes
+app.use(async (req, res, next) => {
 // Ensure DB is loaded before all API routes
 app.use(async (req, res, next) => {
   if (req.path.startsWith("/api/")) {
