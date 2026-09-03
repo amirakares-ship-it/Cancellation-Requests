@@ -1751,6 +1751,13 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               formRefundToClientDisplay = `${clientRefund.toLocaleString()} ج.م`;
             }
 
+                        const refundAmountNum = parseFloat(formRefundAmountDisplay.replace(/[^0-9.]/g, ''));
+            const refundToClientNum = parseFloat(formRefundToClientDisplay.replace(/[^0-9.]/g, ''));
+            const showRefundToClientBox = isNaN(refundAmountNum) || isNaN(refundToClientNum) || Math.abs(refundAmountNum - refundToClientNum) > 0.01;
+
+            return (
+              <div className="bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 p-5 rounded-2xl text-white border border-neutral-800 shadow-xl space-y-4">
+
             return (
               <div className="bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 p-5 rounded-2xl text-white border border-neutral-800 shadow-xl space-y-4">
                 <h3 className="text-xs font-bold text-amber-400 uppercase tracking-wider border-b border-neutral-800 pb-2.5 flex items-center justify-between">
@@ -1864,15 +1871,17 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                       </div>
                     </div>
 
-                    {/* مبلغ الرد للعميل */}
-                    <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl">
-                      <div className="text-[10px] text-emerald-300/80 font-bold mb-0.5">
-                        المبلغ المرتجع للعميل (صافي مستحق الصرف):
+                    {/* مبلغ الرد للعميل - يظهر فقط لو مختلف عن مبلغ الاسترداد */}
+                    {showRefundToClientBox && (
+                      <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl">
+                        <div className="text-[10px] text-emerald-300/80 font-bold mb-0.5">
+                          المبلغ المرتجع للعميل (صافي مستحق الصرف):
+                        </div>
+                        <div className="text-base font-black text-emerald-400 font-mono">
+                          {formRefundToClientDisplay}
+                        </div>
                       </div>
-                      <div className="text-base font-black text-emerald-400 font-mono">
-                        {formRefundToClientDisplay}
-                      </div>
-                    </div>
+                    )}
 
                     {/* فرق مديونية ABK إن وجد */}
                     {formIsABK && liveCalcs.abkDebtDifference !== 'Not Required' && (
