@@ -1755,8 +1755,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
             const refundToClientNum = parseFloat(formRefundToClientDisplay.replace(/[^0-9.]/g, ''));
             const showRefundToClientBox = isNaN(refundAmountNum) || isNaN(refundToClientNum) || Math.abs(refundAmountNum - refundToClientNum) > 0.01;
 
-            return (
-              <div className="bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 p-5 rounded-2xl text-white border border-neutral-800 shadow-xl space-y-4">
+            
 
             return (
               <div className="bg-gradient-to-br from-neutral-900 via-neutral-900 to-neutral-950 p-5 rounded-2xl text-white border border-neutral-800 shadow-xl space-y-4">
