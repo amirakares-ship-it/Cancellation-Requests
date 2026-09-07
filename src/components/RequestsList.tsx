@@ -113,7 +113,7 @@ export default function RequestsList({
   // Helper to render Committee Decision Badge (قرار اللجنة)
   const getCommitteeDecisionBadge = (r: any) => {
     const isRejected = r.firstManagerApproved === false || r.status === 'Rejected' || r.result === 'Rejected' || r.sectorManagerApproved === false;
-    const isAccepted = !isRejected && (r.result === 'Accepted' || r.sectorManagerApproved === true || Boolean(r.approvalDate));
+    const isAccepted = !isRejected && r.result === 'Accepted';
 
     if (isRejected) {
       const reason = getRejectionReason(r);
