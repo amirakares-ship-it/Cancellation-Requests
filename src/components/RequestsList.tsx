@@ -718,7 +718,7 @@ export default function RequestsList({
                               title="إرسال وإرفاق مستندات PDF للمدير الأول للاعتماد (>3 شهور)"
                             >
                               <FileUp className="h-3.5 w-3.5 text-sky-600" />
-                              <span className="hidden xl:inline">{r.firstManagerPdfUrl ? 'PDF مرفق' : 'إرفاق PDF'}</span>
+                              <span className="hidden xl:inline">{r.firstManagerPdfUrl ? 'تم الإرسال للمدير' : 'إرسال للمدير'}</span>
                             </button>
                           )}
 
