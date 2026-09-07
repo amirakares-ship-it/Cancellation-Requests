@@ -330,20 +330,26 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
             </div>
 
             {/* 10. مبلغ الاسترداد */}
-            <div className="flex justify-between items-center bg-amber-50 p-3 rounded-xl border border-amber-300 text-amber-950 font-black">
+            <div className="flex justify-between items-center bg-amber-50 p-3 rounded-xl border border
+            -amber-300 text-amber-950 font-black">
               <span className="text-xs">
                 10. مبلغ الاسترداد {isCompany ? '(مديونية الشركة المسجلة)' : isABK ? '(المسترد للبنك)' : ''}:
               </span>
               <span className="font-mono text-sm text-amber-900">{refundAmountDisplay}</span>
             </div>
 
-            {/* 11. مبلغ الرد للعميل (محذوف تماماً في حالة ABK) */}
-            {!isABK && (
-              <div className="flex justify-between items-center bg-emerald-100/90 p-3.5 rounded-xl border border-emerald-300 text-emerald-950 font-black text-sm shadow-xs">
-                <span>11. مبلغ الرد للعميل (المستحق الصرف للعميل):</span>
-                <span className="font-mono text-lg text-emerald-900">{refundToClientDisplay}</span>
-              </div>
-            )}
+              {/* 11. مبلغ الرد للعميل (يظهر فقط لو مختلف عن مبلغ الاسترداد، ومحذوف تماماً في حالة ABK) */}
+              {!isABK && (() => {
+                const _refundNum = parseFloat(String(refundAmountDisplay).replace(/[^0-9.]/g, ''));
+                const _clientNum = parseFloat(String(refundToClientDisplay).replace(/[^0-9.]/g, ''));
+                const _showBox = isNaN(_refundNum) || isNaN(_clientNum) || Math.abs(_refundNum - _clientNum) > 0.01;
+                return _showBox && (
+                  <div className="flex justify-between items-center bg-emerald-100/90 p-3.5 rounded-xl border border-emerald-300 text-emerald-950 font-black text-sm shadow-xs">
+                    <span>11. مبلغ الرد للعميل (المستحق الصرف للعميل):</span>
+                    <span className="font-mono text-lg text-emerald-900">{refundToClientDisplay}</span>
+                  </div>
+                );
+              })()}
 
             {/* 12. فرق مديونية ABK (يظهر في حالة ABK فقط) */}
             {isABK && (
