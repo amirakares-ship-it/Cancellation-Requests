@@ -1715,13 +1715,13 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               formRefundAmountDisplay = debtABKCompanies > 0 ? `${debtABKCompanies.toLocaleString()} ج.م` : 'في انتظار المديونية';
             } else if (formIsABK) {
               formRefundAmountDisplay = debtABKCompanies > 0 ? `${debtABKCompanies.toLocaleString()} ج.م` : 'في انتظار المديونية';
+            } else if (formIsChecks) {
+              const netCheckRefund = Math.max(0, (formAdvancePaid + checksPaid) - liveCalcs.discountAmount);
+              formRefundAmountDisplay = `${netCheckRefund.toLocaleString()} ج.م`;
             } else if (typeof liveCalcs.refundAmount === 'number') {
               formRefundAmountDisplay = `${liveCalcs.refundAmount.toLocaleString()} ج.م`;
             } else if (typeof liveCalcs.refundAmount === 'string' && liveCalcs.refundAmount) {
               formRefundAmountDisplay = liveCalcs.refundAmount;
-            } else if (formIsChecks) {
-              const netCheckRefund = Math.max(0, (formAdvancePaid + checksPaid) - liveCalcs.discountAmount);
-              formRefundAmountDisplay = `${netCheckRefund.toLocaleString()} ج.م`;
             } else {
               const netRefund = Math.max(0, liveCalcs.subscriptionValue - liveCalcs.discountAmount);
               formRefundAmountDisplay = `${netRefund.toLocaleString()} ج.م`;
