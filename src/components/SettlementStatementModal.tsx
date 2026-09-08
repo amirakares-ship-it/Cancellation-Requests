@@ -69,13 +69,13 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
     } else {
       refundAmountDisplay = `${abkBaseRefund.toLocaleString()} ${cur}`;
     }
+   } else if (isChecks) {
+    const netCheckRefund = Math.max(0, (advancePaid + checksPaid) - discountTotal);
+    refundAmountDisplay = `${netCheckRefund.toLocaleString()} ${cur}`;
   } else if (typeof computed.refundAmount === 'number' && !isNaN(computed.refundAmount)) {
     refundAmountDisplay = `${computed.refundAmount.toLocaleString()} ${cur}`;
   } else if (typeof computed.refundAmount === 'string' && computed.refundAmount) {
     refundAmountDisplay = computed.refundAmount;
-  } else if (isChecks) {
-    const netCheckRefund = Math.max(0, (advancePaid + checksPaid) - discountTotal);
-    refundAmountDisplay = `${netCheckRefund.toLocaleString()} ${cur}`;
   } else {
     const netRefund = Math.max(0, subVal - discountTotal);
     refundAmountDisplay = `${netRefund.toLocaleString()} ${cur}`;
