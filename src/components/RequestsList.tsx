@@ -492,8 +492,8 @@ export default function RequestsList({
       <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
         <TableScrollWrapper>
           <table className="w-full text-right border-collapse text-xs">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-100">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-100 shadow-sm">
                 <th className="py-3 px-4 text-center w-12">
                   <input 
                     type="checkbox" 
