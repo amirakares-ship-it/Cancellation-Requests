@@ -489,7 +489,7 @@ export default function RequestsList({
       )}
 
       {/* Table Card */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-visible">
         <TableScrollWrapper>
           <table className="w-full text-right border-collapse text-xs">
             <thead className="sticky top-0 z-10">
