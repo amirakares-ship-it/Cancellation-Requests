@@ -87,6 +87,92 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
 
   const activeRequest = requests.find(r => r.id === selectedReqId) || initialRequest || null;
 
+  // Per-membership manual override: when set, this is a frozen HTML
+  // snapshot that gets rendered instead of the normal auto-calculated
+  // memo -- so an exceptional manual edit ("عايزة أعدل كلمة أو رقم في
+  // مذكرة عضوية معينة") only ever affects this one membership, never the
+  // shared template used for every other membership on the same form.
+  const [memoOverride, setMemoOverride] = useState<{ html: string; form?: string; savedBy: string; savedAt: string } | null>(null);
+  const [isLoadingOverride, setIsLoadingOverride] = useState(false);
+  const [isSavingOverride, setIsSavingOverride] = useState(false);
+  const [overrideMsg, setOverrideMsg] = useState<string | null>(null);
+
+  // Only actually apply the saved override when it matches the form tab
+  // currently being viewed -- a saved override is captured for one
+  // specific rendered form, so if she flips to a different form tab for
+  // the same request, that tab should still show its own normal template
+  // (or its own separately-saved override) rather than a mismatched
+  // snapshot.
+  const activeOverride = (memoOverride && memoOverride.form === activeForm) ? memoOverride : null;
+
+  useEffect(() => {
+    if (!activeRequest?.id) {
+      setMemoOverride(null);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingOverride(true);
+    const token = localStorage.getItem('wd_token');
+    fetch(`/api/memo-overrides/${activeRequest.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (!cancelled) setMemoOverride(data?.override || null);
+      })
+      .catch(() => {
+        if (!cancelled) setMemoOverride(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingOverride(false);
+      });
+    return () => { cancelled = true; };
+  }, [activeRequest?.id]);
+
+  const handleSaveManualOverride = async () => {
+    if (!activeRequest?.id || !sheetRef.current) return;
+    setIsSavingOverride(true);
+    setOverrideMsg(null);
+    try {
+      const token = localStorage.getItem('wd_token');
+      const html = sheetRef.current.innerHTML;
+      const res = await fetch(`/api/memo-overrides/${activeRequest.id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ html, form: activeForm }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data?.success) throw new Error(data?.error || 'فشل الحفظ');
+      setMemoOverride({ html, form: activeForm, savedBy: '', savedAt: new Date().toISOString() });
+      setOverrideMsg('تم حفظ التعديل اليدوي لهذه العضوية بنجاح.');
+    } catch (e: any) {
+      setOverrideMsg(e?.message || 'حدث خطأ أثناء حفظ التعديل اليدوي.');
+    } finally {
+      setIsSavingOverride(false);
+      setTimeout(() => setOverrideMsg(null), 4000);
+    }
+  };
+
+  const handleResetToTemplate = async () => {
+    if (!activeRequest?.id) return;
+    if (!window.confirm('هل تريدي التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي لهذه العضوية؟')) return;
+    setIsSavingOverride(true);
+    try {
+      const token = localStorage.getItem('wd_token');
+      await fetch(`/api/memo-overrides/${activeRequest.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setMemoOverride(null);
+      setOverrideMsg('تم الرجوع للشكل الافتراضي.');
+    } catch (e) {
+      setOverrideMsg('حدث خطأ أثناء الاسترجاع.');
+    } finally {
+      setIsSavingOverride(false);
+      setTimeout(() => setOverrideMsg(null), 4000);
+    }
+  };
+
   // Toggle state for editing toolbar (collapsible)
   const [isToolbarOpen, setIsToolbarOpen] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
@@ -772,7 +858,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     sectionGap: 8,
     cellPaddingV: 4,
     cellPaddingH: 8,
-    tableMargin: 8,
+    tableMargin: form === 'diff' ? 12 : 8,
     tableBorderWidth: '1px',
     tableBorderColor: '#666666',
     showSideTable: defaultShowSide,
@@ -1480,8 +1566,59 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             <Printer className="h-4 w-4" />
             <span>طباعة المذكرة</span>
           </button>
+
+          {/* Save a manual, exception-only edit for THIS membership's memo */}
+          <button
+            type="button"
+            onClick={handleSaveManualOverride}
+            disabled={!activeRequest || isSavingOverride}
+            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+            title="حفظ أي تعديل يدوي (كلمة أو رقم) في هذه المذكرة بالذات فقط، بدون التأثير على باقي العضويات"
+          >
+            <Save className="h-4 w-4" />
+            <span>{isSavingOverride ? 'جارِ الحفظ...' : 'حفظ تعديل يدوي لهذه العضوية'}</span>
+          </button>
+
+          {/* Only shown once a manual override actually exists for this membership */}
+          {activeOverride && (
+            <button
+              type="button"
+              onClick={handleResetToTemplate}
+              disabled={isSavingOverride}
+              className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all"
+              title="التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي المحسوب تلقائيًا"
+            >
+              <RotateCcw className="h-4 w-4" />
+              <span>استرجاع الشكل الافتراضي</span>
+            </button>
+          )}
         </div>
       </div>
+
+      {(activeOverride || overrideMsg || isLoadingOverride) && (
+        <div className={`no-print px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${
+          overrideMsg ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+          : activeOverride ? 'bg-amber-50 text-amber-700 border border-amber-200'
+          : 'bg-slate-50 text-slate-500 border border-slate-200'
+        }`}>
+          {overrideMsg ? (
+            <>
+              <CheckCircle2 className="h-4 w-4" />
+              <span>{overrideMsg}</span>
+            </>
+          ) : isLoadingOverride ? (
+            <span>جارِ التحقق من وجود تعديل يدوي محفوظ لهذه العضوية...</span>
+          ) : (
+            <>
+              <FileCheck className="h-4 w-4" />
+              <span>
+                هذه المذكرة معدّلة يدويًا لهذه العضوية بالذات (لا يؤثر على باقي العضويات)
+                {activeOverride?.savedAt ? ` — آخر حفظ: ${new Date(activeOverride.savedAt).toLocaleString('ar-EG')}` : ''}
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {/* Selector for 4 Forms */}
       <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 no-print">
@@ -2094,6 +2231,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 transform: translateX(-50%) !important;
                 height: auto !important;
                 min-height: 283mm !important;
+                display: flex !important;
+                flex-direction: column !important;
                 border: 3px solid #000 !important;
                 width: 740px !important;
                 max-width: 740px !important;
@@ -2141,7 +2280,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                  sits right after the signatures table and was adding
                  enough extra height on its own to push the page over one
                  A4 sheet. */
-              .doc-footer { margin-top: 8px !important; padding: 4px 0 !important; margin-bottom: 4px !important; }
+              /* margin-top:auto (inside the flex-column .sheet-companies
+                 above) pushes this bar all the way down to the bottom of
+                 the box every time -- whether the box is exactly one page
+                 tall (long content, e.g. Companies form) or stretched by
+                 min-height to fill the page (short content, e.g. Diff
+                 form without the loan line). */
+              .doc-footer { margin-top: auto !important; padding: 4px 0 !important; margin-bottom: 4px !important; }
               .doc-footer { border-top: none !important; }
             }
           `}</style>
@@ -2505,14 +2650,17 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
         <div className="flex justify-center p-4">
           {/* ================= Companies Form or International Form Sheet ================= */}
           <div
-            key={`sheet_${activeForm}`}
+            key={`sheet_${activeForm}_${activeRequest?.id ?? 'none'}_${activeOverride ? 'override' : 'template'}`}
             className="sheet-companies shadow-lg"
             contentEditable={true}
             id="sheet"
             ref={sheetRef}
             onClick={handleSheetClick}
             suppressContentEditableWarning={true}
+            {...(activeOverride ? { dangerouslySetInnerHTML: { __html: activeOverride.html } } : {})}
           >
+            {activeOverride ? null : (
+            <>
             {/* Wadi Degla Clubs Official Center Logo above إدارة العضويات */}
             <div className="w-full flex justify-center mb-3 pt-2" contentEditable={false}>
               <WadiDeglaLogo size="md" />
@@ -3135,6 +3283,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 <span>Rev: 4</span>
               </div>
             </div>
+            </>
+            )}
           </div>
         </div>
       </div>
