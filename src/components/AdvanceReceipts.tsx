@@ -435,10 +435,10 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
       </div>
 
       {/* Main Table */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-visible">
         <TableScrollWrapper>
           <table className="w-full text-right border-collapse">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-white">
               <tr className="bg-slate-50 text-slate-500 font-bold text-[11px] border-b border-slate-100">
                 <th className="py-3 px-3 w-10 text-center">
                   <input

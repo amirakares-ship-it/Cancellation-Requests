@@ -405,7 +405,7 @@ export default function CompanyAndABKDebtsManager({
           )}
 
           {/* Main Table: Manual Debt Entry, Refund & Debt Difference */}
-          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+          <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-visible">
             <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <h3 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
@@ -437,7 +437,7 @@ export default function CompanyAndABKDebtsManager({
 
             <TableScrollWrapper>
               <table className="w-full text-right border-collapse text-xs">
-                <thead>
+                <thead className="sticky top-0 z-10 bg-white">
                   <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                     <th className="p-3 text-center w-10">
                       <label className="inline-flex items-center justify-center cursor-pointer">

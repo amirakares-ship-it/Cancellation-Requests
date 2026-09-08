@@ -604,7 +604,7 @@ export default function CancellationStatusManager({
       </div>
 
       {/* Results Table */}
-      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-visible">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
             <Tag className="h-4 w-4 text-amber-500" />
@@ -626,7 +626,7 @@ export default function CancellationStatusManager({
 
         <TableScrollWrapper>
           <table className="w-full text-right border-collapse text-xs">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-white">
               <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                 <th className="p-3 text-center w-12">
                   <input
