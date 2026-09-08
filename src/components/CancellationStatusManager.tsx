@@ -350,6 +350,17 @@ export default function CancellationStatusManager({
     setSelectedIds([]);
   };
 
+  // Display-only rename: the underlying computed sub-status value from
+  // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
+  // logic and to decide when the finance-sent Check appears below it),
+  // but what she actually wants shown to the user for that state is
+  // "(جارى تجهيز المذكرة)" -- the "sent" confirmation is now conveyed by
+  // the Check + date underneath instead.
+  const getDisplaySubStatus = (r: CancellationRequest) => {
+    const raw = getPendingSubStatus(r);
+    return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
+  };
+
   // Handle Bulk Status Update
   const handleApplyBulkStatus = async () => {
     if (selectedIds.length === 0) {
@@ -884,7 +895,7 @@ export default function CancellationStatusManager({
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
                               'text-slate-500 font-medium'
                             }`}>
-                              {getPendingSubStatus(r)}
+                              {getDisplaySubStatus(r)}
                             </span>
                             {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && (
                               <div className="mt-1 flex flex-col items-center gap-0.5">
@@ -900,7 +911,7 @@ export default function CancellationStatusManager({
                                   }`}>
                                     {r.financeMemoSentDate
                                       ? '( تم ارسال المذكرة الى الادارة المالية )'
-                                      : 'جارى تجهيز المذكرة'}
+                                      : 'إرسال المذكرة للإدارة المالية'}
                                   </span>
                                 </label>
                                 {r.financeMemoSentDate && (
