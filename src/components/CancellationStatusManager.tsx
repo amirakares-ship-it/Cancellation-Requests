@@ -895,8 +895,12 @@ export default function CancellationStatusManager({
                                     onChange={() => handleToggleFinanceSent(r)}
                                     className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400 cursor-pointer"
                                   />
-                                  <span className="text-[9px] font-bold text-slate-500 max-w-[110px] whitespace-normal break-words leading-tight text-center">
-                                    ( تم ارسال المذكرة الى الادارة المالية )
+                                  <span className={`text-[9px] max-w-[110px] whitespace-normal break-words leading-tight text-center ${
+                                    r.financeMemoSentDate ? 'font-black text-emerald-600' : 'font-bold text-sky-700'
+                                  }`}>
+                                    {r.financeMemoSentDate
+                                      ? '( تم ارسال المذكرة الى الادارة المالية )'
+                                      : 'جارى تجهيز المذكرة'}
                                   </span>
                                 </label>
                                 {r.financeMemoSentDate && (
