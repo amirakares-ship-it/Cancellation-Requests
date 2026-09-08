@@ -109,6 +109,11 @@ export interface CancellationRequest {
   // Workflow flags
   receiptReceived: boolean;
   receiptReceivedDate?: string;
+  // Manual "Check": marks that this specific membership's memo was sent to
+  // Financial Admin, with an editable date. Independent of `status` (the
+  // overall Cancelled/Revoked/Pending lifecycle) so it can be toggled
+  // freely without affecting cancellation status logic.
+  financeMemoSentDate?: string | null;
   approvalSentToFirstManager?: boolean;
   firstManagerApproved?: boolean | null;
   firstManagerComments?: string;
