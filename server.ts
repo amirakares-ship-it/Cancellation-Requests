@@ -2306,9 +2306,25 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   }
 
   const reviewedValue = req.body.reviewed !== undefined ? !!req.body.reviewed : (existingRequest.reviewed ?? false);
+
+  // Automatically stamp the date the debt (ABK/Companies) was first
+  // entered manually -- mirrors the same auto-stamp already done for
+  // Excel debt uploads. Only set once (never overwritten by a later
+  // edit), and spread AFTER req.body so a client can't accidentally
+  // clear/override it.
+  const debtEnteredDatePatch: { debtEnteredDate?: string } = {};
+  if (
+    req.body.debtABKCompanies !== undefined &&
+    parseFloat(req.body.debtABKCompanies) > 0 &&
+    !existingRequest.debtEnteredDate
+  ) {
+    debtEnteredDatePatch.debtEnteredDate = new Date().toISOString().split('T')[0];
+  }
+
   const updatedRequest = calculateRequestFields({
     ...existingRequest,
     ...req.body,
+    ...debtEnteredDatePatch,
     reviewed: reviewedValue,
     id: reqId,
     club: bodyClub
@@ -2999,6 +3015,16 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
       matchingRequests.forEach((request) => {
         const prevDebt = request.debtABKCompanies || 0;
         request.debtABKCompanies = newDebt;
+
+        // Automatically record the date the debt was first entered into the
+        // system (whether via this Excel upload or manual entry elsewhere)
+        // -- used to show the correct "تاريخ الحالة" while the memo is
+        // being prepared for ABK/Companies requests. Only set once, so a
+        // later re-upload/correction of the same debt doesn't overwrite
+        // the original entry date.
+        if (newDebt > 0 && !request.debtEnteredDate) {
+          request.debtEnteredDate = todayStr;
+        }
 
         // Update optional fields if present in Excel
         if (row.loanUnderName && String(row.loanUnderName).trim() && row.loanUnderName !== 'لا يوجد') {
