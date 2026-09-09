@@ -80,6 +80,7 @@ export interface CancellationRequest {
   visaFees2Percent: number; // مصاريف فيزا 2%
   discountAmount: number; // مبلغ الخصم
   debtABKCompanies: number; // مديونية ABK+Companies
+  debtEnteredDate?: string; // تاريخ إدخال المديونية على السيستم (يدوي أو شيت إكسل) -- يُسجَّل تلقائيًا أول مرة فقط
   refundAmount: number | string; // Refund Amount (Calculated or waiting message)
   refundToClient: number | string | 'Not Required'; // رد للعميل (Companies only)
   abkDebtDifference: number | string | 'Not Required'; // فرق مديونية ABK (ABK only)
