@@ -101,7 +101,7 @@ export default function TableScrollWrapper({ children, className = '', showBarAl
       <div 
         ref={scrollRef} 
         onScroll={checkScroll}
-        className="overflow-auto scroll-smooth w-full max-h-[70vh] custom-table-scrollbar"
+        className="overflow-auto scroll-smooth w-full max-h-[calc(100vh-230px)] custom-table-scrollbar"
       >
         {children}
       </div>
