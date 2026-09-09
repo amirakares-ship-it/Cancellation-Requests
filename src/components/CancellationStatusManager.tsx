@@ -361,6 +361,19 @@ export default function CancellationStatusManager({
     return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
   };
 
+  // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
+  // that actually started this stage instead of the generic status date:
+  // the receipt-received date (cash/checks/Al Mashreq/international) or
+  // the debt-entered date (ABK/Companies) -- whichever of the two is
+  // actually populated on this request.
+  const getStatusDateDisplay = (r: CancellationRequest) => {
+    if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+      const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
+      if (prepDate) return formatDateCustom(prepDate);
+    }
+    return r.statusDate ? formatDateCustom(r.statusDate) : '—';
+  };
+
   // Handle Bulk Status Update
   const handleApplyBulkStatus = async () => {
     if (selectedIds.length === 0) {
@@ -941,7 +954,7 @@ export default function CancellationStatusManager({
                       </td>
                       <td className="p-3 text-center font-mono text-slate-700 font-bold whitespace-nowrap">
                         <div className="inline-flex items-center justify-center gap-1.5">
-                          <span>{r.statusDate ? formatDateCustom(r.statusDate) : '—'}</span>
+                          <span>{getStatusDateDisplay(r)}</span>
                           {user.role === 'admin' && (
                             <button
                               type="button"
