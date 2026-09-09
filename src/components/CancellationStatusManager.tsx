@@ -68,6 +68,124 @@ export default function CancellationStatusManager({
   const [isSavingStatusDate, setIsSavingStatusDate] = useState(false);
   const [statusDateFeedback, setStatusDateFeedback] = useState<{ id: number | string; text: string } | null>(null);
 
+  // "تم الإرسال للإدارة المالية" manual Check + editable date (per membership)
+  const [financeDateTarget, setFinanceDateTarget] = useState<CancellationRequest | null>(null);
+  const [newFinanceDate, setNewFinanceDate] = useState<string>('');
+  const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
+  const [financeDateFeedback, setFinanceDateFeedback] = useState<{ id: number | string; text: string } | null>(null);
+
+  // Bulk "تم الإرسال للإدارة المالية" state
+  const [bulkFinanceDate, setBulkFinanceDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isSubmittingFinance, setIsSubmittingFinance] = useState(false);
+  const [financeFeedbackMsg, setFinanceFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const handleOpenFinanceDateEdit = (r: CancellationRequest) => {
+    setFinanceDateTarget(r);
+    setNewFinanceDate(r.financeMemoSentDate ? toInputDateStr(r.financeMemoSentDate) : new Date().toISOString().split('T')[0]);
+  };
+
+  const handleSaveFinanceDate = async () => {
+    if (!financeDateTarget) return;
+    setIsSavingFinanceDate(true);
+    try {
+      const token = localStorage.getItem('wd_token') || '';
+      const res = await fetch(`/api/requests/${financeDateTarget.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ financeMemoSentDate: newFinanceDate || null })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل حفظ تاريخ إرسال المذكرة');
+      }
+      setFinanceDateFeedback({ id: financeDateTarget.id, text: 'تم الحفظ!' });
+      setTimeout(() => setFinanceDateFeedback(null), 3000);
+      setFinanceDateTarget(null);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء حفظ التاريخ');
+    } finally {
+      setIsSavingFinanceDate(false);
+    }
+  };
+
+  // Unchecking is a simple clear -- no date entry needed, so it doesn't
+  // need the modal.
+  const handleClearFinanceSent = async (r: CancellationRequest) => {
+    try {
+      const token = localStorage.getItem('wd_token') || '';
+      const res = await fetch(`/api/requests/${r.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ financeMemoSentDate: null })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل إلغاء التحديد');
+      }
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء إلغاء التحديد');
+    }
+  };
+
+  const handleToggleFinanceSent = (r: CancellationRequest) => {
+    if (r.financeMemoSentDate) {
+      handleClearFinanceSent(r);
+    } else {
+      handleOpenFinanceDateEdit(r);
+    }
+  };
+
+  // Bulk apply "تم الإرسال للإدارة المالية" for all selected memberships
+  const handleApplyBulkFinanceSent = async () => {
+    if (selectedIds.length === 0) {
+      setFinanceFeedbackMsg({ type: 'error', text: 'برجاء تحديد عضوية واحدة على الأقل من الجدول' });
+      return;
+    }
+    if (!bulkFinanceDate) {
+      setFinanceFeedbackMsg({ type: 'error', text: 'تاريخ الإرسال إجباري' });
+      return;
+    }
+
+    setIsSubmittingFinance(true);
+    setFinanceFeedbackMsg(null);
+
+    const token = localStorage.getItem('wd_token') || '';
+    try {
+      const res = await fetch('/api/requests/bulk-finance-sent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ ids: selectedIds, sentDate: bulkFinanceDate })
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'حدث خطأ أثناء التحديث');
+      }
+
+      setFinanceFeedbackMsg({
+        type: 'success',
+        text: `تم تحديد ${data.updatedCount || selectedIds.length} عضوية كـ"تم الإرسال للإدارة المالية" بتاريخ ${bulkFinanceDate}`
+      });
+      setSelectedIds([]);
+      onRefresh();
+    } catch (err: any) {
+      setFinanceFeedbackMsg({ type: 'error', text: err.message || 'فشل الاتصال بالخادم' });
+    } finally {
+      setIsSubmittingFinance(false);
+    }
+  };
+
   const handleOpenDateEdit = (r: CancellationRequest) => {
     setDateEditTarget(r);
     setNewStatusDate(r.statusDate ? toInputDateStr(r.statusDate) : new Date().toISOString().split('T')[0]);
@@ -230,6 +348,30 @@ export default function CancellationStatusManager({
     setClubFilter([]);
     setStatusFilter([]);
     setSelectedIds([]);
+  };
+
+  // Display-only rename: the underlying computed sub-status value from
+  // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
+  // logic and to decide when the finance-sent Check appears below it),
+  // but what she actually wants shown to the user for that state is
+  // "(جارى تجهيز المذكرة)" -- the "sent" confirmation is now conveyed by
+  // the Check + date underneath instead.
+  const getDisplaySubStatus = (r: CancellationRequest) => {
+    const raw = getPendingSubStatus(r);
+    return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
+  };
+
+  // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
+  // that actually started this stage instead of the generic status date:
+  // the receipt-received date (cash/checks/Al Mashreq/international) or
+  // the debt-entered date (ABK/Companies) -- whichever of the two is
+  // actually populated on this request.
+  const getStatusDateDisplay = (r: CancellationRequest) => {
+    if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+      const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
+      if (prepDate) return formatDateCustom(prepDate);
+    }
+    return r.statusDate ? formatDateCustom(r.statusDate) : '—';
   };
 
   // Handle Bulk Status Update
@@ -601,6 +743,60 @@ export default function CancellationStatusManager({
             <span>{feedbackMsg.text}</span>
           </div>
         )}
+
+        {/* Bulk "تم الإرسال للإدارة المالية" action -- same selectedIds as above */}
+        <div className="pt-4 border-t border-slate-100 space-y-3">
+          <h4 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+            <CheckSquare className="h-4 w-4 text-emerald-500" />
+            <span>تحديد "تم الإرسال للإدارة المالية" (Check جماعي)</span>
+          </h4>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                تاريخ الإرسال:
+              </label>
+              <input
+                type="date"
+                value={bulkFinanceDate}
+                onChange={(e) => setBulkFinanceDate(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <button
+                type="button"
+                onClick={handleApplyBulkFinanceSent}
+                disabled={isSubmittingFinance || selectedIds.length === 0}
+                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {isSubmittingFinance ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>جاري التحديث...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckSquare className="h-4 w-4" />
+                    <span>تحديد {selectedIds.length} عضوية كـ"تم الإرسال للإدارة المالية"</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {financeFeedbackMsg && (
+            <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+              financeFeedbackMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+            }`}>
+              {financeFeedbackMsg.type === 'success' ? (
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+              )}
+              <span>{financeFeedbackMsg.text}</span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Results Table */}
@@ -712,19 +908,53 @@ export default function CancellationStatusManager({
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
                               'text-slate-500 font-medium'
                             }`}>
-                              {getPendingSubStatus(r)}
+                              {getDisplaySubStatus(r)}
                             </span>
                             {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && (
-                              <span className="block text-[9px] font-bold text-slate-500 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
-                                ( تم ارسال المذكرة الى الادارة المالية )
-                              </span>
+                              <div className="mt-1 flex flex-col items-center gap-0.5">
+                                <label className="flex items-center justify-center gap-1 cursor-pointer" title="تحديد يدوي: تم إرسال المذكرة للإدارة المالية">
+                                  <input
+                                    type="checkbox"
+                                    checked={!!r.financeMemoSentDate}
+                                    onChange={() => handleToggleFinanceSent(r)}
+                                    className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400 cursor-pointer"
+                                  />
+                                  <span className={`text-[9px] max-w-[110px] whitespace-normal break-words leading-tight text-center ${
+                                    r.financeMemoSentDate ? 'font-black text-emerald-600' : 'font-bold text-sky-700'
+                                  }`}>
+                                    {r.financeMemoSentDate
+                                      ? '( تم ارسال المذكرة الى الادارة المالية )'
+                                      : 'إرسال المذكرة للإدارة المالية'}
+                                  </span>
+                                </label>
+                                {r.financeMemoSentDate && (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-[9px] font-mono font-bold text-emerald-700">
+                                      {formatDateCustom(r.financeMemoSentDate)}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenFinanceDateEdit(r)}
+                                      className="p-0.5 hover:bg-emerald-100 text-slate-400 hover:text-emerald-700 rounded transition-colors cursor-pointer"
+                                      title="تعديل تاريخ الإرسال"
+                                    >
+                                      <Edit3 className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                )}
+                                {financeDateFeedback && String(financeDateFeedback.id) === String(r.id) && (
+                                  <span className="block text-[9px] text-emerald-600 font-bold">
+                                    {financeDateFeedback.text}
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </>
                         )}
                       </td>
                       <td className="p-3 text-center font-mono text-slate-700 font-bold whitespace-nowrap">
                         <div className="inline-flex items-center justify-center gap-1.5">
-                          <span>{r.statusDate ? formatDateCustom(r.statusDate) : '—'}</span>
+                          <span>{getStatusDateDisplay(r)}</span>
                           {user.role === 'admin' && (
                             <button
                               type="button"
@@ -838,6 +1068,77 @@ export default function CancellationStatusManager({
               >
                 {isSavingStatusDate ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
                 <span>حفظ التعديل</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manual "تم الإرسال للإدارة المالية" Date Modal */}
+      {financeDateTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in text-right font-sans" dir="rtl">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+                  <Calendar className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-800">تاريخ إرسال المذكرة للإدارة المالية</h3>
+                  <p className="text-xxs text-slate-400 font-mono mt-0.5">
+                    عضوية رقم: {financeDateTarget.membershipNumber} — {financeDateTarget.memberName}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setFinanceDateTarget(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  تاريخ الإرسال
+                </label>
+                <input
+                  type="date"
+                  value={newFinanceDate}
+                  onChange={(e) => setNewFinanceDate(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setNewFinanceDate(new Date().toISOString().split('T')[0])}
+                  className="px-2.5 py-1 text-xxs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+                >
+                  تاريخ اليوم
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setFinanceDateTarget(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveFinanceDate}
+                disabled={isSavingFinanceDate}
+                className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                {isSavingFinanceDate ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                <span>حفظ وتحديد كـ"تم الإرسال"</span>
               </button>
             </div>
           </div>

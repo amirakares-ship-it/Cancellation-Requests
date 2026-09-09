@@ -2265,7 +2265,11 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   }
 
   const bodyKeys = Object.keys(req.body);
-  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate");
+  // "Lightweight" updates -- receipt-received toggle and the finance-sent
+  // "Check" -- bypass the reviewed/approval-locked restrictions below,
+  // since they're simple operational flags rather than substantive edits
+  // to the request's data.
+  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate");
 
   if (!isOnlyReceiptUpdate) {
     // Restrict modification if the request is already reviewed and user is not admin
@@ -2302,9 +2306,25 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   }
 
   const reviewedValue = req.body.reviewed !== undefined ? !!req.body.reviewed : (existingRequest.reviewed ?? false);
+
+  // Automatically stamp the date the debt (ABK/Companies) was first
+  // entered manually -- mirrors the same auto-stamp already done for
+  // Excel debt uploads. Only set once (never overwritten by a later
+  // edit), and spread AFTER req.body so a client can't accidentally
+  // clear/override it.
+  const debtEnteredDatePatch: { debtEnteredDate?: string } = {};
+  if (
+    req.body.debtABKCompanies !== undefined &&
+    parseFloat(req.body.debtABKCompanies) > 0 &&
+    !existingRequest.debtEnteredDate
+  ) {
+    debtEnteredDatePatch.debtEnteredDate = new Date().toISOString().split('T')[0];
+  }
+
   const updatedRequest = calculateRequestFields({
     ...existingRequest,
     ...req.body,
+    ...debtEnteredDatePatch,
     reviewed: reviewedValue,
     id: reqId,
     club: bodyClub
@@ -2413,6 +2433,39 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
       user.role,
       "تحديث حالة الإلغاء الجماعية",
       `تم تحديث حالة الإلغاء لعدد ${updatedCount} عضوية إلى (${status}) وتاريخ (${statusDate || '—'})`
+    );
+  }
+
+  res.json({ success: true, updatedCount, requests: db.requests });
+});
+
+app.post("/api/requests/bulk-finance-sent", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { ids, sentDate } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "الرجاء تحديد عضوية واحدة على الأقل" });
+  }
+
+  let updatedCount = 0;
+  const strIds = ids.map((id) => String(id));
+
+  db.requests.forEach((r) => {
+    if (strIds.includes(String(r.id))) {
+      r.financeMemoSentDate = sentDate || null;
+      updatedCount++;
+    }
+  });
+
+  if (updatedCount > 0) {
+    await saveDb();
+    logAudit(
+      user.username,
+      user.name,
+      user.role,
+      sentDate ? "تحديد إرسال المذكرة للإدارة المالية (جماعي)" : "إلغاء تحديد إرسال المذكرة للإدارة المالية (جماعي)",
+      sentDate
+        ? `تم تحديد عدد ${updatedCount} عضوية كـ"تم إرسال المذكرة للإدارة المالية" بتاريخ (${sentDate})`
+        : `تم إلغاء تحديد "تم إرسال المذكرة للإدارة المالية" لعدد ${updatedCount} عضوية`
     );
   }
 
@@ -2962,6 +3015,16 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
       matchingRequests.forEach((request) => {
         const prevDebt = request.debtABKCompanies || 0;
         request.debtABKCompanies = newDebt;
+
+        // Automatically record the date the debt was first entered into the
+        // system (whether via this Excel upload or manual entry elsewhere)
+        // -- used to show the correct "تاريخ الحالة" while the memo is
+        // being prepared for ABK/Companies requests. Only set once, so a
+        // later re-upload/correction of the same debt doesn't overwrite
+        // the original entry date.
+        if (newDebt > 0 && !request.debtEnteredDate) {
+          request.debtEnteredDate = todayStr;
+        }
 
         // Update optional fields if present in Excel
         if (row.loanUnderName && String(row.loanUnderName).trim() && row.loanUnderName !== 'لا يوجد') {

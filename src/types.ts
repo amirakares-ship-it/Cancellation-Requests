@@ -80,6 +80,7 @@ export interface CancellationRequest {
   visaFees2Percent: number; // مصاريف فيزا 2%
   discountAmount: number; // مبلغ الخصم
   debtABKCompanies: number; // مديونية ABK+Companies
+  debtEnteredDate?: string; // تاريخ إدخال المديونية على السيستم (يدوي أو شيت إكسل) -- يُسجَّل تلقائيًا أول مرة فقط
   refundAmount: number | string; // Refund Amount (Calculated or waiting message)
   refundToClient: number | string | 'Not Required'; // رد للعميل (Companies only)
   abkDebtDifference: number | string | 'Not Required'; // فرق مديونية ABK (ABK only)
@@ -109,6 +110,11 @@ export interface CancellationRequest {
   // Workflow flags
   receiptReceived: boolean;
   receiptReceivedDate?: string;
+  // Manual "Check": marks that this specific membership's memo was sent to
+  // Financial Admin, with an editable date. Independent of `status` (the
+  // overall Cancelled/Revoked/Pending lifecycle) so it can be toggled
+  // freely without affecting cancellation status logic.
+  financeMemoSentDate?: string | null;
   approvalSentToFirstManager?: boolean;
   firstManagerApproved?: boolean | null;
   firstManagerComments?: string;

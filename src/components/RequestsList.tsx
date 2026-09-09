@@ -193,6 +193,32 @@ export default function RequestsList({
     }
   };
 
+  // Display-only rename: the underlying computed sub-status value from
+  // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
+  // logic), but what's actually shown to the user for that state is
+  // "(جارى تجهيز المذكرة)". The interactive "sent to finance" Check lives
+  // only on the Memo (print) screen and the Cancellation Status Manager
+  // page -- this page just reflects the read-only status text.
+  const getDisplaySubStatus = (r: any) => {
+    const raw = getPendingSubStatus(r);
+    return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
+  };
+
+  // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
+  // that actually started this stage instead of the generic status date:
+  // the receipt-received date (cash/checks/Al Mashreq/international) or
+  // the debt-entered date (ABK/Companies) -- whichever of the two is
+  // actually populated on this request.
+  const getStatusDateDisplay = (r: any) => {
+    if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+      const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
+      if (prepDate) return formatDateCustom(prepDate);
+    }
+    return r.statusDate ? formatDateCustom(r.statusDate)
+      : (r.approvalDate ? formatDateCustom(r.approvalDate)
+      : (r.requestDate ? formatDateCustom(r.requestDate) : '—'));
+  };
+
   const handleFirstManagerModalDecision = async (reqId: number, approve: boolean, comments: string) => {
     setIsSubmittingFirstManager(true);
     try {
@@ -343,7 +369,7 @@ export default function RequestsList({
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
           {/* Quick Search */}
           <div className="relative">
-            <label className="block text-xs text-slate-400 mb-1">البحث السريع (رقم العضوية/الاسم)</label>
+            <label className="block text-xs text-slate-400 mb-1">رقم العضوية/الاسم</label>
             <div className="relative">
               <input
                 type="text"
@@ -572,9 +598,9 @@ export default function RequestsList({
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        <span className="font-semibold block text-slate-800">{r.type}</span>
-                        <span className="text-slate-500 text-xs font-normal">({r.days} يوم)</span>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <span className="font-semibold block text-slate-800 whitespace-nowrap">{r.type}</span>
+                        <span className="text-slate-500 text-xs font-normal whitespace-nowrap">({r.days} يوم)</span>
                       </td>
                       <td className="py-3.5 px-4 text-slate-600">{r.club}</td>
                       <td className="py-3.5 px-4 text-slate-600 font-medium">{r.paymentMethod}</td>
@@ -611,10 +637,13 @@ export default function RequestsList({
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
                               'text-slate-500 font-medium'
                             }`}>
-                              {getPendingSubStatus(r)}
+                              {getDisplaySubStatus(r)}
                             </span>
-                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && (
-                              <span className="block text-[9px] font-bold text-slate-500 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
+                            {/* Read-only reflection of the finance-sent Check --
+                                editable only from the Memo (print) screen and
+                                the Cancellation Status Manager page. */}
+                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && r.financeMemoSentDate && (
+                              <span className="block text-[9px] font-black text-emerald-600 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
                                 ( تم ارسال المذكرة الى الادارة المالية )
                               </span>
                             )}
@@ -623,7 +652,7 @@ export default function RequestsList({
                       </td>
                       <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-700 whitespace-nowrap">
                         <div className="inline-flex items-center justify-center gap-1.5">
-                          <span>{r.statusDate ? formatDateCustom(r.statusDate) : (r.approvalDate ? formatDateCustom(r.approvalDate) : (r.requestDate ? formatDateCustom(r.requestDate) : '—'))}</span>
+                          <span>{getStatusDateDisplay(r)}</span>
                           {user.role === 'admin' && (
                             <button
                               type="button"
