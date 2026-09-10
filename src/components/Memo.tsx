@@ -1070,7 +1070,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
   };
 
   const addDeductRow = () => {
-    setDeductRows(prev => [...prev, { tag: 'خصم', amount: '', unit: 'جم', desc: 'خصم جديد' }]);
+    setDeductRows(prev => {
+      const newRow = { tag: 'خصم', amount: '', unit: 'جم', desc: 'خصم جديد' };
+      if (prev.length === 0) return [newRow];
+      // Insert before the last row (the special check/refund summary row stays last)
+      return [...prev.slice(0, prev.length - 1), newRow, prev[prev.length - 1]];
+    });
   };
   const removeDeductRow = () => {
     setDeductRows(prev => (prev.length > 1 ? prev.slice(0, -1) : prev));
