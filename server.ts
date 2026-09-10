@@ -1259,31 +1259,82 @@ app.put("/api/committees/:id", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية التحكم باللجان" });
   }
 
-  const { status, approvalDate } = req.body;
+  const { status, approvalDate, number, year } = req.body;
   const comm = db.committees.find((c) => c.id === req.params.id);
   if (!comm) {
     return res.status(404).json({ error: "اللجنة غير موجودة" });
   }
 
+  const oldNumber = comm.number;
+  const oldYear = comm.year;
+  const newNumberTrimmed = number !== undefined ? String(number).trim() : undefined;
+  const numberChanged = !!newNumberTrimmed && newNumberTrimmed !== oldNumber;
+
+  if (newNumberTrimmed) comm.number = newNumberTrimmed;
+  if (year !== undefined && String(year).trim()) comm.year = String(year).trim();
+
+  // Cascade renumbering: correcting THIS committee's number is a
+  // structural fix to the whole sequence, not just this one record -- so
+  // every OTHER committee numbered higher than the old number shifts by
+  // the same amount (e.g. correcting 7->6 automatically shifts 8->7),
+  // keeping the numbering consistent with no gaps or duplicates. This is
+  // intentionally different from editing a single request's committee
+  // number (done elsewhere), which only affects that one request.
+  const cascadeShifts: { fromNumber: string; toNumber: string }[] = [];
+  if (numberChanged) {
+    const oldNumInt = parseInt(oldNumber, 10);
+    const newNumInt = parseInt(newNumberTrimmed!, 10);
+    if (!isNaN(oldNumInt) && !isNaN(newNumInt) && oldNumInt !== newNumInt) {
+      const delta = oldNumInt - newNumInt;
+      const others = db.committees
+        .filter((c) => c.id !== comm.id)
+        .map((c) => ({ c, n: parseInt(c.number, 10) }))
+        .filter((x) => !isNaN(x.n) && x.n > oldNumInt)
+        .sort((a, b) => a.n - b.n); // shift lowest-numbered first to avoid transient collisions
+
+      others.forEach(({ c, n }) => {
+        const shiftedNum = String(n - delta);
+        cascadeShifts.push({ fromNumber: c.number, toNumber: shiftedNum });
+        c.number = shiftedNum;
+      });
+    }
+  }
+
   if (status) comm.status = status;
-  if (approvalDate || status === 'closed') {
-    if (approvalDate) comm.approvalDate = approvalDate;
-    
-    // Propagate approval date and set decision to Accepted for all non-rejected requests in this committee
+  if (approvalDate) comm.approvalDate = approvalDate;
+
+  // Re-tag every request that referenced this committee under its OLD
+  // number so it now correctly shows the corrected number, and (re)sync
+  // its approval date/decision.
+  if (numberChanged || approvalDate || status) {
     db.requests.forEach((r) => {
-      if (r.committeeNo === comm.number && (!comm.year || r.committeeYear === comm.year)) {
+      if (r.committeeNo === oldNumber && (!oldYear || !r.committeeYear || r.committeeYear === oldYear)) {
+        if (numberChanged) r.committeeNo = comm.number;
+        if (year !== undefined && String(year).trim()) r.committeeYear = comm.year;
         if (approvalDate) r.approvalDate = approvalDate;
-        if (r.result !== "Rejected" && r.status !== "Rejected" && r.firstManagerApproved !== false) {
+        if (comm.status === 'closed' && r.result !== "Rejected" && r.status !== "Rejected" && r.firstManagerApproved !== false) {
           r.result = "Accepted";
         }
       }
     });
   }
-  
+
+  // Re-tag requests referencing any cascade-shifted committee too.
+  cascadeShifts.forEach(({ fromNumber, toNumber }) => {
+    db.requests.forEach((r) => {
+      if (r.committeeNo === fromNumber) {
+        r.committeeNo = toNumber;
+      }
+    });
+  });
+
   await saveDb();
 
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حالة اللجنة", `تم تعديل اللجنة ${comm.number}-${comm.year}: الحالة=${comm.status}`);
-  res.json({ success: true, committees: db.committees, requests: db.requests });
+  const cascadeNote = cascadeShifts.length
+    ? `، وتم إزاحة ${cascadeShifts.length} لجنة أخرى تباعًا (${cascadeShifts.map(s => `${s.fromNumber}->${s.toNumber}`).join(', ')})`
+    : '';
+  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حالة اللجنة", `تم تعديل اللجنة ${oldNumber}->${comm.number}-${comm.year}: الحالة=${comm.status}${cascadeNote}`);
+  res.json({ success: true, committees: db.committees, requests: db.requests, cascadeShifts });
 });
 
 // --- Formulas API Endpoints ---
@@ -2329,6 +2380,26 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
     id: reqId,
     club: bodyClub
   });
+
+  // If this request's committee number/year is being set (or changed) to
+  // match a committee that was ALREADY approved/closed earlier, sync the
+  // approval retroactively -- otherwise the request stays stuck showing
+  // "waiting for committee" forever, since committee-approval propagation
+  // normally only runs ONCE, at the moment a committee is closed (before
+  // this request was ever assigned to it).
+  if (updatedRequest.committeeNo) {
+    const matchingCommittee = db.committees.find((c) =>
+      c.status === 'closed' &&
+      c.number === updatedRequest.committeeNo &&
+      (!c.year || !updatedRequest.committeeYear || c.year === updatedRequest.committeeYear)
+    );
+    if (matchingCommittee) {
+      if (matchingCommittee.approvalDate) updatedRequest.approvalDate = matchingCommittee.approvalDate;
+      if (updatedRequest.result !== "Rejected" && updatedRequest.status !== "Rejected" && updatedRequest.firstManagerApproved !== false) {
+        updatedRequest.result = "Accepted";
+      }
+    }
+  }
 
   db.requests[reqIndex] = updatedRequest;
   await saveDb();
