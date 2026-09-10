@@ -2244,7 +2244,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 margin: 0 !important;
                 page-break-inside: avoid !important;
                 break-inside: avoid !important;
-                padding: 14px 22px 0 22px !important;
+                padding: 4px 22px 0 22px !important;
                 box-sizing: border-box !important;
                 print-color-adjust: exact !important;
                 -webkit-print-color-adjust: exact !important;
