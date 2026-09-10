@@ -223,13 +223,17 @@ export default function CommitteeManager({
         throw new Error(data.error || 'فشل تعديل بيانات اللجنة');
       }
 
-      setSuccessMsg(`تم تصحيح بيانات اللجنة إلى رقم ${editCommNumber.trim()} بنجاح، وتم تحديث كل الطلبات المرتبطة بها تلقائيًا.`);
+      const shifts: { fromNumber: string; toNumber: string }[] = data.cascadeShifts || [];
+      const cascadeText = shifts.length
+        ? ` كما تم إزاحة ترقيم ${shifts.length === 1 ? 'اللجنة' : 'اللجان'} التالية تلقائيًا: ${shifts.map(s => `${s.fromNumber} ← ${s.toNumber}`).join('، ')}.`
+        : '';
+      setSuccessMsg(`تم تصحيح بيانات اللجنة إلى رقم ${editCommNumber.trim()} بنجاح، وتم تحديث كل الطلبات المرتبطة بها تلقائيًا.${cascadeText}`);
       setIsEditingLastCommittee(false);
 
       setTimeout(() => {
         setSuccessMsg('');
         onRefresh();
-      }, 2000);
+      }, shifts.length ? 4500 : 2000);
 
     } catch (err: any) {
       setErrorMsg(err.message || 'حدث خطأ أثناء الاتصال بالخادم');
@@ -338,6 +342,9 @@ export default function CommitteeManager({
               <p className="text-[11px] text-slate-500">تاريخ الاعتماد: <span className="font-mono font-bold text-slate-800">{editApprovalDate || '—'}</span></p>
               <p className="text-[10px] text-slate-500 italic mt-1">
                 عند التأكيد، سيتم تحديث كل طلبات الإلغاء المرتبطة بهذه اللجنة تلقائيًا (رقم اللجنة، تاريخ الاعتماد، وحالة القبول).
+              </p>
+              <p className="text-[10px] text-amber-700 font-bold italic mt-1">
+                تحذير: هذا تصحيح شامل لترقيم اللجان بالكامل -- كل لجنة رقمها أكبر من الرقم الحالي ({lastClosedCommittee.number}) ستتزحزح تلقائيًا لتطابق الترقيم الجديد (مثال: لو غيّرتي 7 إلى 6، فاللجنة 8 هتتحول تلقائيًا لـ 7)، بما فيها اللجنة المفتوحة حاليًا لو كانت من ضمنهم.
               </p>
             </div>
             <div className="flex items-center gap-2 pt-2">
@@ -461,7 +468,7 @@ export default function CommitteeManager({
               <form onSubmit={handleEditCommitteePrompt} className="space-y-3 bg-sky-50/50 p-3.5 rounded-xl border border-sky-200/60">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-sky-700 font-bold">
-                    تعديل بيانات اللجنة المعتمدة رقم {lastClosedCommittee.number} -- لو اتاعتمدت بالغلط، صححي بياناتها هنا وهيتحدث كل حاجة مرتبطة بيها تلقائيًا.
+                    تعديل بيانات اللجنة المعتمدة رقم {lastClosedCommittee.number} -- لو اتاعتمدت بالغلط، صححي بياناتها هنا وهيتحدث كل حاجة مرتبطة بيها تلقائيًا، بما في ذلك إزاحة ترقيم أي لجنة لاحقة (زي اللجنة المفتوحة حاليًا).
                   </span>
                   <button
                     type="button"
