@@ -32,9 +32,26 @@ export default function CommitteeManager({
   // Step state: 'approve' | 'open_new'
   const [step, setStep] = useState<'approve' | 'open_new'>('approve');
 
-  const [confirmAction, setConfirmAction] = useState<'approve' | 'open_new' | null>(null);
+  const [confirmAction, setConfirmAction] = useState<'approve' | 'open_new' | 'edit_committee' | null>(null);
 
   const openCommittee = committees.find(c => c.status === 'open');
+
+  // For fixing a mistaken approval: the most recently CLOSED committee
+  // (id format is comm-{number}-{year}-{timestamp}, so sorting by that
+  // trailing timestamp reliably finds the last one closed, regardless of
+  // array order).
+  const lastClosedCommittee = [...committees]
+    .filter(c => c.status === 'closed')
+    .sort((a, b) => {
+      const ta = parseInt(String(a.id).split('-').pop() || '0', 10);
+      const tb = parseInt(String(b.id).split('-').pop() || '0', 10);
+      return tb - ta;
+    })[0] || null;
+
+  const [isEditingLastCommittee, setIsEditingLastCommittee] = useState(false);
+  const [editCommNumber, setEditCommNumber] = useState('');
+  const [editCommYear, setEditCommYear] = useState('');
+  const [editApprovalDate, setEditApprovalDate] = useState('');
 
   // Guess next committee number on load or change
   useEffect(() => {
@@ -160,6 +177,67 @@ export default function CommitteeManager({
     }
   };
 
+  const handleOpenEditLastCommittee = () => {
+    if (!lastClosedCommittee) return;
+    setEditCommNumber(lastClosedCommittee.number || '');
+    setEditCommYear(lastClosedCommittee.year || '');
+    setEditApprovalDate(lastClosedCommittee.approvalDate || '');
+    setIsEditingLastCommittee(true);
+    setErrorMsg('');
+  };
+
+  const handleEditCommitteePrompt = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editCommNumber.trim()) {
+      setErrorMsg('يرجى إدخال رقم اللجنة');
+      return;
+    }
+    setErrorMsg('');
+    setConfirmAction('edit_committee');
+  };
+
+  const executeEditCommittee = async () => {
+    if (!lastClosedCommittee) return;
+
+    setIsSubmitting(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+    setConfirmAction(null);
+
+    try {
+      const res = await fetch(`/api/committees/${lastClosedCommittee.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          number: editCommNumber.trim(),
+          year: editCommYear.trim(),
+          approvalDate: editApprovalDate
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'فشل تعديل بيانات اللجنة');
+      }
+
+      setSuccessMsg(`تم تصحيح بيانات اللجنة إلى رقم ${editCommNumber.trim()} بنجاح، وتم تحديث كل الطلبات المرتبطة بها تلقائيًا.`);
+      setIsEditingLastCommittee(false);
+
+      setTimeout(() => {
+        setSuccessMsg('');
+        onRefresh();
+      }, 2000);
+
+    } catch (err: any) {
+      setErrorMsg(err.message || 'حدث خطأ أثناء الاتصال بالخادم');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const renderContent = () => {
     return (
       <div className="space-y-4 text-right" dir="rtl">
@@ -238,6 +316,45 @@ export default function CommitteeManager({
                 onClick={() => setConfirmAction(null)}
                 disabled={isSubmitting}
                 className="py-2 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+              >
+                تراجع
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Confirmation Step for Editing Last Committee's Data */}
+        {confirmAction === 'edit_committee' && lastClosedCommittee && (
+          <div className="bg-sky-50 border border-sky-300 p-4 rounded-2xl space-y-3 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-2 text-sky-900 font-black text-xs border-b border-sky-200 pb-2">
+              <AlertTriangle className="h-4 w-4 text-sky-600 shrink-0" />
+              <span>خطوة تأكيد: تصحيح بيانات اللجنة</span>
+            </div>
+            <div className="text-xs text-slate-700 leading-relaxed space-y-1">
+              <p>
+                هل أنت متأكد من تعديل بيانات <strong className="text-sky-900">اللجنة رقم {lastClosedCommittee.number}</strong> لتصبح
+                {' '}<strong className="text-sky-900">رقم {editCommNumber.trim()}</strong>؟
+              </p>
+              <p className="text-[11px] text-slate-500">تاريخ الاعتماد: <span className="font-mono font-bold text-slate-800">{editApprovalDate || '—'}</span></p>
+              <p className="text-[10px] text-slate-500 italic mt-1">
+                عند التأكيد، سيتم تحديث كل طلبات الإلغاء المرتبطة بهذه اللجنة تلقائيًا (رقم اللجنة، تاريخ الاعتماد، وحالة القبول).
+              </p>
+            </div>
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={executeEditCommittee}
+                disabled={isSubmitting}
+                className="flex-1 py-2 px-3 bg-sky-500 hover:bg-sky-600 text-white font-black text-xs rounded-xl shadow-md flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <Check className="h-4 w-4" />
+                <span>نعم، تأكيد التصحيح</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirmAction(null)}
+                disabled={isSubmitting}
+                className="py-2 px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
               >
                 تراجع
               </button>
@@ -324,6 +441,80 @@ export default function CommitteeManager({
               <span>تنشيط وفتح اللجنة الجديدة</span>
             </button>
           </form>
+        )}
+
+        {/* Correcting a mistaken approval: edit the last CLOSED committee's
+            number/year/approval date. Separate from the open/approve flow
+            above since it applies regardless of which step you're on. */}
+        {lastClosedCommittee && !confirmAction && (
+          <div className="pt-3 border-t border-slate-100">
+            {!isEditingLastCommittee ? (
+              <button
+                type="button"
+                onClick={handleOpenEditLastCommittee}
+                className="w-full py-2 px-3 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl border border-sky-200 flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+              >
+                <Layers className="h-3.5 w-3.5" />
+                <span>تصحيح بيانات آخر لجنة معتمدة (رقم {lastClosedCommittee.number})</span>
+              </button>
+            ) : (
+              <form onSubmit={handleEditCommitteePrompt} className="space-y-3 bg-sky-50/50 p-3.5 rounded-xl border border-sky-200/60">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-sky-700 font-bold">
+                    تعديل بيانات اللجنة المعتمدة رقم {lastClosedCommittee.number} -- لو اتاعتمدت بالغلط، صححي بياناتها هنا وهيتحدث كل حاجة مرتبطة بيها تلقائيًا.
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingLastCommittee(false)}
+                    className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors shrink-0"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">رقم اللجنة الصحيح <span className="text-rose-500">*</span></label>
+                    <input
+                      type="text"
+                      required
+                      value={editCommNumber}
+                      onChange={(e) => setEditCommNumber(e.target.value)}
+                      className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-sky-400 text-center font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">سنة اللجنة</label>
+                    <input
+                      type="text"
+                      value={editCommYear}
+                      onChange={(e) => setEditCommYear(e.target.value)}
+                      className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-sky-400 text-center font-mono"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">تاريخ الاعتماد</label>
+                  <input
+                    type="date"
+                    value={editApprovalDate}
+                    onChange={(e) => setEditApprovalDate(e.target.value)}
+                    className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-sky-400 text-right font-mono"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="w-full py-2 px-4 bg-sky-500 hover:bg-sky-600 text-white font-black text-xs rounded-xl shadow-sm flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <CheckCircle className="h-4 w-4" />
+                  <span>حفظ التصحيح وتحديث كل الطلبات المرتبطة</span>
+                </button>
+              </form>
+            )}
+          </div>
         )}
       </div>
     );
