@@ -2249,10 +2249,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 print-color-adjust: exact !important;
                 -webkit-print-color-adjust: exact !important;
               }
-              .logo-row { margin-bottom: 1px !important; }
-              .logo { height: 44px !important; }
-              .title-box-row { margin-bottom: 2px !important; }
-              .title-box { padding: 2px 16px !important; }
+              .logo-row { margin-bottom: 0 !important; }
+              .logo { height: 34px !important; }
+              .title-box-row { margin-bottom: 0 !important; }
+              .title-box { padding: 1px 16px !important; }
+              .title-box .l1 { font-size: 0.9em !important; }
+              .title-box .l2 { font-size: 0.8em !important; margin-top: 0 !important; }
               .field-block { margin: 2px 0 !important; }
               .field-line { margin: 2px 0 !important; }
               .sign-name-text { display: none !important; }
