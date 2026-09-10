@@ -828,7 +828,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
       { tag: 'خصم', amount: adminFeesVal, unit: '', desc: 'مصاريف إدارية' },
       { tag: 'خصم', amount: usageFeeVal, unit: '', desc: 'مقابل انتفاع بالنادى' },
       { tag: 'خصم', amount: visaFeesVal, unit: '', desc: 'مصاريف فيزا 2%' },
-      { tag: 'مع رد شيك للعضوية بقيمة', amount: refundVal, unit: deductUnit, desc: 'لحساب العميل' },
+      { tag: 'مع تحويل مبلغ', amount: refundVal, unit: deductUnit, desc: 'لحساب العميل' },
     ];
   } else if (form === 'companies') {
     const refundVal = getCheckRefund(r, '');
