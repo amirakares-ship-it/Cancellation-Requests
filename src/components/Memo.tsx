@@ -2249,6 +2249,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 print-color-adjust: exact !important;
                 -webkit-print-color-adjust: exact !important;
               }
+              .logo-row { margin-bottom: 1px !important; }
+              .logo { height: 44px !important; }
+              .title-box-row { margin-bottom: 2px !important; }
+              .title-box { padding: 2px 16px !important; }
+              .field-block { margin: 2px 0 !important; }
+              .field-line { margin: 2px 0 !important; }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               /* Footer/signatures block: 340px (labels table) + 300px
