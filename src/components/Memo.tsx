@@ -1865,10 +1865,15 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               align-items: center;
               gap: 6px;
-              margin: 5px 0;
+              margin: 3px 0;
               font-weight: bold;
             }
             .field-line .value { font-weight: normal; }
+            /* Extra breathing room between the identity lines (name / name
+               + loan) and the dates lines right after them, so the two
+               groups read as visually separate -- on top of the tighter
+               3px margin every other field-line now uses. */
+            .subdate-field-line { margin-top: 14px; }
             .id-row { display:flex; justify-content: space-between; align-items:center; }
             .placeholder { color:#0057a3; }
 
@@ -2288,6 +2293,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                  back to a single page. */
               .name-field-line { margin-bottom: 0 !important; }
               .loan-field-line { margin-top: 0 !important; margin-bottom: 2px !important; }
+              /* Keep a small but clearly visible gap before the dates group
+                 in print too, even though every other field-line is
+                 squeezed to 2px here. */
+              .subdate-field-line { margin-top: 8px !important; }
               /* Trim the (fairly large, 20px + 35px) margins around the
                  very last element -- the "Document Control" bar -- which
                  sits right after the signatures table and was adding
