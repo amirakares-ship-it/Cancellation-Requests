@@ -2921,6 +2921,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 <tbody>
                   {gridRows.map((row, idx) => {
                     const isAdvancePaidRow = row.label.includes('مقدم') || normalizeArabicText(row.label).includes('مقدم');
+                    const isPaymentMethodRow = row.label.trim() === 'طريقة السداد' || normalizeArabicText(row.label).includes('طريقة السداد');
+                    const rowBold = row.isBold || isPaymentMethodRow;
 
                     const cashNum = parseNum(activeRequest?.cashAmount);
                     const visaNum = parseNum(activeRequest?.visaAmount);
@@ -2928,12 +2930,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                     const visaFormatted = visaNum.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
                     return (
-                      <tr key={idx} style={row.isBold ? { fontWeight: 'bold' } : undefined}>
-                        <td className="label-cell" style={row.isBold ? { fontWeight: 'bold' } : undefined}>
+                      <tr key={idx} style={rowBold ? { fontWeight: 'bold' } : undefined}>
+                        <td className="label-cell" style={rowBold ? { fontWeight: 'bold' } : undefined}>
                           {row.label}
                           <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'gridCol1', gridCol1Width)} />
                         </td>
-                        <td className="val-cell placeholder" style={row.isBold ? { fontWeight: 'bold' } : undefined}>
+                        <td className="val-cell placeholder" style={rowBold ? { fontWeight: 'bold' } : undefined}>
                           <div className="flex items-center justify-between gap-3 w-full">
                             <span>
                               {row.val1 || ''}{row.val1 && row.val1.trim() !== '' && row.val1 !== '-' && !row.val1.startsWith('[') && row.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {row.unit}</span> : ''}
