@@ -187,6 +187,9 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
   const [cellPaddingV, setCellPaddingV] = useState(4);
   const [cellPaddingH, setCellPaddingH] = useState(8);
   const [tableMargin, setTableMargin] = useState(8);
+  // Spacing between the memo's text rows (field-lines and note-lines) --
+  // separate from cellPaddingV, which only affects table rows.
+  const [lineGap, setLineGap] = useState(4);
 
   // Table styling state
   const [tableBorderWidth, setTableBorderWidth] = useState('1px');
@@ -859,6 +862,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     cellPaddingV: 4,
     cellPaddingH: 8,
     tableMargin: form === 'diff' ? 12 : 8,
+    lineGap: 4,
     tableBorderWidth: '1px',
     tableBorderColor: '#666666',
     showSideTable: defaultShowSide,
@@ -902,6 +906,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(tplConfig?.cellPaddingV !== undefined ? tplConfig.cellPaddingV : defaults.cellPaddingV);
     setCellPaddingH(tplConfig?.cellPaddingH !== undefined ? tplConfig.cellPaddingH : defaults.cellPaddingH);
     setTableMargin(tplConfig?.tableMargin !== undefined ? tplConfig.tableMargin : defaults.tableMargin);
+    setLineGap(tplConfig?.lineGap !== undefined ? tplConfig.lineGap : defaults.lineGap);
     setTableBorderWidth(tplConfig?.tableBorderWidth || defaults.tableBorderWidth);
     setTableBorderColor(tplConfig?.tableBorderColor || defaults.tableBorderColor);
 
@@ -1028,12 +1033,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
   };
 
   // Adjust style variables
-  const adjustVar = (type: 'font' | 'gap' | 'cellV' | 'cellH' | 'margin', delta: number) => {
+  const adjustVar = (type: 'font' | 'gap' | 'cellV' | 'cellH' | 'margin' | 'lineGap', delta: number) => {
     if (type === 'font') setFontSize(prev => Math.min(22, Math.max(9, prev + delta)));
     if (type === 'gap') setSectionGap(prev => Math.min(24, Math.max(0, prev + delta)));
     if (type === 'cellV') setCellPaddingV(prev => Math.min(16, Math.max(0, prev + delta)));
     if (type === 'cellH') setCellPaddingH(prev => Math.min(24, Math.max(0, prev + delta)));
     if (type === 'margin') setTableMargin(prev => Math.min(24, Math.max(0, prev + delta)));
+    if (type === 'lineGap') setLineGap(prev => Math.min(20, Math.max(0, prev + delta)));
   };
 
   const resetVars = () => {
@@ -1042,6 +1048,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(4);
     setCellPaddingH(8);
     setTableMargin(8);
+    setLineGap(4);
     setTableBorderWidth('1px');
     setTableBorderColor('#666666');
     if (selectedLineRef) {
@@ -1416,6 +1423,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
       cellPaddingV,
       cellPaddingH,
       tableMargin,
+      lineGap,
       tableBorderWidth,
       tableBorderColor,
       showSideTable: resolvedShowSide,
@@ -1484,6 +1492,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(defaults.cellPaddingV);
     setCellPaddingH(defaults.cellPaddingH);
     setTableMargin(defaults.tableMargin);
+    setLineGap(defaults.lineGap !== undefined ? defaults.lineGap : 4);
     setTableBorderWidth(defaults.tableBorderWidth);
     setTableBorderColor(defaults.tableBorderColor);
     setShowSideTable(defaults.showSideTable);
@@ -1810,6 +1819,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               --cell-padding-v: ${cellPaddingV}px;
               --cell-padding-h: ${cellPaddingH}px;
               --table-margin: ${tableMargin}px;
+              --line-gap: ${lineGap}px;
               --tbl-border-w: ${tableBorderWidth};
               --tbl-border-c: ${tableBorderColor};
             }
@@ -1865,7 +1875,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               align-items: center;
               gap: 6px;
-              margin: 3px 0;
+              margin: var(--line-gap) 0;
               font-weight: bold;
             }
             .field-line .value { font-weight: normal; }
@@ -1989,7 +1999,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               font-weight: bold;
             }
 
-            .note-line { margin: 4px 0; line-height:1.6; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            .note-line { margin: var(--line-gap) 0; line-height:1.6; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
             /* A bit more breathing room above the "بناء على موافقة لجنة
                العضويات..." line, separating it from the receipts line
                right above it. */
@@ -2268,8 +2278,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .logo-block { margin-bottom: 0 !important; padding-top: 0 !important; }
               .title-box-row { margin-top: 0 !important; margin-bottom: 2px !important; padding-top: 0 !important; }
               .field-block { margin: 2px 0 !important; }
-              .field-line { margin: 2px 0 !important; }
-              .note-line { margin: 2px 0 !important; line-height: 1.4 !important; }
+              .field-line { margin: var(--line-gap) 0 !important; }
+              .note-line { margin: var(--line-gap) 0 !important; line-height: 1.4 !important; }
               .committee-note-line { margin-top: 7px !important; }
               .sales-dept-note-line { margin-top: 10px !important; }
               .sign-name-text { display: none !important; }
@@ -2523,6 +2533,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               <button type="button" onClick={() => adjustVar('cellV', 1)}>+</button>
               <button type="button" onClick={() => adjustVar('cellH', -1)}>أضيق</button>
               <button type="button" onClick={() => adjustVar('cellH', 1)}>أوسع</button>
+            </div>
+
+            <div className="group">
+              <span>تباعد الصفوف (بين أي سطرين):</span>
+              <button type="button" onClick={() => adjustVar('lineGap', -1)}>−</button>
+              <span style={{ fontSize: '11px', color: '#fbbf24', minWidth: '28px', textAlign: 'center' }}>{lineGap}px</span>
+              <button type="button" onClick={() => adjustVar('lineGap', 1)}>+</button>
             </div>
 
             <div className="group">
