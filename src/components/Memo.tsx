@@ -1989,7 +1989,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               font-weight: bold;
             }
 
-            .note-line { margin: var(--section-gap) 0; line-height:1.8; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            .note-line { margin: 4px 0; line-height:1.6; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
 
             table.deduct {
               width: fit-content;
@@ -2262,6 +2262,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .title-box-row { margin-top: 0 !important; margin-bottom: 2px !important; padding-top: 0 !important; }
               .field-block { margin: 2px 0 !important; }
               .field-line { margin: 2px 0 !important; }
+              .note-line { margin: 2px 0 !important; line-height: 1.4 !important; }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               /* Footer/signatures block: 340px (labels table) + 300px
