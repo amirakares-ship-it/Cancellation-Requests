@@ -1843,10 +1843,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               margin-bottom: 6px;
             }
             .logo { height: 68px; }
+            .logo-block { margin-bottom: 2px !important; padding-top: 0 !important; }
 
             .title-box-row {
               display: flex;
               justify-content: center;
+              margin-top: 0;
               margin-bottom: var(--section-gap);
             }
             .title-box {
@@ -2251,6 +2253,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .logo-row { margin-bottom: 0 !important; padding-bottom: 0 !important; }
               .logo-placeholder { height: 44px !important; }
+              .logo-block { margin-bottom: 0 !important; padding-top: 0 !important; }
               .title-box-row { margin-top: 0 !important; margin-bottom: 2px !important; padding-top: 0 !important; }
               .field-block { margin: 2px 0 !important; }
               .field-line { margin: 2px 0 !important; }
@@ -2672,7 +2675,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             {activeOverride ? null : (
             <>
             {/* Wadi Degla Clubs Official Center Logo above إدارة العضويات */}
-            <div className="w-full flex justify-center mb-3 pt-2" contentEditable={false}>
+            <div className="logo-block w-full flex justify-center mb-1 pt-0" contentEditable={false}>
               <WadiDeglaLogo size="md" />
             </div>
 
