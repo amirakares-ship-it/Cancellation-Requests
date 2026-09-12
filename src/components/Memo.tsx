@@ -407,7 +407,12 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
   useEffect(() => {
     if (prevSelectedReqIdRef.current !== selectedReqId) {
       prevSelectedReqIdRef.current = selectedReqId;
-      if (!isFormManuallySelected.current && activeRequest) {
+      // A manual form choice (e.g. "Diff") should only apply to the
+      // membership it was picked for -- picking a different membership
+      // number is a fresh start, so forget the manual override and let
+      // auto-detection run again for the newly selected membership.
+      isFormManuallySelected.current = false;
+      if (activeRequest) {
         if (activeRequest.membershipType === 'International') {
           setActiveForm('international');
         } else if (['ABK', 'المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => (activeRequest.paymentMethod || '').includes(pm))) {
