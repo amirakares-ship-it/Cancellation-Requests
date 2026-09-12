@@ -1990,6 +1990,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             }
 
             .note-line { margin: 4px 0; line-height:1.6; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            /* A bit more breathing room above the "بناء على موافقة لجنة
+               العضويات..." line, separating it from the receipts line
+               right above it. */
+            .committee-note-line { margin-top: 12px; }
 
             table.deduct {
               width: fit-content;
@@ -2263,6 +2267,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .field-block { margin: 2px 0 !important; }
               .field-line { margin: 2px 0 !important; }
               .note-line { margin: 2px 0 !important; line-height: 1.4 !important; }
+              .committee-note-line { margin-top: 7px !important; }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               /* Footer/signatures block: 340px (labels table) + 300px
@@ -2978,7 +2983,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   <span className="placeholder">{activeRequest?.advancePaid ? '1' : ''}</span>
                 </div>
 
-                <div className="note-line">
+                <div className="note-line committee-note-line">
                   <span
                     className="committee-note-prefix"
                     contentEditable={true}
@@ -3098,7 +3103,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   <span className="placeholder">{activeRequest?.advancePaid ? '1' : ''}</span>
                 </div>
 
-                <div className="note-line">
+                <div className="note-line committee-note-line">
                   <span
                     className="committee-note-prefix"
                     contentEditable={true}
