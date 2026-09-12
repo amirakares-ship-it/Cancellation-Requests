@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3 } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest } from '../utils';
+import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, getPendingSubStatus, toInputDateStr } from '../utils';
 import { WadiDeglaLogo } from './WadiDeglaLogo';
 
 interface MemoProps {
@@ -170,6 +170,73 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
     } finally {
       setIsSavingOverride(false);
       setTimeout(() => setOverrideMsg(null), 4000);
+    }
+  };
+
+  // "تم الإرسال للإدارة المالية" manual Check + editable date -- same
+  // field/endpoint as the Cancellation Status Manager page, just scoped
+  // here to the single membership currently open in the memo screen.
+  const [financeDateModalOpen, setFinanceDateModalOpen] = useState(false);
+  const [newFinanceDate, setNewFinanceDate] = useState<string>('');
+  const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
+  const [financeDateMsg, setFinanceDateMsg] = useState<string | null>(null);
+
+  const handleOpenFinanceDateEdit = () => {
+    if (!activeRequest) return;
+    setNewFinanceDate(
+      activeRequest.financeMemoSentDate
+        ? toInputDateStr(activeRequest.financeMemoSentDate)
+        : new Date().toISOString().split('T')[0]
+    );
+    setFinanceDateModalOpen(true);
+  };
+
+  const handleSaveFinanceDate = async () => {
+    if (!activeRequest?.id) return;
+    setIsSavingFinanceDate(true);
+    try {
+      const token = localStorage.getItem('wd_token');
+      const res = await fetch(`/api/requests/${activeRequest.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ financeMemoSentDate: newFinanceDate || null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'فشل حفظ التاريخ');
+      setFinanceDateMsg('تم الحفظ!');
+      setFinanceDateModalOpen(false);
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'حدث خطأ أثناء الحفظ');
+    } finally {
+      setIsSavingFinanceDate(false);
+      setTimeout(() => setFinanceDateMsg(null), 3000);
+    }
+  };
+
+  // Unchecking is a simple clear -- no date entry needed.
+  const handleClearFinanceSent = async () => {
+    if (!activeRequest?.id) return;
+    try {
+      const token = localStorage.getItem('wd_token');
+      const res = await fetch(`/api/requests/${activeRequest.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ financeMemoSentDate: null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'فشل إلغاء التحديد');
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'حدث خطأ أثناء إلغاء التحديد');
+    }
+  };
+
+  const handleToggleFinanceSent = () => {
+    if (activeRequest?.financeMemoSentDate) {
+      handleClearFinanceSent();
+    } else {
+      handleOpenFinanceDateEdit();
     }
   };
 
@@ -1586,33 +1653,49 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             <span>طباعة المذكرة</span>
           </button>
 
-          {/* Save a manual, exception-only edit for THIS membership's memo */}
-          <button
-            type="button"
-            onClick={handleSaveManualOverride}
-            disabled={!activeRequest || isSavingOverride}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
-            title="حفظ أي تعديل يدوي (كلمة أو رقم) في هذه المذكرة بالذات فقط، بدون التأثير على باقي العضويات"
-          >
-            <Save className="h-4 w-4" />
-            <span>{isSavingOverride ? 'جارِ الحفظ...' : 'حفظ تعديل يدوي لهذه العضوية'}</span>
-          </button>
-
-          {/* Only shown once a manual override actually exists for this membership */}
-          {activeOverride && (
-            <button
-              type="button"
-              onClick={handleResetToTemplate}
-              disabled={isSavingOverride}
-              className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all"
-              title="التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي المحسوب تلقائيًا"
+          {/* "تم الإرسال للإدارة المالية" -- same field as the Cancellation
+              Status Manager page, only shown once the request has reached
+              the "جارى تجهيز المذكرة" stage (receipt received / debt
+              entered), matching when this Check is relevant there too. */}
+          {activeRequest && getPendingSubStatus(activeRequest) === '(الشيك تحت الاصدار)' && (
+            <label
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl shadow-xs cursor-pointer no-print"
+              title="تحديد يدوي: تم إرسال المذكرة للإدارة المالية"
             >
-              <RotateCcw className="h-4 w-4" />
-              <span>استرجاع الشكل الافتراضي</span>
-            </button>
+              <input
+                type="checkbox"
+                checked={!!activeRequest.financeMemoSentDate}
+                onChange={handleToggleFinanceSent}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400 cursor-pointer"
+              />
+              <span className={`text-xs font-bold whitespace-nowrap ${
+                activeRequest.financeMemoSentDate ? 'text-emerald-600 font-black' : 'text-sky-700'
+              }`}>
+                {activeRequest.financeMemoSentDate
+                  ? `تم الإرسال للإدارة المالية (${formatDateCustom(activeRequest.financeMemoSentDate)})`
+                  : 'إرسال المذكرة للإدارة المالية'}
+              </span>
+              {activeRequest.financeMemoSentDate && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleOpenFinanceDateEdit(); }}
+                  className="p-1 hover:bg-emerald-100 text-slate-400 hover:text-emerald-700 rounded transition-colors cursor-pointer"
+                  title="تعديل تاريخ الإرسال"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </label>
           )}
         </div>
       </div>
+
+      {financeDateMsg && (
+        <div className="no-print px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{financeDateMsg}</span>
+        </div>
+      )}
 
       {(activeOverride || overrideMsg || isLoadingOverride) && (
         <div className={`no-print px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${
@@ -2341,7 +2424,46 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
           {/* Interactive Editing Toolbar (Collapsible) */}
           {isToolbarOpen && (
             <div className="memo-toolbar no-print" id="toolbar">
-              
+
+              {/* Exceptional per-membership manual override -- moved here
+                  (behind an explicit "open toolbar" click) instead of
+                  sitting next to the Print button, specifically so it
+                  can't be clicked by accident. This only affects THIS one
+                  membership, never the shared template. */}
+              <div
+                className="group-title"
+                style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '8px', padding: '8px 10px', marginBottom: '4px' }}
+              >
+                <Save className="h-3.5 w-3.5 text-emerald-400" />
+                <span>تعديل يدوي استثنائي لهذه العضوية بالذات فقط (بدون تأثير على باقي العضويات)</span>
+              </div>
+              <div className="group" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveManualOverride}
+                  disabled={!activeRequest || isSavingOverride}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                  title="حفظ أي تعديل يدوي (كلمة أو رقم) في هذه المذكرة بالذات فقط، بدون التأثير على باقي العضويات"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{isSavingOverride ? 'جارِ الحفظ...' : 'حفظ تعديل يدوي لهذه العضوية'}</span>
+                </button>
+
+                {activeOverride && (
+                  <button
+                    type="button"
+                    onClick={handleResetToTemplate}
+                    disabled={isSavingOverride}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all"
+                    title="التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي المحسوب تلقائيًا"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>استرجاع الشكل الافتراضي</span>
+                  </button>
+                )}
+              </div>
+
+
               {/* Group 0: Memo Titles & Core Text Customization */}
               <div className="group-title">
                 <FileText className="h-3.5 w-3.5 text-amber-400" />
@@ -3341,6 +3463,77 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             </div>
             </>
             )}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* "تم الإرسال للإدارة المالية" Date Modal */}
+    {financeDateModalOpen && activeRequest && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in no-print">
+        <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-5 text-right font-sans" dir="rtl">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+                <Calendar className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-800">تاريخ إرسال المذكرة للإدارة المالية</h3>
+                <p className="text-xxs text-slate-400 font-mono mt-0.5">
+                  عضوية رقم: {activeRequest.membershipNumber} — {activeRequest.memberName}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFinanceDateModalOpen(false)}
+              className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                تاريخ الإرسال
+              </label>
+              <input
+                type="date"
+                value={newFinanceDate}
+                onChange={(e) => setNewFinanceDate(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setNewFinanceDate(new Date().toISOString().split('T')[0])}
+                className="px-2.5 py-1 text-xxs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+              >
+                تاريخ اليوم
+              </button>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setFinanceDateModalOpen(false)}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            >
+              إلغاء
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveFinanceDate}
+              disabled={isSavingFinanceDate}
+              className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              {isSavingFinanceDate ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+              <span>حفظ وتحديد كـ"تم الإرسال"</span>
+            </button>
           </div>
         </div>
       </div>
