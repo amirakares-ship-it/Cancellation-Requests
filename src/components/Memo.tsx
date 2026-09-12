@@ -1994,6 +1994,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                العضويات..." line, separating it from the receipts line
                right above it. */
             .committee-note-line { margin-top: 12px; }
+            /* A bit more space between the annual-renewal-exemption line
+               and the bold "مع تحميل هذا الالغاء..." line right after it. */
+            .sales-dept-note-line { margin-top: 18px; }
 
             table.deduct {
               width: fit-content;
@@ -2268,6 +2271,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               .field-line { margin: 2px 0 !important; }
               .note-line { margin: 2px 0 !important; line-height: 1.4 !important; }
               .committee-note-line { margin-top: 7px !important; }
+              .sales-dept-note-line { margin-top: 10px !important; }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               /* Footer/signatures block: 340px (labels table) + 300px
@@ -3018,7 +3022,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 <div className="note-line">
                   لذا يرجى رد شيك للعميل بقيمة <span className="placeholder">{getClientRefund(activeRequest, '')}</span> {getClientRefund(activeRequest, '') ? (activeRequest?.currency || 'جم') : ''}
                 </div>
-                <div className="note-line" style={{ fontWeight: 'bold' }}>
+                <div className="note-line sales-dept-note-line" style={{ fontWeight: 'bold' }}>
                   <span
                     className="sales-dept-note-text"
                     contentEditable={true}
@@ -3200,7 +3204,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   </>
                 )}
 
-                <div className="note-line" style={{ fontWeight: 'bold' }}>
+                <div className="note-line sales-dept-note-line" style={{ fontWeight: 'bold' }}>
                   <span
                     className="sales-dept-note-text"
                     contentEditable={true}
