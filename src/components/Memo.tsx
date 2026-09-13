@@ -494,9 +494,16 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
       // auto-detection run again for the newly selected membership.
       isFormManuallySelected.current = false;
       if (activeRequest) {
+        const pmStr = (activeRequest.paymentMethod || '').trim();
+        const isOtherCompanyPm = ['المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => pmStr.includes(pm));
         if (activeRequest.membershipType === 'International') {
           setActiveForm('international');
-        } else if (['ABK', 'المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => (activeRequest.paymentMethod || '').includes(pm))) {
+        } else if (pmStr === 'ABK') {
+          // ABK most commonly has no refund amount for the client, in which
+          // case it should behave like the Normal form. It should only be
+          // routed to the Companies form when there IS a client refund.
+          setActiveForm(getClientRefundNum(activeRequest) > 0 ? 'companies' : 'normal');
+        } else if (isOtherCompanyPm) {
           setActiveForm('companies');
         } else {
           setActiveForm('normal');
@@ -864,7 +871,9 @@ const resolveDeductRowAmount = (
         }
       }
     } else if (form === 'companies' && (nDesc.includes('شركه') || nDesc.includes('بنك') || nDesc.includes('abk') || nDesc.includes('استرداد'))) {
-      resolvedDesc = pm ? (isComp ? `لشركة ${pm}` : (isBank ? `لبنك ${pm}` : 'لشركة التمويل / البنك')) : 'لشركة التمويل / البنك';
+      resolvedDesc = pm === 'ABK'
+        ? 'لبنك ABK'
+        : (pm ? (isComp ? `لشركة ${pm}` : (isBank ? `لبنك ${pm}` : 'لشركة التمويل / البنك')) : 'لشركة التمويل / البنك');
     }
     return { amount: freshRefund, desc: resolvedDesc };
   }
@@ -925,7 +934,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
       { tag: 'خصم', amount: adminFeesVal, unit: adminFeesVal ? deductUnit : '', desc: 'مصاريف إدارية' },
       { tag: 'خصم', amount: usageFeeVal, unit: usageFeeVal ? deductUnit : '', desc: 'مقابل انتفاع بالنادى' },
       { tag: 'خصم', amount: visaFeesVal, unit: visaFeesVal ? deductUnit : '', desc: 'مصاريف فيزا 2%' },
-      { tag: 'مع رد شيك للعضوية بقيمة', amount: refundVal, unit: refundVal ? deductUnit : '', desc: pm ? (isComp ? `لشركة ${pm}` : 'لشركة التمويل / البنك') : 'لشركة التمويل / البنك' },
+      { tag: 'مع رد شيك للعضوية بقيمة', amount: refundVal, unit: refundVal ? deductUnit : '', desc: pm === 'ABK' ? 'لبنك ABK' : (pm ? (isComp ? `لشركة ${pm}` : 'لشركة التمويل / البنك') : 'لشركة التمويل / البنك') },
     ];
   } else {
     const refundVal = getCheckRefund(r, '');
