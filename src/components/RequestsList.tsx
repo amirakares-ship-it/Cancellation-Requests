@@ -251,10 +251,9 @@ export default function RequestsList({
   // Filtering Logic
   const filteredRequests = useMemo(() => {
     return requests.filter(r => {
-      // Role confinement
-      if (user.role === 'club' && !isSameClub(r.club, user.club)) {
-        return false;
-      }
+      // Every user can see every club's requests (so a member can be
+      // tracked regardless of which club they visit). Editing rights are
+      // still restricted separately below, per-row.
       if (user.role === 'international_user' && !isInternationalRequest(r)) {
         return false;
       }
@@ -472,7 +471,7 @@ export default function RequestsList({
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {onBulkDelete && (user.role === 'admin' || user.role === 'club') && (
+            {onBulkDelete && user.role === 'admin' && (
               <button
                 type="button"
                 onClick={() => {
@@ -521,18 +520,20 @@ export default function RequestsList({
             <thead className="sticky top-0 z-10">
               <tr className="bg-slate-50 text-slate-500 font-bold border-b border-slate-100 shadow-sm">
                 <th className="py-3 px-4 text-center w-12">
-                  <input 
-                    type="checkbox" 
-                    checked={filteredRequests.length > 0 && selectedIds.length === filteredRequests.length}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                         setSelectedIds(filteredRequests.map(r => r.id));
-                      } else {
-                        setSelectedIds([]);
-                      }
-                    }}
-                    className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer"
-                  />
+                  {user.role === 'admin' && (
+                    <input 
+                      type="checkbox" 
+                      checked={filteredRequests.length > 0 && selectedIds.length === filteredRequests.length}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                           setSelectedIds(filteredRequests.map(r => r.id));
+                        } else {
+                          setSelectedIds([]);
+                        }
+                      }}
+                      className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer"
+                    />
+                  )}
                 </th>
                 <th className="py-3 px-4 font-black text-center w-12">م</th>
                 <th className="py-3 px-4">{getLabel('membershipNumber', 'رقم العضوية')}</th>
@@ -568,18 +569,20 @@ export default function RequestsList({
                       } ${selectedIds.includes(r.id) ? 'bg-amber-400/10' : ''}`}
                     >
                       <td className="py-3.5 px-4 text-center">
-                        <input 
-                          type="checkbox" 
-                          checked={selectedIds.includes(r.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedIds(prev => [...prev, r.id]);
-                            } else {
-                              setSelectedIds(prev => prev.filter(id => id !== r.id));
-                            }
-                          }}
-                          className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer"
-                        />
+                        {user.role === 'admin' && (
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.includes(r.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds(prev => [...prev, r.id]);
+                              } else {
+                                setSelectedIds(prev => prev.filter(id => id !== r.id));
+                              }
+                            }}
+                            className="rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer"
+                          />
+                        )}
                       </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-400">{r.id}</td>
                       <td className="py-3.5 px-4 font-bold text-slate-800">{r.membershipNumber}</td>
@@ -699,12 +702,15 @@ export default function RequestsList({
                               onClick={() => onEditRequest(r)}
                               disabled={
                                 (r.reviewed && user.role !== 'admin') ||
-                                ((user.role === 'club' || user.role === 'international_user') && (r.result === 'Accepted' || r.approvalSentToFirstManager))
+                                ((user.role === 'club' || user.role === 'international_user') && (r.result === 'Accepted' || r.approvalSentToFirstManager)) ||
+                                (user.role === 'club' && !isSameClub(r.club, user.club))
                               }
                               title={
-                                r.reviewed && user.role !== 'admin'
-                                  ? "لا يمكن التعديل بعد مراجعة الطلب"
-                                  : "تعديل الحساب"
+                                user.role === 'club' && !isSameClub(r.club, user.club)
+                                  ? "لا يمكن التعديل - هذا الطلب تابع لنادي آخر"
+                                  : r.reviewed && user.role !== 'admin'
+                                    ? "لا يمكن التعديل بعد مراجعة الطلب"
+                                    : "تعديل الحساب"
                               }
                               className="p-1 text-amber-500 hover:text-amber-600 hover:bg-amber-50 rounded disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
                             >
@@ -751,8 +757,8 @@ export default function RequestsList({
                             </button>
                           )}
 
-                          {/* Delete - Admin or Club owner */}
-                          {(user.role === 'admin' || (user.role === 'club' && isSameClub(user.club, r.club))) && (
+                          {/* Delete - Admin only */}
+                          {user.role === 'admin' && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
