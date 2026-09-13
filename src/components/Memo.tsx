@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3 } from 'lucide-react';
+import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3, AlertCircle } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, getPendingSubStatus, toInputDateStr } from '../utils';
+import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, toInputDateStr } from '../utils';
 import { WadiDeglaLogo } from './WadiDeglaLogo';
 
 interface MemoProps {
@@ -178,8 +178,14 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
   // here to the single membership currently open in the memo screen.
   const [financeDateModalOpen, setFinanceDateModalOpen] = useState(false);
   const [newFinanceDate, setNewFinanceDate] = useState<string>('');
+  const [newFinanceExceptionNote, setNewFinanceExceptionNote] = useState<string>('');
   const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
   const [financeDateMsg, setFinanceDateMsg] = useState<string | null>(null);
+
+  // If the committee hasn't approved this request yet (result !== 'Accepted')
+  // and she's still sending the memo, that's an exception to the normal
+  // flow -- require a short note explaining why, for accountability.
+  const isFinanceSendException = (r: CancellationRequest | null | undefined) => !!r && r.result !== 'Accepted';
 
   const handleOpenFinanceDateEdit = () => {
     if (!activeRequest) return;
@@ -188,18 +194,26 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
         ? toInputDateStr(activeRequest.financeMemoSentDate)
         : new Date().toISOString().split('T')[0]
     );
+    setNewFinanceExceptionNote(activeRequest.financeMemoSentExceptionNote || '');
     setFinanceDateModalOpen(true);
   };
 
   const handleSaveFinanceDate = async () => {
     if (!activeRequest?.id) return;
+    if (isFinanceSendException(activeRequest) && !newFinanceExceptionNote.trim()) {
+      alert('اللجنة لسه ما اعتمدتش هذا الطلب -- برجاء كتابة سبب الاستثناء لإرسال المذكرة قبل الاعتماد.');
+      return;
+    }
     setIsSavingFinanceDate(true);
     try {
       const token = localStorage.getItem('wd_token');
       const res = await fetch(`/api/requests/${activeRequest.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ financeMemoSentDate: newFinanceDate || null }),
+        body: JSON.stringify({
+          financeMemoSentDate: newFinanceDate || null,
+          financeMemoSentExceptionNote: newFinanceDate ? (newFinanceExceptionNote.trim() || null) : null,
+        }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'فشل حفظ التاريخ');
@@ -222,7 +236,7 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
       const res = await fetch(`/api/requests/${activeRequest.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ financeMemoSentDate: null }),
+        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'فشل إلغاء التحديد');
@@ -1654,10 +1668,9 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
           </button>
 
           {/* "تم الإرسال للإدارة المالية" -- same field as the Cancellation
-              Status Manager page, only shown once the request has reached
-              the "جارى تجهيز المذكرة" stage (receipt received / debt
-              entered), matching when this Check is relevant there too. */}
-          {activeRequest && getPendingSubStatus(activeRequest) === '(الشيك تحت الاصدار)' && (
+              Status Manager page, always shown whenever a membership is
+              open in the memo screen. */}
+          {activeRequest && (
             <label
               className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl shadow-xs cursor-pointer no-print"
               title="تحديد يدوي: تم إرسال المذكرة للإدارة المالية"
@@ -1684,6 +1697,15 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 >
                   <Edit3 className="w-3.5 h-3.5" />
                 </button>
+              )}
+              {activeRequest.financeMemoSentDate && activeRequest.financeMemoSentExceptionNote && (
+                <span
+                  className="inline-flex items-center gap-1 text-xxs font-black text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 cursor-help"
+                  title={`سبب الاستثناء: ${activeRequest.financeMemoSentExceptionNote}`}
+                >
+                  <AlertCircle className="w-3 h-3" />
+                  <span>استثناء</span>
+                </span>
               )}
             </label>
           )}
@@ -3515,6 +3537,25 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 تاريخ اليوم
               </button>
             </div>
+
+            {isFinanceSendException(activeRequest) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-amber-800 font-black text-xxs">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span>تنبيه: اللجنة لسه ما اعتمدتش هذا الطلب -- إرسال المذكرة الآن يُعتبر استثناءً</span>
+                </div>
+                <label className="block text-xs font-bold text-slate-700">
+                  سبب الاستثناء <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={newFinanceExceptionNote}
+                  onChange={(e) => setNewFinanceExceptionNote(e.target.value)}
+                  rows={2}
+                  placeholder="مثال: تعليمات مباشرة من الإدارة بالإسراع في الإجراءات قبل انعقاد اللجنة..."
+                  className="w-full px-3 py-2 rounded-lg border border-amber-300 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition-all resize-none"
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
