@@ -195,22 +195,33 @@ export default function RequestsList({
 
   // Display-only rename: the underlying computed sub-status value from
   // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
-  // logic), but what's actually shown to the user for that state is
-  // "(جارى تجهيز المذكرة)". The interactive "sent to finance" Check lives
-  // only on the Memo (print) screen and the Cancellation Status Manager
-  // page -- this page just reflects the read-only status text.
+  // logic), but what's shown to the user for that state depends on whether
+  // the finance memo has actually been sent yet:
+  //   - Not sent yet: "(جارى تجهيز المذكرة)"
+  //   - Sent: "تم ارسال المذكرة الى الادارة المالية", with
+  //     "(الشيك تحت الاصدار)" as a secondary line underneath -- except for
+  //     international memberships, which just show the "sent" line alone.
+  // The interactive "sent to finance" Check lives only on the Memo (print)
+  // screen and the Cancellation Status Manager page -- this page just
+  // reflects the read-only status text.
   const getDisplaySubStatus = (r: any) => {
     const raw = getPendingSubStatus(r);
-    return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
+    if (raw === '(الشيك تحت الاصدار)') {
+      return r.financeMemoSentDate ? 'تم ارسال المذكرة الى الادارة المالية' : '(جارى تجهيز المذكرة)';
+    }
+    return raw;
   };
 
   // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
   // that actually started this stage instead of the generic status date:
   // the receipt-received date (cash/checks/Al Mashreq/international) or
   // the debt-entered date (ABK/Companies) -- whichever of the two is
-  // actually populated on this request.
+  // actually populated on this request. Once the finance memo has been
+  // sent, the status date becomes the date it was sent, and only changes
+  // again when the overall request status itself changes.
   const getStatusDateDisplay = (r: any) => {
     if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+      if (r.financeMemoSentDate) return formatDateCustom(r.financeMemoSentDate);
       const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
       if (prepDate) return formatDateCustom(prepDate);
     }
@@ -456,12 +467,6 @@ export default function RequestsList({
         </div>
       </div>
 
-      {/* Amber alert helper */}
-      <div className="bg-amber-50 border-r-4 border-amber-500 p-3 rounded-lg text-xs text-amber-800 flex items-center gap-2">
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span>تنبيه: الحالات المظللة باللون البرتقالي هي حالات تتراوح فترة اشتراكها بين 90 و120 يوماً وتتطلب انتباهاً خاصاً للمصاريف.</span>
-      </div>
-
       {/* Bulk Review / Delete Actions */}
       {selectedIds.length > 0 && (
         <div className="bg-slate-800 border border-slate-700 p-4 rounded-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-bottom-4 shadow-lg">
@@ -651,12 +656,13 @@ export default function RequestsList({
                             }`}>
                               {getDisplaySubStatus(r)}
                             </span>
-                            {/* Read-only reflection of the finance-sent Check --
-                                editable only from the Memo (print) screen and
-                                the Cancellation Status Manager page. */}
-                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && r.financeMemoSentDate && (
-                              <span className="block text-[9px] font-black text-emerald-600 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
-                                ( تم ارسال المذكرة الى الادارة المالية )
+                            {/* Once the finance memo has been sent, show
+                                "(الشيك تحت الاصدار)" as a secondary line --
+                                except for international memberships, which
+                                just show the "sent" line above alone. */}
+                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && r.financeMemoSentDate && !isInternationalRequest(r) && (
+                              <span className="block text-[9px] font-bold text-slate-500 mt-0.5">
+                                (الشيك تحت الاصدار)
                               </span>
                             )}
                           </>

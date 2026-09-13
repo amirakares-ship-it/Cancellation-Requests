@@ -71,6 +71,7 @@ export default function CancellationStatusManager({
   // "تم الإرسال للإدارة المالية" manual Check + editable date (per membership)
   const [financeDateTarget, setFinanceDateTarget] = useState<CancellationRequest | null>(null);
   const [newFinanceDate, setNewFinanceDate] = useState<string>('');
+  const [newFinanceExceptionNote, setNewFinanceExceptionNote] = useState<string>('');
   const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
   const [financeDateFeedback, setFinanceDateFeedback] = useState<{ id: number | string; text: string } | null>(null);
 
@@ -79,13 +80,23 @@ export default function CancellationStatusManager({
   const [isSubmittingFinance, setIsSubmittingFinance] = useState(false);
   const [financeFeedbackMsg, setFinanceFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // If the committee hasn't approved this request yet (result !== 'Accepted')
+  // and she's still sending the memo, that's an exception to the normal
+  // flow -- require a short note explaining why, for accountability.
+  const isFinanceSendException = (r: CancellationRequest | null) => !!r && r.result !== 'Accepted';
+
   const handleOpenFinanceDateEdit = (r: CancellationRequest) => {
     setFinanceDateTarget(r);
     setNewFinanceDate(r.financeMemoSentDate ? toInputDateStr(r.financeMemoSentDate) : new Date().toISOString().split('T')[0]);
+    setNewFinanceExceptionNote(r.financeMemoSentExceptionNote || '');
   };
 
   const handleSaveFinanceDate = async () => {
     if (!financeDateTarget) return;
+    if (isFinanceSendException(financeDateTarget) && !newFinanceExceptionNote.trim()) {
+      alert('اللجنة لسه ما اعتمدتش هذا الطلب -- برجاء كتابة سبب الاستثناء لإرسال المذكرة قبل الاعتماد.');
+      return;
+    }
     setIsSavingFinanceDate(true);
     try {
       const token = localStorage.getItem('wd_token') || '';
@@ -95,7 +106,10 @@ export default function CancellationStatusManager({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ financeMemoSentDate: newFinanceDate || null })
+        body: JSON.stringify({
+          financeMemoSentDate: newFinanceDate || null,
+          financeMemoSentExceptionNote: newFinanceDate ? (newFinanceExceptionNote.trim() || null) : null
+        })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -123,7 +137,7 @@ export default function CancellationStatusManager({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ financeMemoSentDate: null })
+        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -352,22 +366,30 @@ export default function CancellationStatusManager({
 
   // Display-only rename: the underlying computed sub-status value from
   // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
-  // logic and to decide when the finance-sent Check appears below it),
-  // but what she actually wants shown to the user for that state is
-  // "(جارى تجهيز المذكرة)" -- the "sent" confirmation is now conveyed by
-  // the Check + date underneath instead.
+  // logic), but what's shown to the user for that state depends on whether
+  // the finance memo has actually been sent yet:
+  //   - Not sent yet: "(جارى تجهيز المذكرة)"
+  //   - Sent: "تم ارسال المذكرة الى الادارة المالية", with
+  //     "(الشيك تحت الاصدار)" as a secondary line underneath -- except for
+  //     international memberships, which just show the "sent" line alone.
   const getDisplaySubStatus = (r: CancellationRequest) => {
     const raw = getPendingSubStatus(r);
-    return raw === '(الشيك تحت الاصدار)' ? '(جارى تجهيز المذكرة)' : raw;
+    if (raw === '(الشيك تحت الاصدار)') {
+      return r.financeMemoSentDate ? 'تم ارسال المذكرة الى الادارة المالية' : '(جارى تجهيز المذكرة)';
+    }
+    return raw;
   };
 
   // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
   // that actually started this stage instead of the generic status date:
   // the receipt-received date (cash/checks/Al Mashreq/international) or
   // the debt-entered date (ABK/Companies) -- whichever of the two is
-  // actually populated on this request.
+  // actually populated on this request. Once the finance memo has been
+  // sent, the status date becomes the date it was sent, and only changes
+  // again when the overall request status itself changes.
   const getStatusDateDisplay = (r: CancellationRequest) => {
     if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+      if (r.financeMemoSentDate) return formatDateCustom(r.financeMemoSentDate);
       const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
       if (prepDate) return formatDateCustom(prepDate);
     }
@@ -910,6 +932,15 @@ export default function CancellationStatusManager({
                             }`}>
                               {getDisplaySubStatus(r)}
                             </span>
+                            {/* Once the finance memo has been sent, show
+                                "(الشيك تحت الاصدار)" as a secondary line --
+                                except for international memberships, which
+                                just show the "sent" line above alone. */}
+                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && r.financeMemoSentDate && !isInternationalRequest(r) && (
+                              <span className="block text-[9px] font-bold text-slate-500 mt-0.5">
+                                (الشيك تحت الاصدار)
+                              </span>
+                            )}
                             {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && (
                               <div className="mt-1 flex flex-col items-center gap-0.5">
                                 <label className="flex items-center justify-center gap-1 cursor-pointer" title="تحديد يدوي: تم إرسال المذكرة للإدارة المالية">
@@ -919,13 +950,16 @@ export default function CancellationStatusManager({
                                     onChange={() => handleToggleFinanceSent(r)}
                                     className="h-3.5 w-3.5 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400 cursor-pointer"
                                   />
-                                  <span className={`text-[9px] max-w-[110px] whitespace-normal break-words leading-tight text-center ${
-                                    r.financeMemoSentDate ? 'font-black text-emerald-600' : 'font-bold text-sky-700'
-                                  }`}>
-                                    {r.financeMemoSentDate
-                                      ? '( تم ارسال المذكرة الى الادارة المالية )'
-                                      : 'إرسال المذكرة للإدارة المالية'}
-                                  </span>
+                                  {/* The main line above already says "تم
+                                      ارسال المذكرة..." once sent, so this
+                                      label only needs to prompt the action
+                                      before sending; after sending it's just
+                                      a short confirmation next to the date. */}
+                                  {!r.financeMemoSentDate && (
+                                    <span className="text-[9px] max-w-[110px] whitespace-normal break-words leading-tight text-center font-bold text-sky-700">
+                                      إرسال المذكرة للإدارة المالية
+                                    </span>
+                                  )}
                                 </label>
                                 {r.financeMemoSentDate && (
                                   <div className="flex items-center gap-1">
@@ -941,6 +975,15 @@ export default function CancellationStatusManager({
                                       <Edit3 className="w-2.5 h-2.5" />
                                     </button>
                                   </div>
+                                )}
+                                {r.financeMemoSentDate && r.financeMemoSentExceptionNote && (
+                                  <span
+                                    className="inline-flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mt-0.5 cursor-help"
+                                    title={`سبب الاستثناء: ${r.financeMemoSentExceptionNote}`}
+                                  >
+                                    <AlertCircle className="w-2.5 h-2.5" />
+                                    <span>استثناء (قبل اعتماد اللجنة)</span>
+                                  </span>
                                 )}
                                 {financeDateFeedback && String(financeDateFeedback.id) === String(r.id) && (
                                   <span className="block text-[9px] text-emerald-600 font-bold">
@@ -1121,6 +1164,25 @@ export default function CancellationStatusManager({
                   تاريخ اليوم
                 </button>
               </div>
+
+              {isFinanceSendException(financeDateTarget) && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                  <div className="flex items-center gap-1.5 text-amber-800 font-black text-xxs">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                    <span>تنبيه: اللجنة لسه ما اعتمدتش هذا الطلب -- إرسال المذكرة الآن يُعتبر استثناءً</span>
+                  </div>
+                  <label className="block text-xs font-bold text-slate-700">
+                    سبب الاستثناء <span className="text-rose-500">*</span>
+                  </label>
+                  <textarea
+                    value={newFinanceExceptionNote}
+                    onChange={(e) => setNewFinanceExceptionNote(e.target.value)}
+                    rows={2}
+                    placeholder="مثال: تعليمات مباشرة من الإدارة بالإسراع في الإجراءات قبل انعقاد اللجنة..."
+                    className="w-full px-3 py-2 rounded-lg border border-amber-300 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition-all resize-none"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
