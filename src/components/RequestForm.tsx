@@ -758,8 +758,8 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   value={membershipNumber}
                   onChange={(e) => {
                     let val = e.target.value;
-                    if (user.role !== 'international_user') {
-                      // All non-international users (including admin/managers): digits only
+                    if (!isInternational) {
+                      // Regular (non-international) memberships: digits only
                       val = val.replace(/[^0-9]/g, '');
                       // Block any value that IS a prefix of, or starts with, the reserved sequence 00400
                       // (so typing 0, 00, 004, 0040, or 00400... is rejected at every step)
@@ -769,7 +769,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                     }
                     setMembershipNumber(val);
                   }}
-                  placeholder={user.role === 'international_user' ? 'مثال: WDI-1050' : 'مثال: 10500'}
+                  placeholder={isInternational ? 'مثال: WDI-1050' : 'مثال: 10500'}
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400 font-bold"
                 />
 
