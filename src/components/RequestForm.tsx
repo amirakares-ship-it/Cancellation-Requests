@@ -191,16 +191,27 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
     );
   }, [user?.role, membershipType, paymentMethod, exceptions, currency]);
 
+  // Membership types offered in the dropdown, scoped by user role:
+  // - International user: only the "International" type.
+  // - Everyone else (club / admin / managers): every OTHER type, but
+  //   never "International" -- international memberships are only
+  //   ever entered through the dedicated international user account.
   const availableMembershipTypes = useMemo(() => {
     const all: string[] = dropdowns.membershipTypes || [];
     let list: string[];
     if (user?.role === 'international_user') {
       list = all.filter((t: string) => t === 'International');
     } else if (user?.role === 'club') {
+      // Regular club-branch users never handle international memberships.
       list = all.filter((t: string) => t !== 'International');
     } else {
+      // Admin / first_manager / sector_manager can see and register any
+      // membership type, including International.
       list = all;
     }
+    // Safety net: if an existing record already has a type outside what
+    // this role normally sees (e.g. an admin opening an old international
+    // record), keep it selectable so editing it never silently corrupts it.
     if (membershipType && !list.includes(membershipType)) {
       list = [...list, membershipType];
     }
@@ -421,7 +432,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       return;
     }
 
-    // Membership number format rules by user type
+    // Membership number format rules: WDI-prefixed for international
+    // memberships, numeric-only for regular ones. This follows the actual
+    // membership type/request signal (isInternational) rather than just the
+    // user's role, so admin and managers can register an international
+    // cancellation too (club users never reach this branch since they can't
+    // select "International" from the dropdown in the first place).
     const trimmedMem = membershipNumber.trim();
     if (isInternational) {
       if (!trimmedMem.toUpperCase().startsWith('WDI')) {
