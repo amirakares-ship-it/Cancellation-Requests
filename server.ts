@@ -2183,10 +2183,10 @@ app.get("/api/requests", requireAuth, async (req, res) => {
   const user = (req as any).user;
   let resultRequests = [...db.requests];
 
-  // If user is club user, they only see their club's requests
-  if (user.role === "club") {
-    resultRequests = resultRequests.filter((r) => isSameClub(r.club, user.club));
-  } else if (user.role === "international_user") {
+  // Every user can see every club's requests (so a member can be tracked
+  // regardless of which club they visit). Editing rights stay club-scoped
+  // separately, enforced in the PUT/DELETE endpoints below.
+  if (user.role === "international_user") {
     resultRequests = resultRequests.filter((r) => isInternationalRequest(r));
   }
 
@@ -2315,12 +2315,17 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "غير مصرح بتعديل طلبات غير تابعة للعضويات الدولية" });
   }
 
+  // Club user permission check: can only edit their own club's requests
+  if (user.role === "club" && !isSameClub(existingRequest.club, user.club)) {
+    return res.status(403).json({ error: "غير مصرح بتعديل طلبات تابعة لنادي آخر" });
+  }
+
   const bodyKeys = Object.keys(req.body);
   // "Lightweight" updates -- receipt-received toggle and the finance-sent
   // "Check" -- bypass the reviewed/approval-locked restrictions below,
   // since they're simple operational flags rather than substantive edits
   // to the request's data.
-  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate");
+  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote");
 
   if (!isOnlyReceiptUpdate) {
     // Restrict modification if the request is already reviewed and user is not admin
@@ -2547,6 +2552,10 @@ app.post("/api/requests/bulk-delete", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { ids } = req.body;
 
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "غير مصرح لك بالحذف الجماعي للطلبات - هذه الصلاحية للأدمن فقط" });
+  }
+
   if (!Array.isArray(ids) || ids.length === 0) {
     return res.status(400).json({ error: "لم يتم تحديد أي طلبات للحذف" });
   }
@@ -2583,8 +2592,8 @@ app.delete("/api/requests/:id", requireAuth, async (req, res) => {
 
   const targetReq = db.requests[index];
 
-  if (user.role !== "admin" && !isSameClub(user.club, targetReq.club)) {
-    return res.status(403).json({ error: "غير مصرح لك بحذف هذا الطلب (خاص بفرع آخر)" });
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "غير مصرح لك بحذف الطلبات - هذه الصلاحية للأدمن فقط" });
   }
 
   db.requests.splice(index, 1);

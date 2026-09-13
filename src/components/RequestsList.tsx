@@ -546,7 +546,9 @@ export default function RequestsList({
                 <th className="py-3 px-4 text-left">{getLabel('refundAmount', 'صافي الاسترداد')}</th>
                 <th className="py-3 px-4 text-center">الحالة</th>
                 <th className="py-3 px-4 text-center">{getLabel('statusDate', 'تاريخ الحالة')}</th>
-                <th className="py-3 px-4 text-center">المراجعة (Reviewed)</th>
+                {user.role === 'admin' && (
+                  <th className="py-3 px-4 text-center">المراجعة (Reviewed)</th>
+                )}
                 <th className="py-3 px-4 text-center">{getLabel('actions', 'تعديل')}</th>
               </tr>
             </thead>
@@ -608,7 +610,14 @@ export default function RequestsList({
                       <td className="py-3.5 px-4 text-slate-600">{r.club}</td>
                       <td className="py-3.5 px-4 text-slate-600 font-medium">{r.paymentMethod}</td>
                       <td className="py-3.5 px-4 text-center font-bold text-slate-700 whitespace-nowrap">
-                        {formatCommitteeWithYear(r.committeeNo, r.committeeYear, r.approvalDate || r.requestDate || r.createdAt)}
+                        {r.committeeNo ? (
+                          <>
+                            <span className="block">{r.committeeNo}</span>
+                            <span className="block text-[10px] text-slate-400 font-normal">
+                              {formatCommitteeYear(r.committeeYear, r.approvalDate || r.requestDate || r.createdAt)}
+                            </span>
+                          </>
+                        ) : '—'}
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         {getCommitteeDecisionBadge(r)}
@@ -673,8 +682,8 @@ export default function RequestsList({
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-center">
-                        {user.role === 'admin' ? (
+                      {user.role === 'admin' && (
+                        <td className="py-3.5 px-4 text-center">
                           <input
                             type="checkbox"
                             checked={!!r.reviewed}
@@ -686,14 +695,8 @@ export default function RequestsList({
                             className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400 cursor-pointer"
                             title={r.reviewed ? "إلغاء المراجعة للسماح للمستخدم بالتعديل" : "تحديد كمراجع لمنع المستخدم من التعديل"}
                           />
-                        ) : r.reviewed ? (
-                          <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-600 font-bold text-[10px]">
-                            <CheckSquare className="w-2.5 h-2.5" /> Reviewed
-                          </span>
-                        ) : (
-                          <span className="text-slate-300 text-[10px] font-medium">قيد الانتظار</span>
-                        )}
-                      </td>
+                        </td>
+                      )}
                       <td className="py-3.5 px-4 text-center">
                         <div className="flex items-center justify-center gap-1.5">
                           {/* Edit Details */}
