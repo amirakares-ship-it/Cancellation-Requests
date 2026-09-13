@@ -191,6 +191,22 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
     );
   }, [user?.role, membershipType, paymentMethod, exceptions, currency]);
 
+  const availableMembershipTypes = useMemo(() => {
+    const all: string[] = dropdowns.membershipTypes || [];
+    let list: string[];
+    if (user?.role === 'international_user') {
+      list = all.filter((t: string) => t === 'International');
+    } else if (user?.role === 'club') {
+      list = all.filter((t: string) => t !== 'International');
+    } else {
+      list = all;
+    }
+    if (membershipType && !list.includes(membershipType)) {
+      list = [...list, membershipType];
+    }
+    return list;
+  }, [dropdowns.membershipTypes, user?.role, membershipType]);
+
   // Live real-time check against backend (covers all clubs & branches)
   useEffect(() => {
     const trimmed = (membershipNumber || '').trim();
@@ -407,7 +423,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
 
     // Membership number format rules by user type
     const trimmedMem = membershipNumber.trim();
-    if (user.role === 'international_user') {
+    if (isInternational) {
       if (!trimmedMem.toUpperCase().startsWith('WDI')) {
         setErrorMessage('رقم العضوية للعضويات الدولية يجب أن يبدأ بـ WDI');
         return;
@@ -949,7 +965,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   onChange={(e) => setMembershipType(e.target.value)}
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400"
                 >
-                  {dropdowns.membershipTypes.map((t: string) => (
+                  {availableMembershipTypes.map((t: string) => (
                     <option key={t} value={t}>{t}</option>
                   ))}
                 </select>
