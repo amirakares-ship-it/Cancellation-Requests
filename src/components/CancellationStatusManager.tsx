@@ -71,7 +71,6 @@ export default function CancellationStatusManager({
   // "تم الإرسال للإدارة المالية" manual Check + editable date (per membership)
   const [financeDateTarget, setFinanceDateTarget] = useState<CancellationRequest | null>(null);
   const [newFinanceDate, setNewFinanceDate] = useState<string>('');
-  const [newFinanceExceptionNote, setNewFinanceExceptionNote] = useState<string>('');
   const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
   const [financeDateFeedback, setFinanceDateFeedback] = useState<{ id: number | string; text: string } | null>(null);
 
@@ -80,23 +79,13 @@ export default function CancellationStatusManager({
   const [isSubmittingFinance, setIsSubmittingFinance] = useState(false);
   const [financeFeedbackMsg, setFinanceFeedbackMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // If the committee hasn't approved this request yet (result !== 'Accepted')
-  // and she's still sending the memo, that's an exception to the normal
-  // flow -- require a short note explaining why, for accountability.
-  const isFinanceSendException = (r: CancellationRequest | null) => !!r && r.result !== 'Accepted';
-
   const handleOpenFinanceDateEdit = (r: CancellationRequest) => {
     setFinanceDateTarget(r);
     setNewFinanceDate(r.financeMemoSentDate ? toInputDateStr(r.financeMemoSentDate) : new Date().toISOString().split('T')[0]);
-    setNewFinanceExceptionNote(r.financeMemoSentExceptionNote || '');
   };
 
   const handleSaveFinanceDate = async () => {
     if (!financeDateTarget) return;
-    if (isFinanceSendException(financeDateTarget) && !newFinanceExceptionNote.trim()) {
-      alert('اللجنة لسه ما اعتمدتش هذا الطلب -- برجاء كتابة سبب الاستثناء لإرسال المذكرة قبل الاعتماد.');
-      return;
-    }
     setIsSavingFinanceDate(true);
     try {
       const token = localStorage.getItem('wd_token') || '';
@@ -106,10 +95,7 @@ export default function CancellationStatusManager({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          financeMemoSentDate: newFinanceDate || null,
-          financeMemoSentExceptionNote: newFinanceDate ? (newFinanceExceptionNote.trim() || null) : null
-        })
+        body: JSON.stringify({ financeMemoSentDate: newFinanceDate || null })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -137,7 +123,7 @@ export default function CancellationStatusManager({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null })
+        body: JSON.stringify({ financeMemoSentDate: null })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -956,15 +942,6 @@ export default function CancellationStatusManager({
                                     </button>
                                   </div>
                                 )}
-                                {r.financeMemoSentDate && r.financeMemoSentExceptionNote && (
-                                  <span
-                                    className="inline-flex items-center gap-0.5 text-[8px] font-black text-amber-700 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 mt-0.5 cursor-help"
-                                    title={`سبب الاستثناء: ${r.financeMemoSentExceptionNote}`}
-                                  >
-                                    <AlertCircle className="w-2.5 h-2.5" />
-                                    <span>استثناء (قبل اعتماد اللجنة)</span>
-                                  </span>
-                                )}
                                 {financeDateFeedback && String(financeDateFeedback.id) === String(r.id) && (
                                   <span className="block text-[9px] text-emerald-600 font-bold">
                                     {financeDateFeedback.text}
@@ -1144,25 +1121,6 @@ export default function CancellationStatusManager({
                   تاريخ اليوم
                 </button>
               </div>
-
-              {isFinanceSendException(financeDateTarget) && (
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
-                  <div className="flex items-center gap-1.5 text-amber-800 font-black text-xxs">
-                    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                    <span>تنبيه: اللجنة لسه ما اعتمدتش هذا الطلب -- إرسال المذكرة الآن يُعتبر استثناءً</span>
-                  </div>
-                  <label className="block text-xs font-bold text-slate-700">
-                    سبب الاستثناء <span className="text-rose-500">*</span>
-                  </label>
-                  <textarea
-                    value={newFinanceExceptionNote}
-                    onChange={(e) => setNewFinanceExceptionNote(e.target.value)}
-                    rows={2}
-                    placeholder="مثال: تعليمات مباشرة من الإدارة بالإسراع في الإجراءات قبل انعقاد اللجنة..."
-                    className="w-full px-3 py-2 rounded-lg border border-amber-300 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition-all resize-none"
-                  />
-                </div>
-              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">

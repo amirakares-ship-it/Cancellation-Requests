@@ -115,7 +115,6 @@ export interface CancellationRequest {
   // overall Cancelled/Revoked/Pending lifecycle) so it can be toggled
   // freely without affecting cancellation status logic.
   financeMemoSentDate?: string | null;
-  financeMemoSentExceptionNote?: string; // سبب الاستثناء لو اتبعتت المذكرة قبل اعتماد اللجنة
   approvalSentToFirstManager?: boolean;
   firstManagerApproved?: boolean | null;
   firstManagerComments?: string;

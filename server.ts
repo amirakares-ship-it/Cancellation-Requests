@@ -2320,7 +2320,7 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   // "Check" -- bypass the reviewed/approval-locked restrictions below,
   // since they're simple operational flags rather than substantive edits
   // to the request's data.
-  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote");
+  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate");
 
   if (!isOnlyReceiptUpdate) {
     // Restrict modification if the request is already reviewed and user is not admin
