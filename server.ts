@@ -336,6 +336,13 @@ const DEFAULT_DB = {
       approvalDate: "2026-07-15"
     }
   ],
+  // Per-request manual overrides for the printed memo. Keyed by request id
+  // (as a string). When a value exists for a request, the memo screen
+  // renders that frozen HTML snapshot instead of the normal
+  // auto-calculated template -- so an exceptional manual tweak on one
+  // membership never affects the shared template used by every other
+  // membership on that same form.
+  memoOverrides: {} as Record<string, { html: string; form?: string; savedBy: string; savedAt: string }>,
   auditLogs: [
     {
       id: "log-1",
@@ -3332,6 +3339,63 @@ app.post("/api/backup/restore", requireAuth, async (req, res) => {
 
   logAudit(user.username, user.name, user.role, "استرجاع قاعدة البيانات", `تم استرجاع وتطبيق نسخة احتياطية خارجية لقاعدة بيانات النظام بالكامل بنجاح`);
   res.json({ success: true, message: "تم استعادة قاعدة البيانات بالكامل بنجاح" });
+});
+
+// --- Per-request manual memo overrides ---
+// A membership's memo can be manually edited (any word/number) and that
+// edit sticks permanently for that one membership only, without touching
+// the shared template used by every other membership on the same form.
+app.get("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const { requestId } = req.params;
+  const override = (db.memoOverrides && db.memoOverrides[requestId]) || null;
+  res.json({ override });
+});
+
+app.post("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { requestId } = req.params;
+  const { html, form } = req.body;
+  if (!html || typeof html !== "string") {
+    return res.status(400).json({ error: "محتوى المذكرة مطلوب" });
+  }
+
+  if (!db.memoOverrides) db.memoOverrides = {};
+  db.memoOverrides[requestId] = {
+    html,
+    form: form || null,
+    savedBy: user.name || user.username,
+    savedAt: new Date().toISOString(),
+  };
+
+  await logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "تعديل يدوي في مذكرة",
+    `تم حفظ تعديل يدوي دائم في مذكرة الطلب رقم ${requestId} (لا يؤثر على باقي العضويات)`,
+    Number(requestId) || undefined
+  );
+  await saveDb();
+  res.json({ success: true });
+});
+
+app.delete("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { requestId } = req.params;
+
+  if (db.memoOverrides && db.memoOverrides[requestId]) {
+    delete db.memoOverrides[requestId];
+    await logAudit(
+      user.username,
+      user.name,
+      user.role,
+      "استرجاع الشكل الافتراضي للمذكرة",
+      `تم إلغاء التعديل اليدوي والرجوع للقالب الافتراضي لمذكرة الطلب رقم ${requestId}`,
+      Number(requestId) || undefined
+    );
+    await saveDb();
+  }
+  res.json({ success: true });
 });
 
 // --- Audit logs fetch ---
