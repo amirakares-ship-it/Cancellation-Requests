@@ -486,28 +486,38 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
 
   // Auto-detect form type ONLY on initial request or when not manually chosen
   useEffect(() => {
-    if (prevSelectedReqIdRef.current !== selectedReqId) {
+    const membershipChanged = prevSelectedReqIdRef.current !== selectedReqId;
+    if (membershipChanged) {
       prevSelectedReqIdRef.current = selectedReqId;
       // A manual form choice (e.g. "Diff") should only apply to the
       // membership it was picked for -- picking a different membership
       // number is a fresh start, so forget the manual override and let
       // auto-detection run again for the newly selected membership.
       isFormManuallySelected.current = false;
-      if (activeRequest) {
-        const pmStr = (activeRequest.paymentMethod || '').trim();
-        const isOtherCompanyPm = ['المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => pmStr.includes(pm));
-        if (activeRequest.membershipType === 'International') {
-          setActiveForm('international');
-        } else if (pmStr === 'ABK') {
-          // ABK most commonly has no refund amount for the client, in which
-          // case it should behave like the Normal form. It should only be
-          // routed to the Companies form when there IS a client refund.
-          setActiveForm(getClientRefundNum(activeRequest) > 0 ? 'companies' : 'normal');
-        } else if (isOtherCompanyPm) {
-          setActiveForm('companies');
-        } else {
-          setActiveForm('normal');
-        }
+    }
+
+    // This is the actual fix: previously this flag was SET (in
+    // switchForm) but never CHECKED here, so a manual pick like "Diff"
+    // got silently overwritten by auto-detection on the very next render
+    // for the SAME membership. Now, as long as the membership hasn't
+    // changed, a manual choice sticks -- auto-detection only runs again
+    // once she picks a different membership number.
+    if (isFormManuallySelected.current) return;
+
+    if (activeRequest) {
+      const pmStr = (activeRequest.paymentMethod || '').trim();
+      const isOtherCompanyPm = ['المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => pmStr.includes(pm));
+      if (activeRequest.membershipType === 'International') {
+        setActiveForm('international');
+      } else if (pmStr === 'ABK') {
+        // ABK most commonly has no refund amount for the client, in which
+        // case it should behave like the Normal form. It should only be
+        // routed to the Companies form when there IS a client refund.
+        setActiveForm(getClientRefundNum(activeRequest) > 0 ? 'companies' : 'normal');
+      } else if (isOtherCompanyPm) {
+        setActiveForm('companies');
+      } else {
+        setActiveForm('normal');
       }
     }
   }, [selectedReqId, activeRequest]);
