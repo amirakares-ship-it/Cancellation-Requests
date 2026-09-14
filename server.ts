@@ -662,12 +662,12 @@ async function saveDb() {
 ensureDbLoaded();
 
 // Helper to log audit actions safely
-async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
+async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number, changes?: { field: string; label: string; from: string; to: string }[]) {
   try {
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
       db.auditLogs = [];
     }
-    const newLog = {
+    const newLog: any = {
       id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
       username,
       name,
@@ -677,11 +677,43 @@ async function logAudit(username: string, name: string, role: string, action: st
       timestamp: new Date().toISOString(),
       requestId
     };
+    if (changes && changes.length > 0) {
+      newLog.changes = changes;
+    }
     db.auditLogs.unshift(newLog);
     await saveDb();
   } catch (err) {
     console.warn("Could not write audit log:", err);
   }
+}
+
+// Fields that never belong in a user-facing change-history table (internal
+// bookkeeping, not something a person edited on purpose).
+const DIFF_IGNORE_FIELDS = new Set(["id"]);
+
+// Build a field-by-field diff between the request's state before and after
+// an edit, using the same Arabic label names configured in the system
+// (db.labelNames) so the history table reads naturally instead of showing
+// raw field keys like "membershipNumber".
+function buildRequestDiff(before: any, after: any): { field: string; label: string; from: string; to: string }[] {
+  const changes: { field: string; label: string; from: string; to: string }[] = [];
+  const allKeys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of allKeys) {
+    if (DIFF_IGNORE_FIELDS.has(key)) continue;
+    const oldVal = before ? before[key] : undefined;
+    const newVal = after ? after[key] : undefined;
+    const normOld = oldVal === undefined || oldVal === null ? "" : String(oldVal);
+    const normNew = newVal === undefined || newVal === null ? "" : String(newVal);
+    if (normOld !== normNew) {
+      changes.push({
+        field: key,
+        label: (db.labelNames && (db.labelNames as any)[key]) || key,
+        from: normOld === "" ? "—" : normOld,
+        to: normNew === "" ? "—" : normNew,
+      });
+    }
+  }
+  return changes;
 }
 
 // // Prevent any caching layer (browser or CDN) from serving stale API responses
@@ -2428,7 +2460,8 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
     auditMsg = `[تنبيه دولي] قام مسؤول العضويات الدولية بتعديل طلب المشترك ${updatedRequest.memberName} رقم العضوية ${updatedRequest.membershipNumber}`;
   }
 
-  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId);
+  const fieldChanges = buildRequestDiff(existingRequest, updatedRequest);
+  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId, fieldChanges);
   res.json({ success: true, request: updatedRequest });
 });
 

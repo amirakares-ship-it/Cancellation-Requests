@@ -1017,7 +1017,7 @@ export default function RequestsList({
       {/* Request History Modal */}
       {historyRequest && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-right no-print" dir="rtl">
-          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 max-h-[85vh] flex flex-col">
+          <div className="bg-white rounded-2xl max-w-3xl w-full p-6 space-y-4 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 max-h-[85vh] flex flex-col">
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1026,7 +1026,7 @@ export default function RequestsList({
                 </div>
                 <div>
                   <h3 className="text-base font-black text-slate-800">سجل التغييرات</h3>
-                  <p className="text-xxs text-slate-500">
+                  <p className="text-xs font-semibold text-slate-500">
                     {historyRequest.memberName} - عضوية {historyRequest.membershipNumber}
                   </p>
                 </div>
@@ -1041,26 +1041,59 @@ export default function RequestsList({
             </div>
 
             {/* Body */}
-            <div className="overflow-y-auto flex-1 space-y-3">
+            <div className="overflow-auto flex-1">
               {historyLoading ? (
-                <p className="text-center text-xs text-slate-400 py-8">جاري التحميل...</p>
+                <p className="text-center text-sm font-semibold text-slate-400 py-8">جاري التحميل...</p>
               ) : historyLogs.length === 0 ? (
-                <p className="text-center text-xs text-slate-400 py-8">لا يوجد سجل تغييرات مسجل لهذا الطلب بعد.</p>
+                <p className="text-center text-sm font-semibold text-slate-400 py-8">لا يوجد سجل تغييرات مسجل لهذا الطلب بعد.</p>
               ) : (
-                historyLogs.map((log) => (
-                  <div key={log.id} className="border border-slate-100 rounded-xl p-3 bg-slate-50">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-black text-slate-800">{log.action}</span>
-                      <span className="text-[10px] font-mono text-slate-400">
-                        {formatDateCustom(log.timestamp)}
-                        {' - '}
-                        {new Date(log.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-600 leading-relaxed">{log.details}</p>
-                    <p className="text-[10px] text-slate-400 mt-1">بواسطة: {log.name} ({log.role})</p>
-                  </div>
-                ))
+                <table className="w-full text-right border-collapse">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b-2 border-slate-200">
+                      <th className="py-2 px-2 text-xs font-black text-slate-700 whitespace-nowrap">التاريخ</th>
+                      <th className="py-2 px-2 text-xs font-black text-slate-700 whitespace-nowrap">اليوزر</th>
+                      <th className="py-2 px-2 text-xs font-black text-slate-700">الحقل</th>
+                      <th className="py-2 px-2 text-xs font-black text-slate-700">من</th>
+                      <th className="py-2 px-2 text-xs font-black text-slate-700">إلى</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyLogs.flatMap((log) => {
+                      const dateStr = formatDateCustom(log.timestamp);
+                      const timeStr = new Date(log.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true });
+                      const userStr = `${log.name} (${log.role})`;
+
+                      // Field-level changes (edits): one row per changed field.
+                      if (log.changes && log.changes.length > 0) {
+                        return log.changes.map((c: any, idx: number) => (
+                          <tr key={`${log.id}-${idx}`} className="border-b border-slate-100 hover:bg-slate-50">
+                            <td className="py-2 px-2 text-xs font-bold text-slate-700 whitespace-nowrap align-top">
+                              {idx === 0 ? <>{dateStr}<br /><span className="text-[10px] font-semibold text-slate-400">{timeStr}</span></> : ''}
+                            </td>
+                            <td className="py-2 px-2 text-xs font-bold text-slate-700 align-top">{idx === 0 ? userStr : ''}</td>
+                            <td className="py-2 px-2 text-xs font-bold text-slate-800 align-top">{c.label}</td>
+                            <td className="py-2 px-2 text-xs font-semibold text-rose-600 align-top break-words max-w-[140px]">{c.from}</td>
+                            <td className="py-2 px-2 text-xs font-semibold text-emerald-700 align-top break-words max-w-[140px]">{c.to}</td>
+                          </tr>
+                        ));
+                      }
+
+                      // Action-only events (creation, approvals, finance-sent
+                      // toggle, etc.) with no structured field diff -- show
+                      // the action name and details instead.
+                      return [(
+                        <tr key={log.id} className="border-b border-slate-100 hover:bg-slate-50">
+                          <td className="py-2 px-2 text-xs font-bold text-slate-700 whitespace-nowrap align-top">
+                            {dateStr}<br /><span className="text-[10px] font-semibold text-slate-400">{timeStr}</span>
+                          </td>
+                          <td className="py-2 px-2 text-xs font-bold text-slate-700 align-top">{userStr}</td>
+                          <td className="py-2 px-2 text-xs font-bold text-slate-800 align-top">{log.action}</td>
+                          <td className="py-2 px-2 text-xs font-semibold text-slate-500 align-top" colSpan={2}>{log.details}</td>
+                        </tr>
+                      )];
+                    })}
+                  </tbody>
+                </table>
               )}
             </div>
           </div>
