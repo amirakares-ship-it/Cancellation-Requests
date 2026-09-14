@@ -336,6 +336,13 @@ const DEFAULT_DB = {
       approvalDate: "2026-07-15"
     }
   ],
+  // Per-request manual overrides for the printed memo. Keyed by request id
+  // (as a string). When a value exists for a request, the memo screen
+  // renders that frozen HTML snapshot instead of the normal
+  // auto-calculated template -- so an exceptional manual tweak on one
+  // membership never affects the shared template used by every other
+  // membership on that same form.
+  memoOverrides: {} as Record<string, { html: string; form?: string; savedBy: string; savedAt: string }>,
   auditLogs: [
     {
       id: "log-1",
@@ -3334,6 +3341,63 @@ app.post("/api/backup/restore", requireAuth, async (req, res) => {
   res.json({ success: true, message: "تم استعادة قاعدة البيانات بالكامل بنجاح" });
 });
 
+// --- Per-request manual memo overrides ---
+// A membership's memo can be manually edited (any word/number) and that
+// edit sticks permanently for that one membership only, without touching
+// the shared template used by every other membership on the same form.
+app.get("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const { requestId } = req.params;
+  const override = (db.memoOverrides && db.memoOverrides[requestId]) || null;
+  res.json({ override });
+});
+
+app.post("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { requestId } = req.params;
+  const { html, form } = req.body;
+  if (!html || typeof html !== "string") {
+    return res.status(400).json({ error: "محتوى المذكرة مطلوب" });
+  }
+
+  if (!db.memoOverrides) db.memoOverrides = {};
+  db.memoOverrides[requestId] = {
+    html,
+    form: form || null,
+    savedBy: user.name || user.username,
+    savedAt: new Date().toISOString(),
+  };
+
+  await logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "تعديل يدوي في مذكرة",
+    `تم حفظ تعديل يدوي دائم في مذكرة الطلب رقم ${requestId} (لا يؤثر على باقي العضويات)`,
+    Number(requestId) || undefined
+  );
+  await saveDb();
+  res.json({ success: true });
+});
+
+app.delete("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const { requestId } = req.params;
+
+  if (db.memoOverrides && db.memoOverrides[requestId]) {
+    delete db.memoOverrides[requestId];
+    await logAudit(
+      user.username,
+      user.name,
+      user.role,
+      "استرجاع الشكل الافتراضي للمذكرة",
+      `تم إلغاء التعديل اليدوي والرجوع للقالب الافتراضي لمذكرة الطلب رقم ${requestId}`,
+      Number(requestId) || undefined
+    );
+    await saveDb();
+  }
+  res.json({ success: true });
+});
+
 // --- Audit logs fetch ---
 app.get("/api/logs/audit", requireAuth, async (req, res) => {
   const user = (req as any).user;
@@ -3341,6 +3405,17 @@ app.get("/api/logs/audit", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
   }
   res.json(db.auditLogs);
+});
+
+// Per-request change history -- open to every authenticated user (not just
+// admin), since any user can now track any membership's request regardless
+// of club. Unlike /api/logs/audit above, this only ever returns entries
+// scoped to the one request id asked for, so it never leaks unrelated
+// admin-only actions (user management, password resets, etc.).
+app.get("/api/requests/:id/logs", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const logs = (db.auditLogs || []).filter((l: any) => String(l.requestId) === String(id));
+  res.json(logs);
 });
 
 // --- Global Error Handler ---

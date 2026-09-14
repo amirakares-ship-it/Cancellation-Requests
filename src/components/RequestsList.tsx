@@ -35,6 +35,27 @@ export default function RequestsList({
   requests, user, dropdowns, onViewDetails, onEditRequest, onDeleteRequest, onCreateNew, onBulkReview, onBulkDelete, onRefresh, onImportExcel, onExportExcel, onClearAll, labelNames,
   onFirstManagerDecision, onSendToFirstManager
 }: RequestsListProps) {
+  const [historyRequest, setHistoryRequest] = useState<any | null>(null);
+  const [historyLogs, setHistoryLogs] = useState<any[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const openHistory = async (r: any) => {
+    setHistoryRequest(r);
+    setHistoryLoading(true);
+    setHistoryLogs([]);
+    try {
+      const token = localStorage.getItem('wd_token') || '';
+      const res = await fetch(`/api/requests/${r.id}/logs`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      const data = await res.json();
+      setHistoryLogs(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setHistoryLogs([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
   
   const getLabel = (key: string, fallback: string) => {
     return labelNames?.[key] || fallback;
@@ -766,6 +787,17 @@ export default function RequestsList({
                             </button>
                           )}
 
+                          {/* History - everyone can see what changed on this request */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openHistory(r);
+                            }}
+                            title="سجل التغييرات على هذا الطلب"
+                            className="p-1 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded cursor-pointer"
+                          >
+                            <Clock className="h-4 w-4" />
+                          </button>
                           {/* Delete - Admin only */}
                           {user.role === 'admin' && (
                             <button
@@ -981,6 +1013,59 @@ export default function RequestsList({
         request={pdfTarget}
         onClose={() => setPdfTarget(null)}
       />
+
+      {/* Request History Modal */}
+      {historyRequest && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-right no-print" dir="rtl">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 max-h-[85vh] flex flex-col">
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-slate-100 text-slate-600">
+                  <Clock className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-slate-800">سجل التغييرات</h3>
+                  <p className="text-xxs text-slate-500">
+                    {historyRequest.memberName} - عضوية {historyRequest.membershipNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setHistoryRequest(null); setHistoryLogs([]); }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="overflow-y-auto flex-1 space-y-3">
+              {historyLoading ? (
+                <p className="text-center text-xs text-slate-400 py-8">جاري التحميل...</p>
+              ) : historyLogs.length === 0 ? (
+                <p className="text-center text-xs text-slate-400 py-8">لا يوجد سجل تغييرات مسجل لهذا الطلب بعد.</p>
+              ) : (
+                historyLogs.map((log) => (
+                  <div key={log.id} className="border border-slate-100 rounded-xl p-3 bg-slate-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-black text-slate-800">{log.action}</span>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {formatDateCustom(log.timestamp)}
+                        {' - '}
+                        {new Date(log.timestamp).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-600 leading-relaxed">{log.details}</p>
+                    <p className="text-[10px] text-slate-400 mt-1">بواسطة: {log.name} ({log.role})</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Rejection Reason Modal for Committee Decision */}
       {rejectionModalTarget && (
