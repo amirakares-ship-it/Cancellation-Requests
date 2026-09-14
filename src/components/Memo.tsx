@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw } from 'lucide-react';
+import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3, AlertCircle } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest } from '../utils';
+import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, toInputDateStr } from '../utils';
 import { WadiDeglaLogo } from './WadiDeglaLogo';
 
 interface MemoProps {
@@ -173,6 +173,87 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
     }
   };
 
+  // "تم الإرسال للإدارة المالية" manual Check + editable date -- same
+  // field/endpoint as the Cancellation Status Manager page, just scoped
+  // here to the single membership currently open in the memo screen.
+  const [financeDateModalOpen, setFinanceDateModalOpen] = useState(false);
+  const [newFinanceDate, setNewFinanceDate] = useState<string>('');
+  const [newFinanceExceptionNote, setNewFinanceExceptionNote] = useState<string>('');
+  const [isSavingFinanceDate, setIsSavingFinanceDate] = useState(false);
+  const [financeDateMsg, setFinanceDateMsg] = useState<string | null>(null);
+
+  // If the committee hasn't approved this request yet (result !== 'Accepted')
+  // and she's still sending the memo, that's an exception to the normal
+  // flow -- require a short note explaining why, for accountability.
+  const isFinanceSendException = (r: CancellationRequest | null | undefined) => !!r && r.result !== 'Accepted';
+
+  const handleOpenFinanceDateEdit = () => {
+    if (!activeRequest) return;
+    setNewFinanceDate(
+      activeRequest.financeMemoSentDate
+        ? toInputDateStr(activeRequest.financeMemoSentDate)
+        : new Date().toISOString().split('T')[0]
+    );
+    setNewFinanceExceptionNote(activeRequest.financeMemoSentExceptionNote || '');
+    setFinanceDateModalOpen(true);
+  };
+
+  const handleSaveFinanceDate = async () => {
+    if (!activeRequest?.id) return;
+    if (isFinanceSendException(activeRequest) && !newFinanceExceptionNote.trim()) {
+      alert('اللجنة لسه ما اعتمدتش هذا الطلب -- برجاء كتابة سبب الاستثناء لإرسال المذكرة قبل الاعتماد.');
+      return;
+    }
+    setIsSavingFinanceDate(true);
+    try {
+      const token = localStorage.getItem('wd_token');
+      const res = await fetch(`/api/requests/${activeRequest.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          financeMemoSentDate: newFinanceDate || null,
+          financeMemoSentExceptionNote: newFinanceDate ? (newFinanceExceptionNote.trim() || null) : null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'فشل حفظ التاريخ');
+      setFinanceDateMsg('تم الحفظ!');
+      setFinanceDateModalOpen(false);
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'حدث خطأ أثناء الحفظ');
+    } finally {
+      setIsSavingFinanceDate(false);
+      setTimeout(() => setFinanceDateMsg(null), 3000);
+    }
+  };
+
+  // Unchecking is a simple clear -- no date entry needed.
+  const handleClearFinanceSent = async () => {
+    if (!activeRequest?.id) return;
+    try {
+      const token = localStorage.getItem('wd_token');
+      const res = await fetch(`/api/requests/${activeRequest.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || 'فشل إلغاء التحديد');
+      if (onRefresh) onRefresh();
+    } catch (e: any) {
+      alert(e.message || 'حدث خطأ أثناء إلغاء التحديد');
+    }
+  };
+
+  const handleToggleFinanceSent = () => {
+    if (activeRequest?.financeMemoSentDate) {
+      handleClearFinanceSent();
+    } else {
+      handleOpenFinanceDateEdit();
+    }
+  };
+
   // Toggle state for editing toolbar (collapsible)
   const [isToolbarOpen, setIsToolbarOpen] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
@@ -187,6 +268,9 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
   const [cellPaddingV, setCellPaddingV] = useState(4);
   const [cellPaddingH, setCellPaddingH] = useState(8);
   const [tableMargin, setTableMargin] = useState(8);
+  // Spacing between the memo's text rows (field-lines and note-lines) --
+  // separate from cellPaddingV, which only affects table rows.
+  const [lineGap, setLineGap] = useState(4);
 
   // Table styling state
   const [tableBorderWidth, setTableBorderWidth] = useState('1px');
@@ -402,16 +486,38 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
 
   // Auto-detect form type ONLY on initial request or when not manually chosen
   useEffect(() => {
-    if (prevSelectedReqIdRef.current !== selectedReqId) {
+    const membershipChanged = prevSelectedReqIdRef.current !== selectedReqId;
+    if (membershipChanged) {
       prevSelectedReqIdRef.current = selectedReqId;
-      if (!isFormManuallySelected.current && activeRequest) {
-        if (activeRequest.membershipType === 'International') {
-          setActiveForm('international');
-        } else if (['ABK', 'المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => (activeRequest.paymentMethod || '').includes(pm))) {
-          setActiveForm('companies');
-        } else {
-          setActiveForm('normal');
-        }
+      // A manual form choice (e.g. "Diff") should only apply to the
+      // membership it was picked for -- picking a different membership
+      // number is a fresh start, so forget the manual override and let
+      // auto-detection run again for the newly selected membership.
+      isFormManuallySelected.current = false;
+    }
+
+    // This is the actual fix: previously this flag was SET (in
+    // switchForm) but never CHECKED here, so a manual pick like "Diff"
+    // got silently overwritten by auto-detection on the very next render
+    // for the SAME membership. Now, as long as the membership hasn't
+    // changed, a manual choice sticks -- auto-detection only runs again
+    // once she picks a different membership number.
+    if (isFormManuallySelected.current) return;
+
+    if (activeRequest) {
+      const pmStr = (activeRequest.paymentMethod || '').trim();
+      const isOtherCompanyPm = ['المشرق', 'Aman', 'Ollin', 'Contact', 'One Finance', 'Premium', 'شركات'].some(pm => pmStr.includes(pm));
+      if (activeRequest.membershipType === 'International') {
+        setActiveForm('international');
+      } else if (pmStr === 'ABK') {
+        // ABK most commonly has no refund amount for the client, in which
+        // case it should behave like the Normal form. It should only be
+        // routed to the Companies form when there IS a client refund.
+        setActiveForm(getClientRefundNum(activeRequest) > 0 ? 'companies' : 'normal');
+      } else if (isOtherCompanyPm) {
+        setActiveForm('companies');
+      } else {
+        setActiveForm('normal');
       }
     }
   }, [selectedReqId, activeRequest]);
@@ -775,7 +881,9 @@ const resolveDeductRowAmount = (
         }
       }
     } else if (form === 'companies' && (nDesc.includes('شركه') || nDesc.includes('بنك') || nDesc.includes('abk') || nDesc.includes('استرداد'))) {
-      resolvedDesc = pm ? (isComp ? `لشركة ${pm}` : (isBank ? `لبنك ${pm}` : 'لشركة التمويل / البنك')) : 'لشركة التمويل / البنك';
+      resolvedDesc = pm === 'ABK'
+        ? 'لبنك ABK'
+        : (pm ? (isComp ? `لشركة ${pm}` : (isBank ? `لبنك ${pm}` : 'لشركة التمويل / البنك')) : 'لشركة التمويل / البنك');
     }
     return { amount: freshRefund, desc: resolvedDesc };
   }
@@ -836,7 +944,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
       { tag: 'خصم', amount: adminFeesVal, unit: adminFeesVal ? deductUnit : '', desc: 'مصاريف إدارية' },
       { tag: 'خصم', amount: usageFeeVal, unit: usageFeeVal ? deductUnit : '', desc: 'مقابل انتفاع بالنادى' },
       { tag: 'خصم', amount: visaFeesVal, unit: visaFeesVal ? deductUnit : '', desc: 'مصاريف فيزا 2%' },
-      { tag: 'مع رد شيك للعضوية بقيمة', amount: refundVal, unit: refundVal ? deductUnit : '', desc: pm ? (isComp ? `لشركة ${pm}` : 'لشركة التمويل / البنك') : 'لشركة التمويل / البنك' },
+      { tag: 'مع رد شيك للعضوية بقيمة', amount: refundVal, unit: refundVal ? deductUnit : '', desc: pm === 'ABK' ? 'لبنك ABK' : (pm ? (isComp ? `لشركة ${pm}` : 'لشركة التمويل / البنك') : 'لشركة التمويل / البنك') },
     ];
   } else {
     const refundVal = getCheckRefund(r, '');
@@ -859,6 +967,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     cellPaddingV: 4,
     cellPaddingH: 8,
     tableMargin: form === 'diff' ? 12 : 8,
+    lineGap: 4,
     tableBorderWidth: '1px',
     tableBorderColor: '#666666',
     showSideTable: defaultShowSide,
@@ -902,6 +1011,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(tplConfig?.cellPaddingV !== undefined ? tplConfig.cellPaddingV : defaults.cellPaddingV);
     setCellPaddingH(tplConfig?.cellPaddingH !== undefined ? tplConfig.cellPaddingH : defaults.cellPaddingH);
     setTableMargin(tplConfig?.tableMargin !== undefined ? tplConfig.tableMargin : defaults.tableMargin);
+    setLineGap(tplConfig?.lineGap !== undefined ? tplConfig.lineGap : defaults.lineGap);
     setTableBorderWidth(tplConfig?.tableBorderWidth || defaults.tableBorderWidth);
     setTableBorderColor(tplConfig?.tableBorderColor || defaults.tableBorderColor);
 
@@ -1028,12 +1138,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
   };
 
   // Adjust style variables
-  const adjustVar = (type: 'font' | 'gap' | 'cellV' | 'cellH' | 'margin', delta: number) => {
+  const adjustVar = (type: 'font' | 'gap' | 'cellV' | 'cellH' | 'margin' | 'lineGap', delta: number) => {
     if (type === 'font') setFontSize(prev => Math.min(22, Math.max(9, prev + delta)));
     if (type === 'gap') setSectionGap(prev => Math.min(24, Math.max(0, prev + delta)));
     if (type === 'cellV') setCellPaddingV(prev => Math.min(16, Math.max(0, prev + delta)));
     if (type === 'cellH') setCellPaddingH(prev => Math.min(24, Math.max(0, prev + delta)));
     if (type === 'margin') setTableMargin(prev => Math.min(24, Math.max(0, prev + delta)));
+    if (type === 'lineGap') setLineGap(prev => Math.min(20, Math.max(0, prev + delta)));
   };
 
   const resetVars = () => {
@@ -1042,6 +1153,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(4);
     setCellPaddingH(8);
     setTableMargin(8);
+    setLineGap(4);
     setTableBorderWidth('1px');
     setTableBorderColor('#666666');
     if (selectedLineRef) {
@@ -1416,6 +1528,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
       cellPaddingV,
       cellPaddingH,
       tableMargin,
+      lineGap,
       tableBorderWidth,
       tableBorderColor,
       showSideTable: resolvedShowSide,
@@ -1484,6 +1597,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
     setCellPaddingV(defaults.cellPaddingV);
     setCellPaddingH(defaults.cellPaddingH);
     setTableMargin(defaults.tableMargin);
+    setLineGap(defaults.lineGap !== undefined ? defaults.lineGap : 4);
     setTableBorderWidth(defaults.tableBorderWidth);
     setTableBorderColor(defaults.tableBorderColor);
     setShowSideTable(defaults.showSideTable);
@@ -1572,33 +1686,57 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             <span>طباعة المذكرة</span>
           </button>
 
-          {/* Save a manual, exception-only edit for THIS membership's memo */}
-          <button
-            type="button"
-            onClick={handleSaveManualOverride}
-            disabled={!activeRequest || isSavingOverride}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
-            title="حفظ أي تعديل يدوي (كلمة أو رقم) في هذه المذكرة بالذات فقط، بدون التأثير على باقي العضويات"
-          >
-            <Save className="h-4 w-4" />
-            <span>{isSavingOverride ? 'جارِ الحفظ...' : 'حفظ تعديل يدوي لهذه العضوية'}</span>
-          </button>
-
-          {/* Only shown once a manual override actually exists for this membership */}
-          {activeOverride && (
-            <button
-              type="button"
-              onClick={handleResetToTemplate}
-              disabled={isSavingOverride}
-              className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all"
-              title="التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي المحسوب تلقائيًا"
+          {/* "تم الإرسال للإدارة المالية" -- same field as the Cancellation
+              Status Manager page, always shown whenever a membership is
+              open in the memo screen. */}
+          {activeRequest && (
+            <label
+              className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl shadow-xs cursor-pointer no-print"
+              title="تحديد يدوي: تم إرسال المذكرة للإدارة المالية"
             >
-              <RotateCcw className="h-4 w-4" />
-              <span>استرجاع الشكل الافتراضي</span>
-            </button>
+              <input
+                type="checkbox"
+                checked={!!activeRequest.financeMemoSentDate}
+                onChange={handleToggleFinanceSent}
+                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-400 cursor-pointer"
+              />
+              <span className={`text-xs font-bold whitespace-nowrap ${
+                activeRequest.financeMemoSentDate ? 'text-emerald-600 font-black' : 'text-sky-700'
+              }`}>
+                {activeRequest.financeMemoSentDate
+                  ? `تم الإرسال للإدارة المالية (${formatDateCustom(activeRequest.financeMemoSentDate)})`
+                  : 'إرسال المذكرة للإدارة المالية'}
+              </span>
+              {activeRequest.financeMemoSentDate && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleOpenFinanceDateEdit(); }}
+                  className="p-1 hover:bg-emerald-100 text-slate-400 hover:text-emerald-700 rounded transition-colors cursor-pointer"
+                  title="تعديل تاريخ الإرسال"
+                >
+                  <Edit3 className="w-3.5 h-3.5" />
+                </button>
+              )}
+              {activeRequest.financeMemoSentDate && activeRequest.financeMemoSentExceptionNote && (
+                <span
+                  className="inline-flex items-center gap-1 text-xxs font-black text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-0.5 cursor-help"
+                  title={`سبب الاستثناء: ${activeRequest.financeMemoSentExceptionNote}`}
+                >
+                  <AlertCircle className="w-3 h-3" />
+                  <span>استثناء</span>
+                </span>
+              )}
+            </label>
           )}
         </div>
       </div>
+
+      {financeDateMsg && (
+        <div className="no-print px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <CheckCircle2 className="h-4 w-4" />
+          <span>{financeDateMsg}</span>
+        </div>
+      )}
 
       {(activeOverride || overrideMsg || isLoadingOverride) && (
         <div className={`no-print px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 ${
@@ -1810,6 +1948,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               --cell-padding-v: ${cellPaddingV}px;
               --cell-padding-h: ${cellPaddingH}px;
               --table-margin: ${tableMargin}px;
+              --line-gap: ${lineGap}px;
               --tbl-border-w: ${tableBorderWidth};
               --tbl-border-c: ${tableBorderColor};
             }
@@ -1843,10 +1982,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               margin-bottom: 6px;
             }
             .logo { height: 68px; }
+            .logo-block { margin-bottom: 2px !important; padding-top: 0 !important; }
 
             .title-box-row {
               display: flex;
               justify-content: center;
+              margin-top: 0;
               margin-bottom: var(--section-gap);
             }
             .title-box {
@@ -1863,10 +2004,15 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               display: flex;
               align-items: center;
               gap: 6px;
-              margin: 5px 0;
+              margin: var(--line-gap) 0;
               font-weight: bold;
             }
             .field-line .value { font-weight: normal; }
+            /* Extra breathing room between the identity lines (name / name
+               + loan) and the dates lines right after them, so the two
+               groups read as visually separate -- on top of the tighter
+               3px margin every other field-line now uses. */
+            .subdate-field-line { margin-top: 14px; }
             .id-row { display:flex; justify-content: space-between; align-items:center; }
             .placeholder { color:#0057a3; }
 
@@ -1982,7 +2128,14 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               font-weight: bold;
             }
 
-            .note-line { margin: var(--section-gap) 0; line-height:1.8; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            .note-line { margin: var(--line-gap) 0; line-height:1.6; display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+            /* A bit more breathing room above the "بناء على موافقة لجنة
+               العضويات..." line, separating it from the receipts line
+               right above it. */
+            .committee-note-line { margin-top: 12px; }
+            /* A bit more space between the annual-renewal-exemption line
+               and the bold "مع تحميل هذا الالغاء..." line right after it. */
+            .sales-dept-note-line { margin-top: 18px; }
 
             table.deduct {
               width: fit-content;
@@ -2251,9 +2404,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               }
               .logo-row { margin-bottom: 0 !important; padding-bottom: 0 !important; }
               .logo-placeholder { height: 44px !important; }
+              .logo-block { margin-bottom: 0 !important; padding-top: 0 !important; }
               .title-box-row { margin-top: 0 !important; margin-bottom: 2px !important; padding-top: 0 !important; }
               .field-block { margin: 2px 0 !important; }
-              .field-line { margin: 2px 0 !important; }
+              .field-line { margin: var(--line-gap) 0 !important; }
+              .note-line { margin: var(--line-gap) 0 !important; line-height: 1.4 !important; }
+              .committee-note-line { margin-top: 7px !important; }
+              .sales-dept-note-line { margin-top: 10px !important; }
               .sign-name-text { display: none !important; }
               .sign-name-print-only { display: block !important; }
               /* Footer/signatures block: 340px (labels table) + 300px
@@ -2285,6 +2442,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                  back to a single page. */
               .name-field-line { margin-bottom: 0 !important; }
               .loan-field-line { margin-top: 0 !important; margin-bottom: 2px !important; }
+              /* Keep a small but clearly visible gap before the dates group
+                 in print too, even though every other field-line is
+                 squeezed to 2px here. */
+              .subdate-field-line { margin-top: 8px !important; }
               /* Trim the (fairly large, 20px + 35px) margins around the
                  very last element -- the "Document Control" bar -- which
                  sits right after the signatures table and was adding
@@ -2304,7 +2465,46 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
           {/* Interactive Editing Toolbar (Collapsible) */}
           {isToolbarOpen && (
             <div className="memo-toolbar no-print" id="toolbar">
-              
+
+              {/* Exceptional per-membership manual override -- moved here
+                  (behind an explicit "open toolbar" click) instead of
+                  sitting next to the Print button, specifically so it
+                  can't be clicked by accident. This only affects THIS one
+                  membership, never the shared template. */}
+              <div
+                className="group-title"
+                style={{ background: 'rgba(16,185,129,0.12)', border: '1px solid rgba(16,185,129,0.35)', borderRadius: '8px', padding: '8px 10px', marginBottom: '4px' }}
+              >
+                <Save className="h-3.5 w-3.5 text-emerald-400" />
+                <span>تعديل يدوي استثنائي لهذه العضوية بالذات فقط (بدون تأثير على باقي العضويات)</span>
+              </div>
+              <div className="group" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginBottom: '10px' }}>
+                <button
+                  type="button"
+                  onClick={handleSaveManualOverride}
+                  disabled={!activeRequest || isSavingOverride}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-black text-xs rounded-xl shadow-md cursor-pointer transition-all active:scale-95"
+                  title="حفظ أي تعديل يدوي (كلمة أو رقم) في هذه المذكرة بالذات فقط، بدون التأثير على باقي العضويات"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{isSavingOverride ? 'جارِ الحفظ...' : 'حفظ تعديل يدوي لهذه العضوية'}</span>
+                </button>
+
+                {activeOverride && (
+                  <button
+                    type="button"
+                    onClick={handleResetToTemplate}
+                    disabled={isSavingOverride}
+                    className="flex items-center gap-1.5 px-4 py-2 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-all"
+                    title="التراجع عن التعديل اليدوي والرجوع للشكل الافتراضي المحسوب تلقائيًا"
+                  >
+                    <RotateCcw className="h-4 w-4" />
+                    <span>استرجاع الشكل الافتراضي</span>
+                  </button>
+                )}
+              </div>
+
+
               {/* Group 0: Memo Titles & Core Text Customization */}
               <div className="group-title">
                 <FileText className="h-3.5 w-3.5 text-amber-400" />
@@ -2504,6 +2704,13 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             </div>
 
             <div className="group">
+              <span>تباعد الصفوف (بين أي سطرين):</span>
+              <button type="button" onClick={() => adjustVar('lineGap', -1)}>−</button>
+              <span style={{ fontSize: '11px', color: '#fbbf24', minWidth: '28px', textAlign: 'center' }}>{lineGap}px</span>
+              <button type="button" onClick={() => adjustVar('lineGap', 1)}>+</button>
+            </div>
+
+            <div className="group">
               <span>مسافة السطر المحدد:</span>
               <button type="button" onClick={() => adjustLine('start', -2)}>يمين −</button>
               <button type="button" onClick={() => adjustLine('start', 2)}>يمين +</button>
@@ -2672,7 +2879,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             {activeOverride ? null : (
             <>
             {/* Wadi Degla Clubs Official Center Logo above إدارة العضويات */}
-            <div className="w-full flex justify-center mb-3 pt-2" contentEditable={false}>
+            <div className="logo-block w-full flex justify-center mb-1 pt-0" contentEditable={false}>
               <WadiDeglaLogo size="md" />
             </div>
 
@@ -2899,6 +3106,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 <tbody>
                   {gridRows.map((row, idx) => {
                     const isAdvancePaidRow = row.label.includes('مقدم') || normalizeArabicText(row.label).includes('مقدم');
+                    const isPaymentMethodRow = row.label.trim() === 'طريقة السداد' || normalizeArabicText(row.label).includes('طريقة السداد');
+                    const rowBold = row.isBold || isPaymentMethodRow;
 
                     const cashNum = parseNum(activeRequest?.cashAmount);
                     const visaNum = parseNum(activeRequest?.visaAmount);
@@ -2906,12 +3115,12 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                     const visaFormatted = visaNum.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
                     return (
-                      <tr key={idx} style={row.isBold ? { fontWeight: 'bold' } : undefined}>
-                        <td className="label-cell" style={row.isBold ? { fontWeight: 'bold' } : undefined}>
+                      <tr key={idx} style={rowBold ? { fontWeight: 'bold' } : undefined}>
+                        <td className="label-cell" style={rowBold ? { fontWeight: 'bold' } : undefined}>
                           {row.label}
                           <div className="col-resizer no-print" title="سحب لتغيير عرض العمود" onMouseDown={(e) => startColResize(e, 'gridCol1', gridCol1Width)} />
                         </td>
-                        <td className="val-cell placeholder" style={row.isBold ? { fontWeight: 'bold' } : undefined}>
+                        <td className="val-cell placeholder" style={rowBold ? { fontWeight: 'bold' } : undefined}>
                           <div className="flex items-center justify-between gap-3 w-full">
                             <span>
                               {row.val1 || ''}{row.val1 && row.val1.trim() !== '' && row.val1 !== '-' && !row.val1.startsWith('[') && row.unit ? <span className="unit-cell" contentEditable={true} suppressContentEditableWarning={true}> {row.unit}</span> : ''}
@@ -2965,7 +3174,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   <span className="placeholder">{activeRequest?.advancePaid ? '1' : ''}</span>
                 </div>
 
-                <div className="note-line">
+                <div className="note-line committee-note-line">
                   <span
                     className="committee-note-prefix"
                     contentEditable={true}
@@ -3000,7 +3209,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                 <div className="note-line">
                   لذا يرجى رد شيك للعميل بقيمة <span className="placeholder">{getClientRefund(activeRequest, '')}</span> {getClientRefund(activeRequest, '') ? (activeRequest?.currency || 'جم') : ''}
                 </div>
-                <div className="note-line" style={{ fontWeight: 'bold' }}>
+                <div className="note-line sales-dept-note-line" style={{ fontWeight: 'bold' }}>
                   <span
                     className="sales-dept-note-text"
                     contentEditable={true}
@@ -3085,7 +3294,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   <span className="placeholder">{activeRequest?.advancePaid ? '1' : ''}</span>
                 </div>
 
-                <div className="note-line">
+                <div className="note-line committee-note-line">
                   <span
                     className="committee-note-prefix"
                     contentEditable={true}
@@ -3182,7 +3391,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                   </>
                 )}
 
-                <div className="note-line" style={{ fontWeight: 'bold' }}>
+                <div className="note-line sales-dept-note-line" style={{ fontWeight: 'bold' }}>
                   <span
                     className="sales-dept-note-text"
                     contentEditable={true}
@@ -3295,6 +3504,96 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             </div>
             </>
             )}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* "تم الإرسال للإدارة المالية" Date Modal */}
+    {financeDateModalOpen && activeRequest && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in no-print">
+        <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-5 text-right font-sans" dir="rtl">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+                <Calendar className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-slate-800">تاريخ إرسال المذكرة للإدارة المالية</h3>
+                <p className="text-xxs text-slate-400 font-mono mt-0.5">
+                  عضوية رقم: {activeRequest.membershipNumber} — {activeRequest.memberName}
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFinanceDateModalOpen(false)}
+              className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                تاريخ الإرسال
+              </label>
+              <input
+                type="date"
+                value={newFinanceDate}
+                onChange={(e) => setNewFinanceDate(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-sm font-mono focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none transition-all"
+              />
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setNewFinanceDate(new Date().toISOString().split('T')[0])}
+                className="px-2.5 py-1 text-xxs font-bold rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors cursor-pointer"
+              >
+                تاريخ اليوم
+              </button>
+            </div>
+
+            {isFinanceSendException(activeRequest) && (
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-amber-800 font-black text-xxs">
+                  <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                  <span>تنبيه: اللجنة لسه ما اعتمدتش هذا الطلب -- إرسال المذكرة الآن يُعتبر استثناءً</span>
+                </div>
+                <label className="block text-xs font-bold text-slate-700">
+                  سبب الاستثناء <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  value={newFinanceExceptionNote}
+                  onChange={(e) => setNewFinanceExceptionNote(e.target.value)}
+                  rows={2}
+                  placeholder="مثال: تعليمات مباشرة من الإدارة بالإسراع في الإجراءات قبل انعقاد اللجنة..."
+                  className="w-full px-3 py-2 rounded-lg border border-amber-300 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition-all resize-none"
+                />
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={() => setFinanceDateModalOpen(false)}
+              className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+            >
+              إلغاء
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveFinanceDate}
+              disabled={isSavingFinanceDate}
+              className="px-5 py-2 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+            >
+              {isSavingFinanceDate ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+              <span>حفظ وتحديد كـ"تم الإرسال"</span>
+            </button>
           </div>
         </div>
       </div>
