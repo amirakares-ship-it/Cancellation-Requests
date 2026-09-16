@@ -4,7 +4,7 @@ import {
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3
 } from 'lucide-react';
 
 // Subcomponents
@@ -22,6 +22,7 @@ import FormulasManager from './components/FormulasManager';
 import DropdownsManager from './components/DropdownsManager';
 import CancellationStatusManager from './components/CancellationStatusManager';
 import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
+import Reports from './components/Reports';
 import AttachmentsArchive from './components/AttachmentsArchive';
 import { ConfirmModal } from './components/ConfirmModal';
 import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
@@ -100,7 +101,7 @@ export default function App() {
   });
 
   // UI Control states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'reports'>('dashboard');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -293,7 +294,7 @@ export default function App() {
   useEffect(() => {
     if (currentUser) {
       fetchAllData();
-      if (currentUser.role !== 'admin' && ['cancellation_status', 'memo', 'reconcile', 'formulas', 'dropdowns_lists', 'emails', 'settings'].includes(activeTab)) {
+      if (currentUser.role !== 'admin' && ['cancellation_status', 'memo', 'reconcile', 'reports', 'formulas', 'dropdowns_lists', 'emails', 'settings'].includes(activeTab)) {
         setActiveTab('dashboard');
       }
     }
@@ -1389,6 +1390,22 @@ export default function App() {
             </button>
           )}
 
+          {/* 5.5 التقارير Reports */}
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={() => setActiveTab('reports')}
+              title="التقارير"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <BarChart3 className={`w-4 h-4 shrink-0 ${activeTab === 'reports' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>التقارير</span>}
+            </button>
+          )}
+
           {/* 6. طباعة المذكرة Memo */}
           {currentUser.role === 'admin' && (
             <button
@@ -1811,6 +1828,16 @@ export default function App() {
             onImportExcel={handleImportCompanyDebtsExcel}
             onBulkImportRequests={handleBulkImportExcel}
             importSuccessMsg={debtImportSuccess}
+          />
+        )}
+
+        {/* Tab 5.5: Reports -- tagged debt import batches (Company + Committee), re-downloadable with extra columns */}
+        {activeTab === 'reports' && currentUser.role === 'admin' && (
+          <Reports
+            dropdowns={dropdowns}
+            committees={committees}
+            authToken={authToken || ''}
+            user={currentUser}
           />
         )}
 
