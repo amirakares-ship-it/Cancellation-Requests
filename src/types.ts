@@ -179,3 +179,21 @@ export interface Committee {
   status: 'open' | 'closed';
   approvalDate?: string;
 }
+
+export interface DebtImportBatchRow {
+  membershipNumber: string;
+  loanUnderName?: string;
+  nationalId?: string;
+  paymentMethod?: string;
+  debtAmount: number;
+}
+
+export interface DebtImportBatch {
+  id: string;
+  paymentMethod: string; // اسم الشركة/البنك المختار قبل الرفع
+  committeeNo: string;
+  committeeYear?: string;
+  uploadedAt: string;
+  uploadedBy: string;
+  rows: DebtImportBatchRow[];
+}
