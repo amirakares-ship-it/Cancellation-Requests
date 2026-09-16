@@ -21,8 +21,19 @@ interface BatchListItem {
   rowCount: number;
 }
 
-const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) => {
-  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
+// English "DD-MMM-YYYY" format (e.g. "30-Jun-2026"), matching the date
+// style used elsewhere in the app -- independent of the browser/OS locale.
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const formatUploadDate = (isoString: string) => {
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = MONTH_ABBR[d.getMonth()];
+  const year = d.getFullYear();
+  return `${day}-${month}-${year}`;
+};
+
+const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) => {  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
   const [selectedCommitteeNo, setSelectedCommitteeNo] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -291,7 +302,7 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
               <tbody className="divide-y divide-slate-100">
                 {batches.map((b) => (
                   <tr key={b.id} className="hover:bg-slate-50/50">
-                    <td className="py-2.5 px-3 font-mono">{new Date(b.uploadedAt).toLocaleString('ar-EG')}</td>
+                    <td className="py-2.5 px-3 font-mono">{formatUploadDate(b.uploadedAt)}</td>
                     <td className="py-2.5 px-3 font-bold">{b.paymentMethod}</td>
                     <td className="py-2.5 px-3 text-center font-mono">{b.committeeNo}{b.committeeYear ? ` (${b.committeeYear})` : ''}</td>
                     <td className="py-2.5 px-3 text-center font-mono">{b.rowCount}</td>
