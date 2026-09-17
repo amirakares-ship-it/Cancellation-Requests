@@ -247,6 +247,19 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
           </button>
         </div>
 
+        {/* Specifications Box (informational only) */}
+        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+          <span className="font-bold text-slate-700 block mb-2">أعمدة شيت مديونيات الشركات المطلوب رفعها:</span>
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-center font-mono text-xxs font-bold">
+            <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. م</div>
+            <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">2. رقم العضوية</div>
+            <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. القرض بإسم</div>
+            <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. الرقم القومى</div>
+            <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">5. طريقة الدفع</div>
+            <div className="bg-emerald-50 p-2 rounded border border-emerald-300 text-emerald-900">6. مديونية البنوك/الشركات</div>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-bold text-slate-700 mb-1.5">الشركة / طريقة الدفع <span className="text-rose-500">*</span></label>
