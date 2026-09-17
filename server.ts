@@ -3200,6 +3200,14 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
 
   const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList } = applyCompanyDebtsImport(rows);
 
+  // Map membership number -> the debt value it had right BEFORE this
+  // batch was applied, so an accidental/wrong upload can be reverted
+  // later via the delete/undo endpoint below.
+  const prevDebtByMembership: Record<string, number> = {};
+  updatedMembersList.forEach((m: any) => {
+    prevDebtByMembership[String(m.membershipNumber || '').trim()] = m.previousDebt || 0;
+  });
+
   if (!db.debtImportBatches) db.debtImportBatches = [];
   const batch = {
     id: `batch-${Date.now()}`,
@@ -3208,13 +3216,17 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     committeeYear: committeeYear ? String(committeeYear).trim() : "",
     uploadedAt: new Date().toISOString(),
     uploadedBy: user.name || user.username,
-    rows: rows.map((r: any) => ({
-      membershipNumber: String(r.membershipNumber || "").trim(),
-      loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
-      nationalId: r.nationalId ? String(r.nationalId).trim() : "",
-      paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
-      debtAmount: parseSmartNumber(r.debtABKCompanies),
-    })),
+    rows: rows.map((r: any) => {
+      const mNum = String(r.membershipNumber || "").trim();
+      return {
+        membershipNumber: mNum,
+        loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
+        nationalId: r.nationalId ? String(r.nationalId).trim() : "",
+        paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
+        debtAmount: parseSmartNumber(r.debtABKCompanies),
+        previousDebtAmount: prevDebtByMembership[mNum] ?? 0,
+      };
+    }),
   };
   db.debtImportBatches.unshift(batch);
 
@@ -3298,6 +3310,64 @@ app.get("/api/debt-import-batches/:id/export", requireAuth, async (req, res) => 
     },
     rows: enrichedRows,
   });
+});
+
+// Delete/undo an accidentally-uploaded debt import batch: reverts every
+// matched request's debt back to whatever it was right BEFORE this batch
+// was applied, then removes the batch from the history list.
+app.delete("/api/debt-import-batches/:id", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف دفعات المديونية" });
+  }
+
+  const batchIndex = (db.debtImportBatches || []).findIndex((b: any) => b.id === req.params.id);
+  if (batchIndex === -1) {
+    return res.status(404).json({ error: "دفعة الرفع غير موجودة" });
+  }
+  const batch = db.debtImportBatches[batchIndex];
+
+  let revertedCount = 0;
+  batch.rows.forEach((row: any) => {
+    const mNumRaw = String(row.membershipNumber || "").trim();
+    if (!mNumRaw) return;
+    const cleanMNum = mNumRaw.replace(/^0+/, '');
+    const cleanNatId = String(row.nationalId || '').trim();
+
+    const matchingRequests = db.requests.filter((r: any) => {
+      const dbMNum = String(r.membershipNumber || '').trim();
+      const cleanDbMNum = dbMNum.replace(/^0+/, '');
+      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
+      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
+      return false;
+    });
+
+    matchingRequests.forEach((request: any) => {
+      // Only revert if the request's debt still matches what THIS batch
+      // set it to -- if she's uploaded another (correct) batch since,
+      // that later value takes priority and shouldn't be clobbered by
+      // undoing an older batch.
+      if ((request.debtABKCompanies || 0) === (row.debtAmount || 0)) {
+        request.debtABKCompanies = row.previousDebtAmount || 0;
+        const recalculated = calculateRequestFields(request, db.formulas);
+        Object.assign(request, recalculated);
+        revertedCount++;
+      }
+    });
+  });
+
+  db.debtImportBatches.splice(batchIndex, 1);
+  await saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "حذف/تراجع دفعة مديونية (تقارير)",
+    `تم حذف دفعة المديونية لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo} (رُفعت بتاريخ ${batch.uploadedAt}) وتم إرجاع المديونية لـ ${revertedCount} طلب لقيمتها السابقة`
+  );
+
+  res.json({ success: true, revertedCount, requests: db.requests });
 });
 
 // Update single request statusDate (Admin only)
