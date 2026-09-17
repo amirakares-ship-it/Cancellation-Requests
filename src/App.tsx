@@ -1834,6 +1834,7 @@ export default function App() {
         {/* Tab 5.5: Reports -- tagged debt import batches (Company + Committee), re-downloadable with extra columns */}
         {activeTab === 'reports' && currentUser.role === 'admin' && (
           <Reports
+            requests={requests}
             dropdowns={dropdowns}
             committees={committees}
             authToken={authToken || ''}
