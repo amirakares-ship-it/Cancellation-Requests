@@ -186,6 +186,7 @@ export interface DebtImportBatchRow {
   nationalId?: string;
   paymentMethod?: string;
   debtAmount: number;
+  previousDebtAmount?: number; // القيمة قبل هذه الدفعة، لإتاحة التراجع/الحذف
 }
 
 export interface DebtImportBatch {
