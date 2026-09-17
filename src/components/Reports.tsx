@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2 } from 'lucide-react';
-import { Dropdowns, Committee, User } from '../types';
+import { CancellationRequest, Dropdowns, Committee, User } from '../types';
 import { parseDebtWorkbook } from '../utils';
 
 interface ReportsProps {
+  requests: CancellationRequest[];
   dropdowns: Dropdowns;
   committees: Committee[];
   authToken: string;
@@ -33,7 +34,7 @@ const formatUploadDate = (isoString: string) => {
   return `${day}-${month}-${year}`;
 };
 
-const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) => {  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
+const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, authToken }) => {  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState('');
   const [selectedCommitteeNo, setSelectedCommitteeNo] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -71,6 +72,29 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
     if (!isNaN(na) && !isNaN(nb)) return nb - na;
     return 0;
   });
+
+  const handleDownloadTemplate = () => {
+    const nonCompany = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
+    const companyRequests = requests.filter((r) => {
+      const method = r.paymentMethod || '';
+      return method === 'ABK' || method === 'المشرق' || !nonCompany.includes(method.trim());
+    });
+    const targetList = companyRequests.length > 0 ? companyRequests : requests;
+
+    const dataToExport = targetList.map((r, idx) => ({
+      'م': idx + 1,
+      'رقم العضوية': r.membershipNumber || '',
+      'القرض بإسم': r.loanUnderName || 'لا يوجد',
+      'الرقم القومى': r.nationalId || '',
+      'طريقة الدفع': r.paymentMethod || '',
+      'مديونية البنوك/الشركات': r.debtABKCompanies || 0,
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'مديونيات_البنوك_والشركات');
+    XLSX.writeFile(workbook, 'نموذج_شيت_المديونيات.xlsx');
+  };
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     setUploadMsg(null);
@@ -201,16 +225,26 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
     <div className="space-y-6 text-right font-sans" dir="rtl">
       {/* Upload Section */}
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
-        <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
-          <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
-            <FileSpreadsheet className="h-5 w-5" />
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+              <FileSpreadsheet className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-800">رفع شيت مديونية شركة/بنك</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                اختاري الشركة ورقم اللجنة أولًا، ثم ارفعي الشيت -- هيتم حفظ الدفعة دي وربطها بالشركة واللجنة اللي اخترتيها، عشان تقدري تنزّليها تاني بأعمدة إضافية من صفحة التقارير دي.
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-sm font-black text-slate-800">رفع شيت مديونية شركة/بنك</h3>
-            <p className="text-xs text-slate-400 mt-0.5">
-              اختاري الشركة ورقم اللجنة أولًا، ثم ارفعي الشيت -- هيتم حفظ الدفعة دي وربطها بالشركة واللجنة اللي اخترتيها، عشان تقدري تنزّليها تاني بأعمدة إضافية من صفحة التقارير دي.
-            </p>
-          </div>
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <Download className="h-4 w-4" />
+            <span>تحميل نموذج شيت المديونيات (.xlsx)</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
