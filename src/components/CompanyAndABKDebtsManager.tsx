@@ -652,88 +652,37 @@ export default function CompanyAndABKDebtsManager({
         </div>
       )}
 
-      {/* SUB-TAB 2: Company Debts Excel Upload */}
+      {/* SUB-TAB 2: Historical Requests Import (Company debt Excel upload moved to the "التقارير" page) */}
       {activeSubTab === 'companies' && (
         <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4 animate-in fade-in">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
-            <div>
-              <h3 className="text-base font-black text-slate-800 flex items-center gap-1.5">
-                <FileSpreadsheet className="h-5 w-5 text-emerald-600" />
-                <span>رفع واستيراد مديونيات الشركات والبنوك بالجملة (.xlsx)</span>
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                استخدم هذا القسم لرفع ملف إكسل يحتوي على مديونيات الشركات والبنوك لعدة عضويات دفعة واحدة، لتنفيذ التحديث التلقائي لكافة الحسابات.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onDownloadTemplate}
-              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
-            >
-              <Download className="h-4 w-4" />
-              <span>تحميل نموذج شيت المديونيات (.xlsx)</span>
-            </button>
+          <div className="bg-sky-50 border border-sky-200 text-sky-800 rounded-xl p-4 text-xs font-bold flex items-center gap-2.5">
+            <Info className="h-5 w-5 shrink-0 text-sky-600" />
+            <span>
+              رفع شيت مديونيات الشركات والبنوك بقى بس من صفحة "التقارير" (Reports) -- عشان كل رفعة تتسجل وتتربط بالشركة واللجنة، ويكون فيه سجل كامل يقدر حد يرجع فيه ويلغي أي رفعة غلط.
+            </span>
           </div>
 
-          {/* Specifications Box */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-            <span className="font-bold text-slate-700 block mb-2">أعمدة شيت مديونيات الشركات المطلوب رفعها:</span>
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-2 text-center font-mono text-xxs font-bold">
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. م</div>
-              <div className="bg-white p-2 rounded border border-amber-300 text-amber-900 bg-amber-50">2. رقم العضوية</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. القرض بإسم</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. الرقم القومى</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">5. طريقة الدفع</div>
-              <div className="bg-white p-2 rounded border border-emerald-300 text-emerald-900 bg-emerald-50">6. مديونية البنوك/الشركات</div>
-            </div>
-          </div>
-
-          {/* Upload Grid for Debts vs Historical Requests */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Upload Dropzone 1: Debts */}
-            <div className="p-6 border-2 border-dashed border-emerald-200 rounded-2xl text-center hover:border-emerald-400 transition-colors bg-emerald-50/20 flex flex-col justify-between">
+          {onBulkImportRequests && (
+            <div className="p-6 border-2 border-dashed border-amber-300 rounded-2xl text-center hover:border-amber-400 transition-colors bg-amber-50/30 flex flex-col justify-between max-w-xl mx-auto">
               <div>
-                <Upload className="h-8 w-8 text-emerald-500 mx-auto mb-2" />
-                <span className="block text-xs font-bold text-slate-800 mb-1">رفع شيت مديونيات الشركات والحسابات (.xlsx)</span>
-                <span className="block text-xxs text-slate-500 mb-4">اختر ملف الإكسل لتحديث مديونيات الشركات المذكورة في التقرير</span>
+                <FileSpreadsheet className="h-8 w-8 text-amber-500 mx-auto mb-2" />
+                <span className="block text-xs font-bold text-slate-800 mb-1">استيراد كشف الطلبات القديمة/التاريخية (.xlsx)</span>
+                <span className="block text-xxs text-slate-500 mb-4">رفع شيت إكسل بنفس أعمدة وتنسيق تقرير التصدير لدمج السجلات القديمة تلقائيًا</span>
               </div>
               <div>
-                <label className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-xl cursor-pointer inline-flex items-center gap-2 transition-all shadow-md">
-                  <FileSpreadsheet className="h-4 w-4" />
-                  <span>رفع وتحديث المديونيات</span>
+                <label className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-black text-xs rounded-xl cursor-pointer inline-flex items-center gap-2 transition-all shadow-md">
+                  <Upload className="h-4 w-4" />
+                  <span>رفع شيت الطلبات القديمة بالكامل</span>
                   <input
                     type="file"
                     accept=".xlsx,.xls"
-                    onChange={onImportExcel}
+                    onChange={onBulkImportRequests}
                     className="hidden"
                   />
                 </label>
               </div>
             </div>
-
-            {/* Upload Dropzone 2: Historical Requests */}
-            {onBulkImportRequests && (
-              <div className="p-6 border-2 border-dashed border-amber-300 rounded-2xl text-center hover:border-amber-400 transition-colors bg-amber-50/30 flex flex-col justify-between">
-                <div>
-                  <FileSpreadsheet className="h-8 w-8 text-amber-500 mx-auto mb-2" />
-                  <span className="block text-xs font-bold text-slate-800 mb-1">استيراد كشف الطلبات القديمة/التاريخية (.xlsx)</span>
-                  <span className="block text-xxs text-slate-500 mb-4">رفع شيت إكسل بنفس أعمدة وتنسيق تقرير التصدير لدمج السجلات القديمة تلقائيًا</span>
-                </div>
-                <div>
-                  <label className="px-5 py-2.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-black text-xs rounded-xl cursor-pointer inline-flex items-center gap-2 transition-all shadow-md">
-                    <Upload className="h-4 w-4" />
-                    <span>رفع شيت الطلبات القديمة بالكامل</span>
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={onBulkImportRequests}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
 
           {importSuccessMsg && (
             <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center gap-2">
