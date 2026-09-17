@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History } from 'lucide-react';
+import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2 } from 'lucide-react';
 import { Dropdowns, Committee, User } from '../types';
 import { parseDebtWorkbook } from '../utils';
 
@@ -41,6 +41,7 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
   const [batches, setBatches] = useState<BatchListItem[]>([]);
   const [isLoadingBatches, setIsLoadingBatches] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchBatches = async () => {
     setIsLoadingBatches(true);
@@ -172,6 +173,30 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
     }
   };
 
+  const handleDeleteBatch = async (batch: BatchListItem) => {
+    const confirmed = window.confirm(
+      `هل أنت متأكدة من حذف دفعة "${batch.paymentMethod} - لجنة ${batch.committeeNo}"؟\n\nسيتم إرجاع مديونية كل عضوية اتحدثت بالدفعة دي لقيمتها قبل الرفع (طالما محدش عدّلها بعد كده بدفعة تانية)، وستحذف الدفعة من السجل نهائيًا.`
+    );
+    if (!confirmed) return;
+
+    setDeletingId(batch.id);
+    try {
+      const res = await fetch(`/api/debt-import-batches/${batch.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل حذف الدفعة');
+      }
+      setBatches((prev) => prev.filter((b) => b.id !== batch.id));
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء حذف الدفعة');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
       {/* Upload Section */}
@@ -297,6 +322,7 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
                   <th className="py-2.5 px-3 text-center">عدد الصفوف</th>
                   <th className="py-2.5 px-3 text-right">رفعها</th>
                   <th className="py-2.5 px-3 text-center">تنزيل</th>
+                  <th className="py-2.5 px-3 text-center">حذف</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -316,6 +342,17 @@ const Reports: React.FC<ReportsProps> = ({ dropdowns, committees, authToken }) =
                       >
                         {downloadingId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                         <span>تنزيل</span>
+                      </button>
+                    </td>
+                    <td className="py-2.5 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteBatch(b)}
+                        disabled={deletingId === b.id}
+                        title="حذف الدفعة والتراجع عن تحديث المديونية (لو رفعتيها بالغلط)"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        {deletingId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                       </button>
                     </td>
                   </tr>
