@@ -475,7 +475,12 @@ export default function App() {
         } else {
           fetchAllData();
         }
-        if (ids.length > 1) {
+        const autoSentCount = data.autoSentToFirstManagerCount || 0;
+        if (autoSentCount > 0) {
+          alert(
+            `${ids.length > 1 ? `تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!\n` : ''}تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا للمدير الأول بمرفقاتها (المدة أكثر من 3 شهور/شهر).`
+          );
+        } else if (ids.length > 1) {
           alert(`تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!`);
         }
       } else {
