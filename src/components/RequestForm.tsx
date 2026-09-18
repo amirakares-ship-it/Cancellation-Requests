@@ -575,6 +575,18 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       return;
     }
 
+    // At least the signed cancellation request document must be attached
+    // before a brand-new request can be registered. Only enforced when
+    // creating a new request -- editing an existing one that predates this
+    // rule shouldn't get blocked retroactively.
+    if (!isEditing) {
+      const hasCancellationRequestDoc = attachments.some(a => a.category === 'طلب الإلغاء الموقع');
+      if (!hasCancellationRequestDoc) {
+        setErrorMessage('لازم ترفعي مستند "طلب الإلغاء الموقع" على الأقل قبل تسجيل الطلب.');
+        return;
+      }
+    }
+
     setErrorMessage('');
 
     // Package fields to return
@@ -1442,6 +1454,18 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
             <p className="text-xs text-slate-500">
               يمكنك رفع استمارة طلب الإلغاء الموقعة، وصور بطاقة الرقم القومي، وإيصالات السداد، والتقارير الطبية/الاستثناءات بصيغة صور أو ملفات PDF.
             </p>
+
+            {!isEditing && (
+              <p className={`text-xs font-bold flex items-center gap-1.5 ${
+                attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? 'text-emerald-700' : 'text-rose-600'
+              }`}>
+                <span>{attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? '✓' : '⚠'}</span>
+                <span>
+                  رفع مستند "طلب الإلغاء الموقع" <span className="text-rose-500">إجباري</span> قبل تسجيل الطلب
+                  {attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? ' (تم الرفع)' : ''}
+                </span>
+              </p>
+            )}
 
             {/* Dropzone */}
             <div
