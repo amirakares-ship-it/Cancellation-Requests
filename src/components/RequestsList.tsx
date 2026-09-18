@@ -424,20 +424,17 @@ export default function RequestsList({
             />
           </div>
 
-          {/* Club Filter */}
-          {user.role !== 'club' ? (
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">الفرع / النادي</label>
-              <MultiSelect
-                options={dropdowns.clubs}
-                selected={selectedClubs}
-                onChange={setSelectedClubs}
-                placeholder="كل الفروع"
-              />
-            </div>
-          ) : (
-            <div></div>
-          )}
+          {/* Club Filter -- shown for every role now (previously hidden
+              specifically for 'club' role users). */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">الفرع / النادي</label>
+            <MultiSelect
+              options={dropdowns.clubs}
+              selected={selectedClubs}
+              onChange={setSelectedClubs}
+              placeholder="كل الفروع"
+            />
+          </div>
 
           {/* Status Filter */}
           <div>
