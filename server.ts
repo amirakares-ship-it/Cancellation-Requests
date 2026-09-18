@@ -2446,11 +2446,28 @@ app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
   }
 
   let updatedCount = 0;
+  let autoSentCount = 0;
+  const autoSentMembers: string[] = [];
   const strIds = ids.map((id) => String(id));
   db.requests.forEach((r) => {
     if (strIds.includes(String(r.id))) {
       r.reviewed = !!reviewed;
       updatedCount++;
+
+      // عند تحديد الطلب كـ "مُراجع" من الأدمن، ولو مدة الاشتراك أكثر من 3 شهور
+      // (أو أكثر من شهر حسب تاريخ الاشتراك)، يتم إرسال الطلب تلقائيًا للمدير الأول
+      // بمرفقاته الحالية، دون الحاجة لضغط الأدمن على زر "إرسال للمدير الأول" يدويًا.
+      // لا يتم إعادة الإرسال لو الطلب مُرسل بالفعل حتى لا يتم إفساد قرار سابق للمدير الأول.
+      const isLongDuration = r.type2 === "Over 3 months" || r.type2 === "Over 1 month";
+      if (reviewed && isLongDuration && !r.approvalSentToFirstManager) {
+        r.approvalSentToFirstManager = true;
+        r.firstManagerApproved = null;
+        r.result = "Pending";
+        r.firstManagerSentAt = new Date().toISOString();
+        r.firstManagerSentBy = `${user.name || user.username} (إرسال تلقائي عند المراجعة)`;
+        autoSentCount++;
+        autoSentMembers.push(`${r.memberName} (${r.membershipNumber})`);
+      }
     }
   });
 
@@ -2463,9 +2480,19 @@ app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
       reviewed ? "مراجعة جماعية للطلبات" : "إلغاء مراجعة جماعية",
       `تم تحديث حالة المراجعة لعدد ${updatedCount} طلبات إلى ${reviewed ? "مُراجع" : "غير مُراجع"}`
     );
+
+    if (autoSentCount > 0) {
+      logAudit(
+        user.username,
+        user.name,
+        user.role,
+        "إرسال تلقائي للمدير الأول بعد المراجعة",
+        `تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا لمهام واعتمادات المدير الأول (مدة الاشتراك أكثر من الحد المسموح) بمجرد تحديدها كمُراجعة: ${autoSentMembers.join("، ")}`
+      );
+    }
   }
 
-  res.json({ success: true, requests: db.requests });
+  res.json({ success: true, requests: db.requests, autoSentToFirstManagerCount: autoSentCount });
 });
 
 // Bulk Cancellation Status Route (Admin & Managers)
