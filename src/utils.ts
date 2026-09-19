@@ -1295,6 +1295,21 @@ export function normalizeMembershipNumber(mem: any): string {
     .replace(/[-_–—\s\/\.\\]/g, ''); // Remove hyphens, underscores, slashes, periods, spaces
 }
 
+/**
+ * Checks whether a purely-numeric input is the reserved "00400" sequence
+ * or one of its prefixes (0, 00, 004, 0040, 00400, 00400x...).
+ * Used to block "00400" both when entering a membership number and when
+ * searching by membership number, so the two stay consistent.
+ * Only applies when the value is digits-only (letters/hyphens bypass it),
+ * so it never blocks free-text searches by name or other fields.
+ */
+export function isReservedMembershipCode(val: string): boolean {
+  if (!val) return false;
+  const digitsOnly = val.replace(/[^0-9]/g, '');
+  if (!digitsOnly || val !== digitsOnly) return false;
+  return '00400'.startsWith(digitsOnly) || digitsOnly.startsWith('00400');
+}
+
 export function isSameMembershipNumber(mem1: any, mem2: any): boolean {
   if (!mem1 || !mem2) return false;
   const s1 = String(mem1).trim().toLowerCase();
