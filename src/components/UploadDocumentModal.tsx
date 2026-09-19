@@ -12,6 +12,7 @@ interface UploadDocumentModalProps {
   onSuccess?: () => void;
   currentUser?: any;
   user?: any;
+  dropdowns?: any;
 }
 
 const DOCUMENT_CATEGORIES = [
@@ -31,9 +32,15 @@ export default function UploadDocumentModal({
   onUploadSuccess,
   onSuccess,
   currentUser,
-  user
+  user,
+  dropdowns
 }: UploadDocumentModalProps) {
   const activeUser = currentUser || user;
+  // Document type options come from the admin-managed "نوع المستند" dropdown
+  // list when available, falling back to the built-in defaults otherwise.
+  const documentCategoryOptions: string[] = (dropdowns?.documentTypes && dropdowns.documentTypes.length > 0)
+    ? dropdowns.documentTypes
+    : DOCUMENT_CATEGORIES;
   const [existingAttachments, setExistingAttachments] = useState<any[]>(request.attachments || []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filesToUpload, setFilesToUpload] = useState<Array<{
@@ -450,7 +457,7 @@ export default function UploadDocumentModal({
                             onChange={(e) => updateCategory(item.id, e.target.value)}
                             className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:border-amber-400"
                           >
-                            {DOCUMENT_CATEGORIES.map(cat => (
+                            {documentCategoryOptions.map(cat => (
                               <option key={cat} value={cat}>{cat}</option>
                             ))}
                           </select>

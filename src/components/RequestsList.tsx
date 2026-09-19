@@ -1260,6 +1260,7 @@ export default function RequestsList({
         <UploadDocumentModal
           request={uploadModalTarget}
           user={user}
+          dropdowns={dropdowns}
           onClose={() => setUploadModalTarget(null)}
           onSuccess={() => {
             setUploadModalTarget(null);

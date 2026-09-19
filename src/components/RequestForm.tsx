@@ -156,6 +156,11 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
   const [checksPaid, setChecksPaid] = useState(0);
   const [checksUnpaid, setChecksUnpaid] = useState(0);
   const [annualRenewalDue, setAnnualRenewalDue] = useState(0);
+  // Tracks whether the user has actually entered a value (including 0) for
+  // "التجديد السنوي المستحق", since the displayed input is blank both when
+  // untouched and when the value is 0 -- this lets 0 count as a valid,
+  // deliberate entry while still catching a field left completely blank.
+  const [annualRenewalDueTouched, setAnnualRenewalDueTouched] = useState(false);
   const [debtABKCompanies, setDebtABKCompanies] = useState(0);
 
   // Overrides Support (Admins or designated roles can bypass standard formulas)
@@ -285,6 +290,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       setChecksPaid(request.checksPaid || 0);
       setChecksUnpaid(request.checksUnpaid || 0);
       setAnnualRenewalDue(request.annualRenewalDue || 0);
+      setAnnualRenewalDueTouched(true); // Existing request already has a stored value
       setDebtABKCompanies(request.debtABKCompanies || 0);
 
       // Check if overrides were explicitly set
@@ -574,6 +580,10 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       setErrorMessage('قيمة التحويلة مطلوبة وإجبارية وأكبر من الصفر عند السداد عن طريق الشركات أو البنوك');
       return;
     }
+    if (!annualRenewalDueTouched) {
+      setErrorMessage('حقل (التجديد السنوي المستحق) إجباري، يمكنك إدخال صفر إذا لم يوجد تجديد مستحق');
+      return;
+    }
 
     // At least the signed cancellation request document must be attached
     // before a brand-new request can be registered. Only enforced when
@@ -763,7 +773,10 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{getLabel('membershipNumber', 'رقم العضوية')} <span className="text-rose-500">*</span></label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  {getLabel('membershipNumber', 'رقم العضوية')} <span className="text-rose-500">*</span>
+                  {!isInternational && <span className="text-slate-400 font-normal"> (بدون 00400)</span>}
+                </label>
                 <input
                   type="text"
                   required
@@ -1575,13 +1588,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                               onChange={(e) => handleUpdateAttachmentCategory(att.id, e.target.value)}
                               className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:border-amber-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
                             >
-                              <option value="طلب الإلغاء الموقع">طلب الإلغاء الموقع</option>
-                              <option value="صورة بطاقة الرقم القومي">صورة بطاقة الرقم القومي</option>
-                              <option value="إيصال سداد / مخالصة">إيصال سداد / مخالصة</option>
-                              <option value="إقرار وتنازل معتمد">إقرار وتنازل معتمد</option>
-                              <option value="تقرير طبي / مستندات استثناء">تقرير طبي / مستندات استثناء</option>
-                              <option value="شيكات / مستندات بنكية">شيكات / مستندات بنكية</option>
-                              <option value="أخرى">أخرى</option>
+                              {(dropdowns?.documentTypes && dropdowns.documentTypes.length > 0
+                                ? dropdowns.documentTypes
+                                : ['طلب الإلغاء الموقع', 'صورة بطاقة الرقم القومي', 'إيصال سداد / مخالصة', 'إقرار وتنازل معتمد', 'تقرير طبي / مستندات استثناء', 'شيكات / مستندات بنكية', 'أخرى']
+                              ).map((cat: string) => (
+                                <option key={cat} value={cat}>{cat}</option>
+                              ))}
                             </select>
                           </div>
 
@@ -1710,11 +1722,15 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">التجديد السنوي المستحق</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">التجديد السنوي المستحق <span className="text-rose-500">*</span></label>
                 <input
                   type="number"
-                  value={annualRenewalDue === 0 ? '' : annualRenewalDue}
-                  onChange={(e) => setAnnualRenewalDue(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                  value={annualRenewalDue === 0 ? (annualRenewalDueTouched ? 0 : '') : annualRenewalDue}
+                  onChange={(e) => {
+                    setAnnualRenewalDueTouched(true);
+                    setAnnualRenewalDue(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0);
+                  }}
+                  onBlur={() => setAnnualRenewalDueTouched(true)}
                   onFocus={(e) => e.target.select()}
                   placeholder="0"
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left font-mono"

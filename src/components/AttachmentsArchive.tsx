@@ -220,19 +220,21 @@ export default function AttachmentsArchive({
 
   // Categories list from existing attachments
   const availableCategories = useMemo(() => {
-    const defaultCategories = [
-      'طلب الإلغاء الموقع',
-      'صورة بطاقة الرقم القومي',
-      'إيصال سداد / مخالصة',
-      'إقرار وتنازل معتمد',
-      'تقرير طبي / مستندات استثناء',
-      'ملف مراجعة الإدارة المالية',
-      'شيكات / مستندات بنكية',
-      'أخرى'
-    ];
+    const defaultCategories = (dropdowns?.documentTypes && dropdowns.documentTypes.length > 0)
+      ? dropdowns.documentTypes
+      : [
+        'طلب الإلغاء الموقع',
+        'صورة بطاقة الرقم القومي',
+        'إيصال سداد / مخالصة',
+        'إقرار وتنازل معتمد',
+        'تقرير طبي / مستندات استثناء',
+        'ملف مراجعة الإدارة المالية',
+        'شيكات / مستندات بنكية',
+        'أخرى'
+      ];
     const fromData = Array.from(new Set(attachments.map(a => a.category).filter(Boolean)));
     return Array.from(new Set([...defaultCategories, ...fromData]));
-  }, [attachments]);
+  }, [attachments, dropdowns]);
 
   return (
     <div className="space-y-5 text-right font-sans" dir="rtl">
@@ -824,6 +826,7 @@ export default function AttachmentsArchive({
         <UploadDocumentModal
           request={activeUploadTarget}
           currentUser={currentUser}
+          dropdowns={dropdowns}
           onClose={() => setActiveUploadTarget(null)}
           onUploadSuccess={() => {
             setSuccessMessage('تم رفع وإضافة المستندات الجديدة بنجاح إلى الأرشيف');
