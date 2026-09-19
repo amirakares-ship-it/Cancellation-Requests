@@ -559,16 +559,18 @@ async function loadDb() {
       db.dropdownLabels = JSON.parse(JSON.stringify(DEFAULT_DB.dropdownLabels));
     }
 
-    // Ensure new core dropdown categories and missing options exist
+    // Seed any brand-new dropdown category that doesn't exist in this
+    // database yet (e.g. a category introduced in a later app update, like
+    // "documentTypes"), using the built-in defaults as a starting point.
+    //
+    // IMPORTANT: this only runs for a category that is entirely missing.
+    // It deliberately does NOT keep re-injecting individual default items
+    // into a category that already exists -- doing that used to silently
+    // undo an admin's deliberate deletion of a default option (e.g. from
+    // "نوع المستند") every time the server restarted / cold-started.
     for (const key of Object.keys(DEFAULT_DB.dropdowns)) {
       if (!db.dropdowns[key]) {
-        db.dropdowns[key] = (DEFAULT_DB.dropdowns as any)[key];
-      } else if (Array.isArray((db.dropdowns as any)[key])) {
-        for (const item of (DEFAULT_DB.dropdowns as any)[key]) {
-          if (!db.dropdowns[key].includes(item)) {
-            db.dropdowns[key].push(item);
-          }
-        }
+        db.dropdowns[key] = JSON.parse(JSON.stringify((DEFAULT_DB.dropdowns as any)[key]));
       }
     }
     for (const key of Object.keys(DEFAULT_DB.dropdownLabels)) {
