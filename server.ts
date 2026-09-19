@@ -147,7 +147,18 @@ const DEFAULT_DB = {
     committeeResults: ["Accepted", "Rejected", "Pending"],
     cancellationStatuses: ["Pending", "Cancelled", "Revoked", "Deletion", "Rejected"],
     exceptions: ["لا يوجد", "حالة انسانية", "جهة سيادية", "حل مشكلة", "بدون رد اى مبلغ"],
-    currencies: ["جم", "ريال سعودى", "دولار"]
+    currencies: ["جم", "ريال سعودى", "دولار"],
+    documentTypes: [
+      "طلب الإلغاء الموقع",
+      "صورة بطاقة الرقم القومي",
+      "إيصال سداد / مخالصة",
+      "إقرار وتنازل معتمد",
+      "تقرير طبي / مستندات استثناء",
+      "ملف مراجعة الإدارة المالية",
+      "شيكات / مستندات بنكية",
+      "استمارة الاشتراك الأصلية",
+      "أخرى"
+    ]
   },
   dropdownLabels: {
     clubs: "نادي الفرع",
@@ -157,7 +168,8 @@ const DEFAULT_DB = {
     committeeResults: "قرار اللجنة",
     cancellationStatuses: "حالة الإلغاء",
     exceptions: "الاستثناءات",
-    currencies: "العملة (Currency)"
+    currencies: "العملة (Currency)",
+    documentTypes: "نوع المستند"
   },
   labelNames: {
     membershipNumber: "رقم العضوية",
