@@ -3,7 +3,7 @@ import {
   ArrowRight, Calculator, Check, AlertCircle, RefreshCw, Layers, Info,
   Upload, Paperclip, FileText, Image as ImageIcon, Trash2, Eye, Lock, Plus, X, ShieldCheck
 } from 'lucide-react';
-import { calculateAllFields, CalculationInput, toInputDateStr, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, isSameClub, isSameMembershipNumber, isArabicOnly, isValidExternalId, cleanLeadingZero, isBankPaymentMethod, isInternationalRequest } from '../utils';
+import { calculateAllFields, CalculationInput, toInputDateStr, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, isSameClub, isSameMembershipNumber, isArabicOnly, isValidExternalId, cleanLeadingZero, isBankPaymentMethod, isInternationalRequest, isReservedMembershipCode } from '../utils';
 import { CustomField, RequestAttachment } from '../types';
 import DocumentViewerModal from './DocumentViewerModal';
 
@@ -775,7 +775,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                       val = val.replace(/[^0-9]/g, '');
                       // Block any value that IS a prefix of, or starts with, the reserved sequence 00400
                       // (so typing 0, 00, 004, 0040, or 00400... is rejected at every step)
-                      if (val && ('00400'.startsWith(val) || val.startsWith('00400'))) {
+                      if (isReservedMembershipCode(val)) {
                         return; // Ignore this keystroke entirely
                       }
                     }
