@@ -1114,7 +1114,14 @@ export default function App() {
 
   // Custom Report EXCEL Export (With Dynamic Custom Fields)
   const handleExportExcelReport = (customData?: any[]) => {
-    const listToExport = Array.isArray(customData) ? customData : requests;
+    let listToExport = Array.isArray(customData) ? customData : requests;
+
+    // Security: club users can only ever export their own club's data,
+    // regardless of what's currently shown/filtered on screen.
+    if (currentUser?.role === 'club') {
+      listToExport = listToExport.filter((r) => isSameClub(r.club, currentUser.club));
+    }
+
     if (!listToExport || listToExport.length === 0) {
       alert('لا توجد بيانات متاحة للتصدير حالياً طبقاً للتصفية المحددة');
       return;
