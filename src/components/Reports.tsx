@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
-import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2, Landmark } from 'lucide-react';
+import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2, Landmark, FileCheck } from 'lucide-react';
 import { CancellationRequest, Dropdowns, Committee, User } from '../types';
 import { parseDebtWorkbook } from '../utils';
 
@@ -19,6 +19,15 @@ interface BatchListItem {
   committeeYear?: string;
   uploadedAt: string;
   uploadedBy: string;
+  rowCount: number;
+}
+
+interface SettlementBatchListItem {
+  id: string;
+  companyName: string;
+  statusDate: string;
+  createdAt: string;
+  createdBy: string;
   rowCount: number;
 }
 
@@ -44,6 +53,28 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // "مخالصة الإلغاءات" history
+  const [settlementBatches, setSettlementBatches] = useState<SettlementBatchListItem[]>([]);
+  const [isLoadingSettlements, setIsLoadingSettlements] = useState(false);
+  const [downloadingSettlementId, setDownloadingSettlementId] = useState<string | null>(null);
+  const [deletingSettlementId, setDeletingSettlementId] = useState<string | null>(null);
+  const settlementSectionRef = useRef<HTMLDivElement>(null);
+
+  const fetchSettlementBatches = async () => {
+    setIsLoadingSettlements(true);
+    try {
+      const res = await fetch('/api/cancellation-settlements', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      setSettlementBatches(data.batches || []);
+    } catch (e) {
+      console.error('Failed to load cancellation settlement batches', e);
+    } finally {
+      setIsLoadingSettlements(false);
+    }
+  };
+
   const fetchBatches = async () => {
     setIsLoadingBatches(true);
     try {
@@ -61,6 +92,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
 
   useEffect(() => {
     fetchBatches();
+    fetchSettlementBatches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -250,6 +282,60 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
     }
   };
 
+  // مخالصة الإلغاءات: download one previously-generated settlement report
+  const handleDownloadSettlement = async (batch: SettlementBatchListItem) => {
+    setDownloadingSettlementId(batch.id);
+    try {
+      const res = await fetch(`/api/cancellation-settlements/${batch.id}/export`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل تجهيز ملف التنزيل');
+      }
+
+      const dataToExport = data.rows.map((r: any, idx: number) => ({
+        'م': idx + 1,
+        'الاسم': r.memberName || '',
+        'رقم العضوية': r.membershipNumber || '',
+        'الرقم القومى': r.nationalId || '',
+        'رقم العميل': r.externalId || '',
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'مخالصة_الغاءات');
+      const dateStr = (batch.statusDate || batch.createdAt || '').split('T')[0];
+      XLSX.writeFile(workbook, `مخالصة_الغاءات_${batch.companyName}_${dateStr}.xlsx`);
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء تنزيل التقرير');
+    } finally {
+      setDownloadingSettlementId(null);
+    }
+  };
+
+  const handleDeleteSettlement = async (batch: SettlementBatchListItem) => {
+    const confirmed = window.confirm(`هل أنت متأكدة من حذف تقرير مخالصة الإلغاءات الخاص بـ "${batch.companyName}"؟`);
+    if (!confirmed) return;
+
+    setDeletingSettlementId(batch.id);
+    try {
+      const res = await fetch(`/api/cancellation-settlements/${batch.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'فشل حذف التقرير');
+      }
+      setSettlementBatches((prev) => prev.filter((b) => b.id !== batch.id));
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء حذف التقرير');
+    } finally {
+      setDeletingSettlementId(null);
+    }
+  };
+
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
       {/* Finance Section (independent of the company/bank debt-sheet workflow) */}
@@ -261,7 +347,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
           <div>
             <h3 className="text-sm font-black text-slate-800">الإدارة المالية</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              تحميل نموذج شيت المديونيات، وتقرير يومي بكل الطلبات اللي اتبعتت مذكرتها للإدارة المالية النهاردة.
+              تقرير يومي بكل الطلبات اللي اتبعتت مذكرتها للإدارة المالية النهاردة، وسجل مخالصات الإلغاءات الجماعية لعضويات الشركات.
             </p>
           </div>
         </div>
@@ -269,19 +355,19 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
           <button
             type="button"
-            onClick={handleDownloadTemplate}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
-          >
-            <Download className="h-4 w-4" />
-            <span>Finance</span>
-          </button>
-          <button
-            type="button"
             onClick={handleDownloadSarky}
             className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
           >
             <Download className="h-4 w-4" />
             <span>ساركي</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => settlementSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl border border-sky-200 transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <FileCheck className="h-4 w-4" />
+            <span>مخالصة الإلغاءات</span>
           </button>
         </div>
       </div>
@@ -300,6 +386,14 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
               </p>
             </div>
           </div>
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <Download className="h-4 w-4" />
+            <span>Finance</span>
+          </button>
         </div>
 
         {/* Specifications Box (informational only) */}
@@ -455,6 +549,87 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 font-bold rounded-lg transition-all cursor-pointer"
                       >
                         {deletingId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* مخالصة الإلغاءات History Section */}
+      <div ref={settlementSectionRef} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4 scroll-mt-4">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2.5 rounded-xl bg-sky-50 text-sky-600 border border-sky-200">
+              <FileCheck className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black text-slate-800">سجل مخالصة الإلغاءات</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                بتتحفظ تلقائيًا لما تحدّدي عضويات شركات دفعة واحدة (Bulk) وتغيّري حالتها لـ "ملغاة" من صفحة تحديد وتحديث حالة الإلغاء -- تقرير منفصل لكل شركة.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={fetchSettlementBatches}
+            disabled={isLoadingSettlements}
+            className="p-2 rounded-xl hover:bg-slate-100 text-slate-500 transition-colors cursor-pointer"
+            title="تحديث السجل"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoadingSettlements ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {isLoadingSettlements ? (
+          <div className="text-center py-8 text-xs text-slate-400 font-bold">جارِ تحميل السجل...</div>
+        ) : settlementBatches.length === 0 ? (
+          <div className="text-center py-8 text-xs text-slate-400 font-bold">مفيش مخالصات إلغاءات لسه.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500 font-bold">
+                <tr>
+                  <th className="py-2.5 px-3 text-right">تاريخ الإنشاء</th>
+                  <th className="py-2.5 px-3 text-right">الشركة</th>
+                  <th className="py-2.5 px-3 text-center">تاريخ الحالة</th>
+                  <th className="py-2.5 px-3 text-center">عدد الصفوف</th>
+                  <th className="py-2.5 px-3 text-right">أنشأها</th>
+                  <th className="py-2.5 px-3 text-center">تنزيل</th>
+                  <th className="py-2.5 px-3 text-center">حذف</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {settlementBatches.map((b) => (
+                  <tr key={b.id} className="hover:bg-slate-50/50">
+                    <td className="py-2.5 px-3 font-mono">{formatUploadDate(b.createdAt)}</td>
+                    <td className="py-2.5 px-3 font-bold">{b.companyName}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{b.statusDate ? formatUploadDate(b.statusDate) : '—'}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{b.rowCount}</td>
+                    <td className="py-2.5 px-3">{b.createdBy}</td>
+                    <td className="py-2.5 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadSettlement(b)}
+                        disabled={downloadingSettlementId === b.id}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        {downloadingSettlementId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                        <span>تنزيل</span>
+                      </button>
+                    </td>
+                    <td className="py-2.5 px-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSettlement(b)}
+                        disabled={deletingSettlementId === b.id}
+                        title="حذف تقرير مخالصة الإلغاءات دي من السجل"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 font-bold rounded-lg transition-all cursor-pointer"
+                      >
+                        {deletingSettlementId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                       </button>
                     </td>
                   </tr>

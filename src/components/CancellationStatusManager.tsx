@@ -433,7 +433,8 @@ export default function CancellationStatusManager({
 
       setFeedbackMsg({
         type: 'success',
-        text: `تم تحديث حالة الإلغاء بنجاح لعدد ${data.updatedCount || selectedIds.length} عضوية (${translateStatus(targetStatus)})`
+        text: `تم تحديث حالة الإلغاء بنجاح لعدد ${data.updatedCount || selectedIds.length} عضوية (${translateStatus(targetStatus)})` +
+          (data.settlementBatchesCreated > 0 ? ` -- وتم إنشاء ${data.settlementBatchesCreated} تقرير/تقارير مخالصة إلغاءات في صفحة التقارير.` : '')
       });
       setSelectedIds([]);
       onRefresh();
