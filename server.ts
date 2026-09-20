@@ -619,6 +619,23 @@ async function loadDb() {
       }
     }
 
+    // One-time cleanup: strip the auto-generated "[بريد] تم إرسال إشعار
+    // للفرع..." notice lines that used to get appended (possibly more than
+    // once) into clubNote whenever a Club Notification email was sent --
+    // clubNote should only ever hold genuine notes typed by club staff.
+    if (Array.isArray(db.requests)) {
+      const noticeLine = "[بريد] تم إرسال إشعار للفرع بطلب استرداد أصول إيصالات العضوية";
+      db.requests.forEach((r: any) => {
+        if (typeof r.clubNote === "string" && r.clubNote.includes(noticeLine)) {
+          r.clubNote = r.clubNote
+            .split("\n")
+            .filter((line: string) => line.trim() !== noticeLine)
+            .join("\n")
+            .trim();
+        }
+      });
+    }
+
     if (Array.isArray(db.users)) {
       db.users.forEach((u: any) => {
         if (u.username === 'manager1' || u.role === 'first_manager') {
@@ -3118,15 +3135,6 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
   };
 
   db.emailLogs.unshift(newEmail);
-
-  // If email type triggers internal state updates
-  if (requestId && type === "Club Notification") {
-    const request = db.requests.find((r) => r.id === requestId);
-    if (request) {
-      // Prompt original receipt collection workflow
-      request.clubNote = (request.clubNote || "") + "\n[بريد] تم إرسال إشعار للفرع بطلب استرداد أصول إيصالات العضوية";
-    }
-  }
 
   await saveDb();
   logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
