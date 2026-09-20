@@ -116,6 +116,10 @@ export default function AttachmentsArchive({
       // 3. Category filter
       if (selectedCategory !== 'all') {
         if (item.category !== selectedCategory) return false;
+      } else {
+        // "كل المستندات" tab: revocation-request documents live only in
+        // their own dedicated tab, so exclude them from the general view.
+        if (item.category === REVOCATION_CATEGORY) return false;
       }
 
       // 4. File Type filter
@@ -139,9 +143,13 @@ export default function AttachmentsArchive({
     });
   }, [attachments, searchQuery, selectedClub, selectedCategory, selectedFileType, selectedLockStatus, sortOrder]);
 
-  // Statistics calculation
+  // Statistics calculation.
+  // "طلب التراجع" documents are excluded from the general (non-revocation)
+  // counts so the top stats cards and the "كل المستندات" tab badge reflect
+  // only what actually shows up in that tab -- revocation docs get their
+  // own separate count instead.
   const stats = useMemo(() => {
-    const totalCount = attachments.length;
+    let totalCount = 0;
     let pdfCount = 0;
     let imageCount = 0;
     let lockedCount = 0;
@@ -149,11 +157,15 @@ export default function AttachmentsArchive({
     const uniqueReqs = new Set();
 
     attachments.forEach(item => {
+      if (item.category === REVOCATION_CATEGORY) {
+        revocationCount++;
+        return;
+      }
+      totalCount++;
       const isPdf = item.fileType === 'application/pdf' || String(item.fileName).toLowerCase().endsWith('.pdf');
       if (isPdf) pdfCount++;
       else imageCount++;
       if (item.isLocked) lockedCount++;
-      if (item.category === REVOCATION_CATEGORY) revocationCount++;
       if (item.requestId) uniqueReqs.add(item.requestId);
     });
 
