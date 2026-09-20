@@ -503,9 +503,10 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                         req.status === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
                         req.status === 'Deletion' ? 'bg-purple-100 text-purple-800 border-purple-200' :
                         req.status === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
+                        req.status === 'Rejected' ? 'bg-rose-100 text-rose-700 border-rose-200 font-black' :
                         'bg-slate-100 text-slate-700 border-slate-200'
                       }`}>
-                        {translateStatus(req.status)}
+                        {req.status === 'Rejected' ? 'Rejected' : translateStatus(req.status)}
                       </span>
                       {getPendingSubStatus(req) && (
                         <>
@@ -513,6 +514,8 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                             getPendingSubStatus(req) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
                             getPendingSubStatus(req) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
                             getPendingSubStatus(req) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
+                            getPendingSubStatus(req) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
+                            getPendingSubStatus(req) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
                             'text-slate-500 font-medium'
                           }`}>
                             {getPendingSubStatus(req)}

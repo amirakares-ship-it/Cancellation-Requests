@@ -929,6 +929,8 @@ export default function CancellationStatusManager({
                               getPendingSubStatus(r) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
                               getPendingSubStatus(r) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
+                              getPendingSubStatus(r) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
+                              getPendingSubStatus(r) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
                               'text-slate-500 font-medium'
                             }`}>
                               {getDisplaySubStatus(r)}
