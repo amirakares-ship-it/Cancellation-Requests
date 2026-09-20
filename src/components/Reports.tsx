@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2 } from 'lucide-react';
+import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2, Landmark } from 'lucide-react';
 import { CancellationRequest, Dropdowns, Committee, User } from '../types';
 import { parseDebtWorkbook } from '../utils';
 
@@ -197,6 +197,35 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
     }
   };
 
+  // "ساركي": daily export of every request whose finance memo was sent to
+  // the Financial Administration today specifically (financeMemoSentDate
+  // matches today's date). Each request only ever holds its current/latest
+  // sent date (no history log), so this is naturally deduplicated already.
+  const handleDownloadSarky = () => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    const sentToday = requests.filter((r) => {
+      if (!r.financeMemoSentDate) return false;
+      return String(r.financeMemoSentDate).split('T')[0] === todayStr;
+    });
+
+    if (sentToday.length === 0) {
+      alert('لا توجد طلبات تم إرسالها إلى الإدارة المالية اليوم.');
+      return;
+    }
+
+    const dataToExport = sentToday.map((r, idx) => ({
+      'م': idx + 1,
+      'الاسم': r.memberName || '',
+      'رقم العضوية': r.membershipNumber || '',
+      'طريقة الدفع': r.paymentMethod || '',
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'ساركي');
+    XLSX.writeFile(workbook, `ساركي_${todayStr}.xlsx`);
+  };
+
   const handleDeleteBatch = async (batch: BatchListItem) => {
     const confirmed = window.confirm(
       `هل أنت متأكدة من حذف دفعة "${batch.paymentMethod} - لجنة ${batch.committeeNo}"؟\n\nسيتم إرجاع مديونية كل عضوية اتحدثت بالدفعة دي لقيمتها قبل الرفع (طالما محدش عدّلها بعد كده بدفعة تانية)، وستحذف الدفعة من السجل نهائيًا.`
@@ -223,6 +252,40 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
 
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
+      {/* Finance Section (independent of the company/bank debt-sheet workflow) */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
+        <div className="flex items-center gap-2.5 border-b border-slate-100 pb-3">
+          <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+            <Landmark className="h-5 w-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-black text-slate-800">الإدارة المالية</h3>
+            <p className="text-xs text-slate-400 mt-0.5">
+              تحميل نموذج شيت المديونيات، وتقرير يومي بكل الطلبات اللي اتبعتت مذكرتها للإدارة المالية النهاردة.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleDownloadTemplate}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <Download className="h-4 w-4" />
+            <span>Finance</span>
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadSarky}
+            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
+          >
+            <Download className="h-4 w-4" />
+            <span>ساركي</span>
+          </button>
+        </div>
+      </div>
+
       {/* Upload Section */}
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
@@ -237,14 +300,6 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={handleDownloadTemplate}
-            className="flex items-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
-          >
-            <Download className="h-4 w-4" />
-            <span>تحميل نموذج شيت المديونيات (.xlsx)</span>
-          </button>
         </div>
 
         {/* Specifications Box (informational only) */}
