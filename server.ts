@@ -150,6 +150,7 @@ const DEFAULT_DB = {
     currencies: ["جم", "ريال سعودى", "دولار"],
     documentTypes: [
       "طلب الإلغاء الموقع",
+      "طلب التراجع",
       "صورة بطاقة الرقم القومي",
       "إيصال سداد / مخالصة",
       "إقرار وتنازل معتمد",
@@ -603,6 +604,12 @@ async function loadDb() {
     if (db.dropdowns && Array.isArray(db.dropdowns.exceptions)) {
       if (!db.dropdowns.exceptions.includes("بدون رد اى مبلغ") && !db.dropdowns.exceptions.includes("بدون رد أي مبلغ")) {
         db.dropdowns.exceptions.push("بدون رد اى مبلغ");
+      }
+    }
+
+    if (db.dropdowns && Array.isArray(db.dropdowns.documentTypes)) {
+      if (!db.dropdowns.documentTypes.includes("طلب التراجع")) {
+        db.dropdowns.documentTypes.push("طلب التراجع");
       }
     }
 
