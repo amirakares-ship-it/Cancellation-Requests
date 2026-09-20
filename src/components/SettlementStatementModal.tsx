@@ -1,7 +1,7 @@
 import React from 'react';
 import { Calculator, FileText, X, ShieldAlert, CreditCard, Landmark, Building2, CheckSquare, Printer, Info, UserCheck } from 'lucide-react';
 import { CancellationRequest } from '../types';
-import { formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, calculateSettlement, printElement, isInternationalRequest } from '../utils';
+import { formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, calculateSettlement, printElement, isInternationalRequest, getPendingSubStatus, translateStatus } from '../utils';
 
 interface SettlementStatementModalProps {
   request: CancellationRequest | null;
@@ -184,6 +184,26 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
               <span className="text-slate-500 font-bold block text-xxs">تاريخ طلب الإلغاء:</span>
               <span className="font-mono font-bold text-slate-800 text-xs block">
                 {request.requestDate ? formatDateCustom(request.requestDate) : '—'}
+              </span>
+            </div>
+
+            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+              <span className="text-slate-500 font-bold block text-xxs">حالة الطلب:</span>
+              <span className={`font-black text-xs block ${
+                request.status === 'Rejected' ? 'text-rose-700' :
+                request.status === 'Cancelled' ? 'text-amber-700' :
+                request.status === 'Revoked' ? 'text-sky-700' :
+                request.status === 'Deletion' ? 'text-purple-700' :
+                'text-slate-800'
+              }`}>
+                {request.status === 'Rejected' ? 'Rejected' : (getPendingSubStatus(request as any) || translateStatus(request.status) || 'Pending')}
+              </span>
+            </div>
+
+            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+              <span className="text-slate-500 font-bold block text-xxs">تاريخ الحالة:</span>
+              <span className="font-mono font-bold text-slate-800 text-xs block">
+                {request.statusDate ? formatDateCustom(request.statusDate) : '—'}
               </span>
             </div>
 
@@ -424,8 +444,13 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
           </div>
         )}
 
+        {/* Closing divider -- kept separate from the (no-print) footer
+            buttons below so the bottom border actually prints, instead of
+            disappearing along with the hidden buttons. */}
+        <div className="border-t border-slate-200 pt-3" />
+
         {/* Modal Footer */}
-        <div className="flex items-center justify-between pt-3 border-t border-slate-200 no-print">
+        <div className="flex items-center justify-between no-print">
           <button
             type="button"
             onClick={handlePrint}
