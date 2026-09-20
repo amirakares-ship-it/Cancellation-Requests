@@ -229,23 +229,26 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
     }
   };
 
-  // "ساركي": daily export of every request whose finance memo was sent to
-  // the Financial Administration today specifically (financeMemoSentDate
-  // matches today's date). Each request only ever holds its current/latest
-  // sent date (no history log), so this is naturally deduplicated already.
+  // "ساركي": export of every request whose finance memo was sent to the
+  // Financial Administration on the chosen date (defaults to today, but
+  // any past date can be picked via the date input next to the button).
+  const [sarkyDate, setSarkyDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const handleDownloadSarky = () => {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const sentToday = requests.filter((r) => {
+    if (!sarkyDate) {
+      alert('من فضلك اختاري التاريخ أولًا.');
+      return;
+    }
+    const sentOnDate = requests.filter((r) => {
       if (!r.financeMemoSentDate) return false;
-      return String(r.financeMemoSentDate).split('T')[0] === todayStr;
+      return String(r.financeMemoSentDate).split('T')[0] === sarkyDate;
     });
 
-    if (sentToday.length === 0) {
-      alert('لا توجد طلبات تم إرسالها إلى الإدارة المالية اليوم.');
+    if (sentOnDate.length === 0) {
+      alert(`لا توجد طلبات تم إرسالها إلى الإدارة المالية بتاريخ ${sarkyDate}.`);
       return;
     }
 
-    const dataToExport = sentToday.map((r, idx) => ({
+    const dataToExport = sentOnDate.map((r, idx) => ({
       'م': idx + 1,
       'الاسم': r.memberName || '',
       'رقم العضوية': r.membershipNumber || '',
@@ -255,7 +258,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'ساركي');
-    XLSX.writeFile(workbook, `ساركي_${todayStr}.xlsx`);
+    XLSX.writeFile(workbook, `ساركي_${sarkyDate}.xlsx`);
   };
 
   const handleDeleteBatch = async (batch: BatchListItem) => {
@@ -347,20 +350,28 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
           <div>
             <h3 className="text-sm font-black text-slate-800">الإدارة المالية</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              تقرير يومي بكل الطلبات اللي اتبعتت مذكرتها للإدارة المالية النهاردة، وسجل مخالصات الإلغاءات الجماعية لعضويات الشركات.
+              اختاري تاريخ أي يوم وحمّلي تقرير ساركي الخاص بيه، وسجل مخالصات الإلغاءات الجماعية لعضويات الشركات.
             </p>
           </div>
         </div>
 
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
-          <button
-            type="button"
-            onClick={handleDownloadSarky}
-            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
-          >
-            <Download className="h-4 w-4" />
-            <span>ساركي</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="date"
+              value={sarkyDate}
+              onChange={(e) => setSarkyDate(e.target.value)}
+              className="text-xs font-bold text-slate-700 bg-white border border-slate-300 rounded-xl px-2.5 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
+            />
+            <button
+              type="button"
+              onClick={handleDownloadSarky}
+              className="flex items-center justify-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm"
+            >
+              <Download className="h-4 w-4" />
+              <span>ساركي</span>
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => settlementSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
@@ -537,7 +548,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 text-white font-bold rounded-lg transition-all cursor-pointer"
                       >
                         {downloadingId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                        <span>تنزيل</span>
+                        <span>Finance</span>
                       </button>
                     </td>
                     <td className="py-2.5 px-3 text-center">
