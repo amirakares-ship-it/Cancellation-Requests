@@ -1120,12 +1120,29 @@ export function getPendingSubStatus(r: {
   receiptReceived?: boolean;
   paymentMethod?: string;
   debtABKCompanies?: number;
+  reviewed?: boolean;
+  type2?: string;
+  approvalSentToFirstManager?: boolean;
+  firstManagerApproved?: boolean | null;
 }): string {
   const statusStr = (r.status || '').trim().toLowerCase();
   const isPending = !r.status || statusStr === 'pending' || statusStr === 'قيد الانتظار' || r.status === 'Pending';
   if (!isPending) return '';
 
-  // 1. لعدم اعتماد اللجنة
+  // 0. لسه معملهاش الأدمن "Viewed" -- الطلب لسه قيد المراجعة الأولية
+  if (!r.reviewed) {
+    return '(قيد المراجعة)';
+  }
+
+  // 0.5 طلبات طويلة المدة (أكتر من شهر/3 شهور) اتبعتت للمدير الأول
+  // ولسه في انتظار قراره (موافقة مبدئية)
+  const isLongDuration = r.type2 === 'Over 3 months' || r.type2 === 'Over 1 month';
+  if (isLongDuration && r.approvalSentToFirstManager && r.firstManagerApproved !== true) {
+    return '(فى انتظار الموافقة المبدئية)';
+  }
+
+  // 1. لعدم اعتماد اللجنة (يشمل: الطلبات قصيرة المدة بعد المراجعة مباشرة،
+  // والطلبات طويلة المدة بعد موافقة المدير الأول)
   if (r.result !== 'Accepted') {
     return '(فى انتظار انعقاد اللجنة)';
   }
