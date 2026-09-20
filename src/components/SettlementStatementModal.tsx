@@ -110,10 +110,10 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-right font-sans settlement-print-backdrop" dir="rtl">
-      <div id="settlement-statement-print-card" className="bg-white rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl border border-slate-100 max-h-[94vh] overflow-y-auto animate-in fade-in zoom-in-95 settlement-print-card">
+      <div id="settlement-statement-print-card" className="bg-white rounded-2xl max-w-2xl w-full p-4 space-y-3 shadow-2xl border border-slate-100 max-h-[94vh] overflow-y-auto animate-in fade-in zoom-in-95 settlement-print-card">
         
         {/* Modal Header */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 pb-3 gap-3">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between border-b border-slate-200 pb-2 gap-2">
           <div className="flex items-center gap-2 text-amber-600">
             <Calculator className="h-6 w-6 shrink-0 text-amber-600 no-print" />
             <div>
@@ -146,8 +146,8 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
         </div>
 
         {/* 1. البيانات الخاصة بالعضوية بالاضافة الى رقم العضوية */}
-        <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs space-y-2">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
             <span className="font-black text-slate-800 text-xs flex items-center gap-1.5">
               <UserCheck className="w-4 h-4 text-amber-600" />
               1. البيانات الخاصة بالعضوية (رقم العضوية: {request.membershipNumber}):
@@ -157,37 +157,56 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
             </span>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+            {/* المجموعة 1: هوية العضو */}
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">اسم المشترك / العضو:</span>
               <span className="font-black text-slate-900 text-sm block truncate">{request.memberName}</span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">النادي الفرعي:</span>
               <span className="font-bold text-slate-800 text-xs block">{request.club}</span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">نوع العضوية:</span>
               <span className="font-bold text-slate-800 text-xs block">{request.membershipType || '—'}</span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            {/* المجموعة 2: الاشتراك ومدته */}
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">تاريخ الاشتراك:</span>
               <span className="font-mono font-bold text-slate-800 text-xs block">
                 {request.subscriptionDate ? formatDateCustom(request.subscriptionDate) : '—'}
               </span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            {request.days !== undefined && (
+              <div className="bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-slate-500 font-bold block text-xxs">مدة الاشتراك:</span>
+                <span className="font-bold text-amber-700 text-xs block">{request.days} يوم ({request.type || '—'})</span>
+              </div>
+            )}
+
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">تاريخ طلب الإلغاء:</span>
               <span className="font-mono font-bold text-slate-800 text-xs block">
                 {request.requestDate ? formatDateCustom(request.requestDate) : '—'}
               </span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            {/* المجموعة 3: اللجنة وحالة الطلب */}
+            {request.committeeNo && (
+              <div className="bg-white p-1.5 rounded-lg border border-slate-200">
+                <span className="text-slate-500 font-bold block text-xxs">اللجنة:</span>
+                <span className="font-bold text-slate-800 text-xs block">
+                  {formatCommitteeWithYear(request.committeeNo, request.committeeYear, request.approvalDate || request.requestDate || (request as any).createdAt)}
+                </span>
+              </div>
+            )}
+
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">حالة الطلب:</span>
               <span className={`font-black text-xs block ${
                 request.status === 'Rejected' ? 'text-rose-700' :
@@ -200,31 +219,16 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
               </span>
             </div>
 
-            <div className="bg-white p-2.5 rounded-lg border border-slate-200">
+            <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">تاريخ الحالة:</span>
               <span className="font-mono font-bold text-slate-800 text-xs block">
                 {request.statusDate ? formatDateCustom(request.statusDate) : '—'}
               </span>
             </div>
 
-            {request.days !== undefined && (
-              <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                <span className="text-slate-500 font-bold block text-xxs">مدة الاستهلاك:</span>
-                <span className="font-bold text-amber-700 text-xs block">{request.days} يوم ({request.type || '—'})</span>
-              </div>
-            )}
-
-            {request.committeeNo && (
-              <div className="bg-white p-2.5 rounded-lg border border-slate-200">
-                <span className="text-slate-500 font-bold block text-xxs">اللجنة:</span>
-                <span className="font-bold text-slate-800 text-xs block">
-                  {formatCommitteeWithYear(request.committeeNo, request.committeeYear, request.approvalDate || request.requestDate || (request as any).createdAt)}
-                </span>
-              </div>
-            )}
-
+            {/* المجموعة 4: القرض/التمويل (لو موجود) */}
             {request.loanUnderName && (
-              <div className="bg-white p-2.5 rounded-lg border border-slate-200 col-span-2">
+              <div className="bg-white p-1.5 rounded-lg border border-slate-200 col-span-2 sm:col-span-3">
                 <span className="text-slate-500 font-bold block text-xxs">القرض / التمويل باسم:</span>
                 <span className="font-bold text-slate-900 text-xs block truncate">{request.loanUnderName}</span>
               </div>
@@ -233,16 +237,16 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
         </div>
 
         {/* Ordered Settlement Items: 2 -> 12 */}
-        <div className="space-y-2.5 text-xs">
+        <div className="space-y-1.5 text-xs">
           <span className="font-black text-slate-800 block border-b border-slate-200 pb-1 flex items-center gap-1.5 text-sm">
             <FileText className="w-4 h-4 text-amber-600" />
             تفاصيل التسوية المالية المعتمدة:
           </span>
 
-          <div className="bg-slate-50/90 p-4 rounded-xl border border-slate-200 space-y-3">
+          <div className="bg-slate-50/90 p-2.5 rounded-xl border border-slate-200 space-y-1.5">
             
             {/* 2. طريقة الاشتراك */}
-            <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200">
+            <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200">
               <span className="font-bold text-slate-700 text-xs">2. طريقة الاشتراك:</span>
               <span className="inline-flex items-center gap-1.5 font-black px-3 py-1 rounded-full text-xs bg-amber-100 text-amber-950 border border-amber-300">
                 {isCompany && <Building2 className="w-3.5 h-3.5 text-amber-700" />}
@@ -254,13 +258,13 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
             </div>
 
             {/* 3. قيمة الاشتراك */}
-            <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200">
+            <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200">
               <span className="font-bold text-slate-800 text-xs">3. قيمة الاشتراك بالعقد:</span>
               <span className="font-mono text-sm font-black text-slate-950">{subVal.toLocaleString()} {cur}</span>
             </div>
 
             {/* 4. قيمة المقدم (نقدي + فيزا) */}
-            <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200">
+            <div className="flex justify-between items-center bg-white p-2 rounded-xl border border-slate-200">
               <div>
                 <span className="font-bold text-slate-800 text-xs block">{isInternationalRequest(request) ? '4. قيمة المقدم:' : '4. قيمة المقدم (نقدي + فيزا):'}</span>
                 {((Number(request.cashAmount) || 0) > 0 || (Number(request.visaAmount) || 0) > 0) && !isInternationalRequest(request) && (
@@ -274,7 +278,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
             {/* 5. قيمة التحويلة (تظهر في حالة الشركات والبنوك فقط) */}
             {(isCompany || isABK || isBank) && (
-              <div className="flex justify-between items-center bg-purple-50/80 p-3 rounded-xl border border-purple-200">
+              <div className="flex justify-between items-center bg-purple-50/80 p-2 rounded-xl border border-purple-200">
                 <span className="font-bold text-purple-900 text-xs flex items-center gap-1">
                   <Building2 className="w-3.5 h-3.5 text-purple-700" />
                   5. قيمة التحويلة:
@@ -285,7 +289,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
             {/* 6. قيمة الشيكات المسددة (تظهر في حالة الشيكات فقط) */}
             {isChecks && (
-              <div className="flex justify-between items-center bg-emerald-50/80 p-3 rounded-xl border border-emerald-200">
+              <div className="flex justify-between items-center bg-emerald-50/80 p-2 rounded-xl border border-emerald-200">
                 <span className="font-bold text-emerald-900 text-xs flex items-center gap-1">
                   <CheckSquare className="w-3.5 h-3.5 text-emerald-700" />
                   6. قيمة الشيكات المسددة:
@@ -296,7 +300,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
             {/* 7. قيمة الشيكات الغير مسددة (تظهر في حالة الشيكات فقط) */}
             {isChecks && (
-              <div className="flex justify-between items-center bg-rose-50/80 p-3 rounded-xl border border-rose-200">
+              <div className="flex justify-between items-center bg-rose-50/80 p-2 rounded-xl border border-rose-200">
                 <span className="font-bold text-rose-900 text-xs flex items-center gap-1">
                   <CheckSquare className="w-3.5 h-3.5 text-rose-700" />
                   7. قيمة الشيكات الغير مسددة (تُلغى):
@@ -306,11 +310,11 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
             )}
 
             {/* 8. مصاريف ادارية - مقابل انتفاع - مصاريف فيزا */}
-            <div className="bg-white p-3 rounded-xl border border-slate-200 space-y-2">
+            <div className="bg-white p-2 rounded-xl border border-slate-200 space-y-1">
               <span className="font-bold text-rose-900 block text-xs border-b border-slate-100 pb-1">
                 8. تفاصيل المستقطعات الحالية (مصاريف إدارية - مقابل انتفاع - مصاريف فيزا):
               </span>
-              <div className="pr-3 text-xs space-y-1.5 text-slate-700">
+              <div className="pr-3 text-xs space-y-1 text-slate-700">
                 <div className="flex justify-between">
                   <span>• مصاريف إدارية:</span>
                   <span className="font-mono font-bold text-rose-700">
@@ -344,14 +348,13 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
             </div>
 
             {/* 9. إجمالي مبلغ الخصم */}
-            <div className="flex justify-between items-center bg-rose-100/90 p-3 rounded-xl border border-rose-300 text-rose-950 font-black">
+            <div className="flex justify-between items-center bg-rose-100/90 p-2 rounded-xl border border-rose-300 text-rose-950 font-black">
               <span className="text-xs">9. إجمالي مبلغ الخصم المستقطع:</span>
               <span className="font-mono text-base">{discountTotal.toLocaleString()} {cur}</span>
             </div>
 
             {/* 10. مبلغ الاسترداد */}
-            <div className="flex justify-between items-center bg-amber-50 p-3 rounded-xl border border
-            -amber-300 text-amber-950 font-black">
+            <div className="flex justify-between items-center bg-amber-50 p-2 rounded-xl border border-amber-300 text-amber-950 font-black">
               <span className="text-xs">
                 10. مبلغ الاسترداد {isCompany ? '(مديونية الشركة المسجلة)' : isABK ? '(المسترد للبنك)' : ''}:
               </span>
@@ -364,7 +367,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
                 const _clientNum = parseFloat(String(refundToClientDisplay).replace(/[^0-9.]/g, ''));
                 const _showBox = isNaN(_refundNum) || isNaN(_clientNum) || Math.abs(_refundNum - _clientNum) > 0.01;
                 return _showBox && (
-                  <div className="flex justify-between items-center bg-emerald-100/90 p-3.5 rounded-xl border border-emerald-300 text-emerald-950 font-black text-sm shadow-xs">
+                  <div className="flex justify-between items-center bg-emerald-100/90 p-2 rounded-xl border border-emerald-300 text-emerald-950 font-black text-sm shadow-xs">
                     <span>11. مبلغ الرد للعميل (المستحق الصرف للعميل):</span>
                     <span className="font-mono text-lg text-emerald-900">{refundToClientDisplay}</span>
                   </div>
@@ -373,7 +376,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
             {/* 12. فرق مديونية ABK (يظهر في حالة ABK فقط) */}
             {isABK && (
-              <div className="bg-blue-50/95 p-4 rounded-xl border border-blue-200 space-y-2">
+              <div className="bg-blue-50/95 p-2.5 rounded-xl border border-blue-200 space-y-1.5">
                 <div className="flex justify-between items-center font-black text-xs text-blue-950">
                   <span className="flex items-center gap-1.5 text-sm">
                     <Info className="w-4 h-4 text-blue-600 shrink-0" />
@@ -427,7 +430,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
 
         {/* Exceptions & Notes */}
         {(request.isException || request.exceptions || request.exceptionType || request.clubNote) && (
-          <div className="bg-amber-50/80 p-3.5 rounded-xl border border-amber-200 text-xs space-y-1.5">
+          <div className="bg-amber-50/80 p-2 rounded-xl border border-amber-200 text-xs space-y-1">
             <span className="font-black text-amber-950 flex items-center gap-1">
               <ShieldAlert className="w-4 h-4 text-amber-600" />
               تفاصيل وملاحظات الاستثناء:
@@ -447,7 +450,7 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
         {/* Closing divider -- kept separate from the (no-print) footer
             buttons below so the bottom border actually prints, instead of
             disappearing along with the hidden buttons. */}
-        <div className="border-t border-slate-200 pt-3" />
+        <div className="border-t border-slate-200 pt-2" />
 
         {/* Modal Footer */}
         <div className="flex items-center justify-between no-print">
