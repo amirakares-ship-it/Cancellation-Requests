@@ -357,6 +357,10 @@ const DEFAULT_DB = {
   // membership on that same form.
   memoOverrides: {} as Record<string, { html: string; form?: string; savedBy: string; savedAt: string }>,
   debtImportBatches: [] as any[],
+  // "مخالصة الإلغاءات": snapshot reports auto-generated whenever a bulk
+  // status change to "Cancelled" hits one or more company-payment-method
+  // requests -- one batch per company involved in that bulk action.
+  cancellationSettlementBatches: [] as any[],
   auditLogs: [
     {
       id: "log-1",
@@ -582,6 +586,8 @@ async function loadDb() {
     if (!db.requests || !Array.isArray(db.requests)) db.requests = DEFAULT_DB.requests;
     if (!db.committees || !Array.isArray(db.committees)) db.committees = DEFAULT_DB.committees;
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = DEFAULT_DB.auditLogs;
+    if (!db.debtImportBatches || !Array.isArray(db.debtImportBatches)) db.debtImportBatches = [];
+    if (!db.cancellationSettlementBatches || !Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
     if (!db.emailLogs || !Array.isArray(db.emailLogs)) db.emailLogs = DEFAULT_DB.emailLogs;
     if (!db.smtpSettings) db.smtpSettings = DEFAULT_DB.smtpSettings;
     if (!db.formulas) {
@@ -2537,6 +2543,19 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
   let updatedCount = 0;
   const strIds = ids.map((id) => String(id));
 
+  // Company payment methods for "مخالصة الإلغاءات" -- same definition
+  // already used for the company/bank debt-sheet workflow in Reports.tsx,
+  // kept consistent here.
+  const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
+  const isCompanySettlementMethod = (method: any) => {
+    const m = String(method || "").trim();
+    if (!m) return false;
+    return m === "ABK" || m === "المشرق" || !nonCompanyMethods.includes(m);
+  };
+  // Grouped by company/payment-method name -- one settlement batch gets
+  // created per company involved in this bulk action.
+  const companyRowsByMethod: Record<string, any[]> = {};
+
   db.requests.forEach((r) => {
     if (strIds.includes(String(r.id))) {
       r.status = status;
@@ -2554,8 +2573,37 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
       }
       
       updatedCount++;
+
+      if (status === 'Cancelled' && isCompanySettlementMethod(r.paymentMethod)) {
+        const key = String(r.paymentMethod || "").trim();
+        if (!companyRowsByMethod[key]) companyRowsByMethod[key] = [];
+        companyRowsByMethod[key].push({
+          membershipNumber: r.membershipNumber || '',
+          memberName: r.memberName || '',
+          nationalId: r.nationalId || '',
+          externalId: r.externalId || '',
+        });
+      }
     }
   });
+
+  let settlementBatchesCreated = 0;
+  if (status === 'Cancelled') {
+    if (!Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
+    for (const companyName of Object.keys(companyRowsByMethod)) {
+      const rows = companyRowsByMethod[companyName];
+      if (rows.length === 0) continue;
+      db.cancellationSettlementBatches.unshift({
+        id: `csb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        companyName,
+        statusDate: statusDate || '',
+        createdAt: new Date().toISOString(),
+        createdBy: user.name || user.username,
+        rows,
+      });
+      settlementBatchesCreated++;
+    }
+  }
 
   if (updatedCount > 0) {
     await saveDb();
@@ -2566,9 +2614,18 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
       "تحديث حالة الإلغاء الجماعية",
       `تم تحديث حالة الإلغاء لعدد ${updatedCount} عضوية إلى (${status}) وتاريخ (${statusDate || '—'})`
     );
+    if (settlementBatchesCreated > 0) {
+      logAudit(
+        user.username,
+        user.name,
+        user.role,
+        "إنشاء مخالصة إلغاءات",
+        `تم إنشاء ${settlementBatchesCreated} تقرير/تقارير مخالصة إلغاءات تلقائيًا (${Object.keys(companyRowsByMethod).join('، ')})`
+      );
+    }
   }
 
-  res.json({ success: true, updatedCount, requests: db.requests });
+  res.json({ success: true, updatedCount, settlementBatchesCreated, requests: db.requests });
 });
 
 app.post("/api/requests/bulk-finance-sent", requireAuth, async (req, res) => {
@@ -3416,6 +3473,65 @@ app.delete("/api/debt-import-batches/:id", requireAuth, async (req, res) => {
   );
 
   res.json({ success: true, revertedCount, requests: db.requests });
+});
+
+// ----- "مخالصة الإلغاءات" (Cancellation Settlement Reports) -----
+// Read-only history of the settlement batches auto-created by
+// /api/requests/bulk-cancellation-status whenever a bulk "Cancelled"
+// status change hits company-payment-method requests.
+
+app.get("/api/cancellation-settlements", requireAuth, async (req, res) => {
+  const batches = (db.cancellationSettlementBatches || []).map((b: any) => ({
+    id: b.id,
+    companyName: b.companyName,
+    statusDate: b.statusDate,
+    createdAt: b.createdAt,
+    createdBy: b.createdBy,
+    rowCount: (b.rows || []).length,
+  }));
+  res.json({ batches });
+});
+
+app.get("/api/cancellation-settlements/:id/export", requireAuth, async (req, res) => {
+  const batch = (db.cancellationSettlementBatches || []).find((b: any) => b.id === req.params.id);
+  if (!batch) {
+    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
+  }
+  res.json({
+    batch: {
+      id: batch.id,
+      companyName: batch.companyName,
+      statusDate: batch.statusDate,
+      createdAt: batch.createdAt,
+      createdBy: batch.createdBy,
+    },
+    rows: batch.rows || [],
+  });
+});
+
+app.delete("/api/cancellation-settlements/:id", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف تقارير مخالصة الإلغاءات" });
+  }
+
+  const batchIndex = (db.cancellationSettlementBatches || []).findIndex((b: any) => b.id === req.params.id);
+  if (batchIndex === -1) {
+    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
+  }
+  const batch = db.cancellationSettlementBatches[batchIndex];
+  db.cancellationSettlementBatches.splice(batchIndex, 1);
+  await saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "حذف مخالصة إلغاءات (تقارير)",
+    `تم حذف تقرير مخالصة الإلغاءات لشركة "${batch.companyName}" (أُنشئ بتاريخ ${batch.createdAt})`
+  );
+
+  res.json({ success: true });
 });
 
 // Update single request statusDate (Admin only)
