@@ -3,7 +3,7 @@ import {
   Search, FileText, Image as ImageIcon, Download, Eye, Trash2, Upload, RefreshCw,
   Lock, Unlock, Filter, Layers, LayoutGrid, LayoutList, Calendar, User, Building,
   AlertCircle, CheckCircle2, ShieldCheck, ExternalLink, ShieldAlert, ArrowUpDown,
-  Plus, Check, X, FileCheck, Tag, Info, Paperclip
+  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
 import { formatDateCustom } from '../utils';
@@ -18,6 +18,10 @@ interface AttachmentsArchiveProps {
   onRequestViewDetails?: (request: any) => void;
   onRefreshRequests?: () => void;
 }
+
+// The dedicated document category for revocation requests ("طلب التراجع"),
+// used to drive the dedicated tab in this archive page.
+const REVOCATION_CATEGORY = 'طلب التراجع';
 
 export default function AttachmentsArchive({
   currentUser,
@@ -141,6 +145,7 @@ export default function AttachmentsArchive({
     let pdfCount = 0;
     let imageCount = 0;
     let lockedCount = 0;
+    let revocationCount = 0;
     const uniqueReqs = new Set();
 
     attachments.forEach(item => {
@@ -148,6 +153,7 @@ export default function AttachmentsArchive({
       if (isPdf) pdfCount++;
       else imageCount++;
       if (item.isLocked) lockedCount++;
+      if (item.category === REVOCATION_CATEGORY) revocationCount++;
       if (item.requestId) uniqueReqs.add(item.requestId);
     });
 
@@ -157,7 +163,8 @@ export default function AttachmentsArchive({
       imageCount,
       lockedCount,
       unlockedCount: totalCount - lockedCount,
-      requestsCount: uniqueReqs.size
+      requestsCount: uniqueReqs.size,
+      revocationCount
     };
   }, [attachments]);
 
@@ -246,9 +253,11 @@ export default function AttachmentsArchive({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-black text-slate-900">أرشيف المستندات والمرفقات</h2>
+              <h2 className="text-lg font-black text-slate-900">
+                {selectedCategory === REVOCATION_CATEGORY ? 'أرشيف طلبات التراجع' : 'أرشيف المستندات والمرفقات'}
+              </h2>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                {stats.totalCount} مستند
+                {selectedCategory === REVOCATION_CATEGORY ? stats.revocationCount : stats.totalCount} مستند
               </span>
             </div>
           </div>
@@ -265,6 +274,34 @@ export default function AttachmentsArchive({
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>تحديث</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Dedicated Tabs: All Documents / Revocation Requests */}
+      <div className="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-2xs">
+        <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('all')}
+            className={`px-4 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              selectedCategory !== REVOCATION_CATEGORY ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>كل المستندات</span>
+            <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full font-mono">{stats.totalCount}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedCategory(REVOCATION_CATEGORY)}
+            className={`px-4 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              selectedCategory === REVOCATION_CATEGORY ? 'bg-white text-sky-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>طلبات التراجع</span>
+            <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded-full font-mono">{stats.revocationCount}</span>
           </button>
         </div>
       </div>
