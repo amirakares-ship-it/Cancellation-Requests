@@ -152,6 +152,10 @@ const DEFAULT_DB = {
       "طلب الإلغاء الموقع",
       "طلب التراجع",
       "صورة بطاقة الرقم القومي",
+      "صورة الإيصال",
+      "مذكرة فقد",
+      "حافظة شيكات",
+      "رقم الحساب",
       "إيصال سداد / مخالصة",
       "إقرار وتنازل معتمد",
       "تقرير طبي / مستندات استثناء",
@@ -617,6 +621,11 @@ async function loadDb() {
       if (!db.dropdowns.documentTypes.includes("طلب التراجع")) {
         db.dropdowns.documentTypes.push("طلب التراجع");
       }
+      ["صورة الإيصال", "مذكرة فقد", "حافظة شيكات", "رقم الحساب"].forEach((docType) => {
+        if (!db.dropdowns.documentTypes.includes(docType)) {
+          db.dropdowns.documentTypes.push(docType);
+        }
+      });
     }
 
     // One-time cleanup: strip the auto-generated "[بريد] تم إرسال إشعار
@@ -2378,6 +2387,25 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   // since they're simple operational flags rather than substantive edits
   // to the request's data.
   const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote");
+
+  // A club/international user can only tick "تم الاستلام" (receiptReceived)
+  // once they've attached the required proof document to the request --
+  // club users need one of the receipt-image/loss-memo/checks-folder
+  // categories, international-membership users need the account-number one.
+  if (isOnlyReceiptUpdate && req.body.receiptReceived === true && (user.role === "club" || user.role === "international_user")) {
+    const requiredCategories = user.role === "international_user"
+      ? ["رقم الحساب"]
+      : ["صورة الإيصال", "مذكرة فقد", "حافظة شيكات"];
+    const attachments = existingRequest.attachments || [];
+    const hasProof = attachments.some((a: any) => a.category && requiredCategories.includes(a.category));
+    if (!hasProof) {
+      return res.status(403).json({
+        error: user.role === "international_user"
+          ? "لازم ترفقي مستند \"رقم الحساب\" أولًا قبل تأكيد استلام الأصل."
+          : "لازم ترفقي مستند \"صورة الإيصال\" أو \"مذكرة فقد\" أو \"حافظة شيكات\" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل."
+      });
+    }
+  }
 
   if (!isOnlyReceiptUpdate) {
     // Restrict modification if the request is already reviewed and user is not admin
