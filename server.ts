@@ -2923,10 +2923,11 @@ app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, async (re
     return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
   }
 
-  // If request is reviewed by Admin, only Admin has permission to delete attachments
-  if (request.reviewed && user.role !== "admin") {
+  // Deleting an attachment is admin-only, regardless of the request's
+  // review status.
+  if (user.role !== "admin") {
     return res.status(403).json({
-      error: "لا يمكن حذف هذا المستند المرفق بعد اعتماد مراجعة الأدمن (Review) للطلب إلا بواسطة الأدمن المركزي."
+      error: "حذف المستندات المرفقة متاح للأدمن المركزي فقط."
     });
   }
 
