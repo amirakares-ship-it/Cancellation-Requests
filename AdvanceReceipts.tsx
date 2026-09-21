@@ -632,6 +632,16 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
           request={uploadTarget}
           user={user}
           dropdowns={dropdowns}
+          defaultCategory={
+            user.role === 'international_user' ? INTERNATIONAL_RECEIPT_PROOF_CATEGORY :
+            user.role === 'club' ? 'أصل الإيصال' :
+            undefined
+          }
+          priorityCategories={
+            user.role === 'international_user' ? [INTERNATIONAL_RECEIPT_PROOF_CATEGORY] :
+            user.role === 'club' ? CLUB_RECEIPT_PROOF_CATEGORIES :
+            undefined
+          }
           onClose={() => setUploadTarget(null)}
           onSuccess={() => {
             setUploadTarget(null);
