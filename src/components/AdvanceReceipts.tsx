@@ -63,8 +63,8 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
   };
 
   const missingProofMessage = user.role === 'international_user'
-    ? 'محتاجة ترفقي مستند "رقم الحساب" أولًا قبل تأكيد استلام الأصل.'
-    : 'محتاجة ترفقي مستند "أصل الإيصال" أو "مذكرة فقد" أو "حافظة شيكات" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل.';
+    ? 'يرجى إرفاق مستند "رقم الحساب" أولًا قبل تأكيد استلام الأصل.'
+    : 'يرجى إرفاق مستند "أصل الإيصال" أو "مذكرة فقد" أو "حافظة شيكات" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل.';
 
   const getLabel = (key: string, fallback: string) => {
     return labelNames?.[key] || fallback;
@@ -209,7 +209,7 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
       });
       if (blockedIds.length > 0) {
         idsToUpdate = selectedRowIds.filter(id => !blockedIds.includes(id));
-        alert(`تنبيه: ${blockedIds.length} عضوية من ${selectedRowIds.length} المحددة لسه محتاجة إرفاق المستند المطلوب أولًا وتم تخطيها.${idsToUpdate.length > 0 ? ' الباقي هيتحدث عادي.' : ''}`);
+        alert(`تنبيه: ${blockedIds.length} عضوية من ${selectedRowIds.length} المحددة لسه يرجى إرفاق المستند المطلوب لها أولًا، وتم تخطيها.${idsToUpdate.length > 0 ? ' الباقي هيتحدث عادي.' : ''}`);
         if (idsToUpdate.length === 0) return;
       }
     }

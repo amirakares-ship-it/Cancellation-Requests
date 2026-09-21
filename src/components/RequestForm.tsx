@@ -592,7 +592,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
     if (!isEditing) {
       const hasCancellationRequestDoc = attachments.some(a => a.category === 'طلب الإلغاء الموقع');
       if (!hasCancellationRequestDoc) {
-        setErrorMessage('لازم ترفعي مستند "طلب الإلغاء الموقع" على الأقل قبل تسجيل الطلب.');
+        setErrorMessage('يرجى رفع مستند "طلب الإلغاء الموقع" على الأقل قبل تسجيل الطلب.');
         return;
       }
     }
