@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare } from 'lucide-react';
+import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
 import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
+import UploadDocumentModal from './UploadDocumentModal';
 import * as XLSX from 'xlsx';
 
 interface AdvanceReceiptsProps {
@@ -12,9 +13,18 @@ interface AdvanceReceiptsProps {
   user: User;
   onUpdateReceiptStatus: (id: number, received: boolean) => Promise<void>;
   labelNames?: Record<string, string>;
+  dropdowns?: any;
+  onRefresh?: () => void;
 }
 
-export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus, labelNames }: AdvanceReceiptsProps) {
+// Document categories that count as "proof of original receipt" for a club
+// user: at least one of these must be attached before they can tick "تم
+// الاستلام". International-membership users need a different category
+// (the account number) instead.
+const CLUB_RECEIPT_PROOF_CATEGORIES = ['صورة الإيصال', 'مذكرة فقد', 'حافظة شيكات'];
+const INTERNATIONAL_RECEIPT_PROOF_CATEGORY = 'رقم الحساب';
+
+export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus, labelNames, dropdowns, onRefresh }: AdvanceReceiptsProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedRequestStatuses, setSelectedRequestStatuses] = useState<string[]>([]);
   const [selectedClubs, setSelectedClubs] = useState<string[]>([]);
@@ -36,6 +46,25 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
   const [selectedRowIds, setSelectedRowIds] = useState<number[]>([]);
   const [isBulkProcessing, setIsBulkProcessing] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [uploadTarget, setUploadTarget] = useState<CancellationRequest | null>(null);
+
+  // The document categories required before this user can tick "تم
+  // الاستلام" for a given request -- null means no restriction (e.g. admin).
+  const requiredProofCategories = useMemo(() => {
+    if (user.role === 'club') return CLUB_RECEIPT_PROOF_CATEGORIES;
+    if (user.role === 'international_user') return [INTERNATIONAL_RECEIPT_PROOF_CATEGORY];
+    return null;
+  }, [user.role]);
+
+  const hasReceiptProof = (req: CancellationRequest): boolean => {
+    if (!requiredProofCategories) return true;
+    const atts = req.attachments || [];
+    return atts.some(a => a.category && requiredProofCategories.includes(a.category));
+  };
+
+  const missingProofMessage = user.role === 'international_user'
+    ? 'محتاجة ترفقي مستند "رقم الحساب" أولًا قبل تأكيد استلام الأصل.'
+    : 'محتاجة ترفقي مستند "صورة الإيصال" أو "مذكرة فقد" أو "حافظة شيكات" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل.';
 
   const getLabel = (key: string, fallback: string) => {
     return labelNames?.[key] || fallback;
@@ -171,9 +200,23 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
   // Bulk update receipt status
   const handleBulkUpdateReceiptStatus = async (received: boolean) => {
     if (selectedRowIds.length === 0) return;
+
+    let idsToUpdate = selectedRowIds;
+    if (received && requiredProofCategories) {
+      const blockedIds = selectedRowIds.filter(id => {
+        const req = requests.find(r => r.id === id);
+        return req && !hasReceiptProof(req);
+      });
+      if (blockedIds.length > 0) {
+        idsToUpdate = selectedRowIds.filter(id => !blockedIds.includes(id));
+        alert(`تنبيه: ${blockedIds.length} عضوية من ${selectedRowIds.length} المحددة لسه محتاجة إرفاق المستند المطلوب أولًا وتم تخطيها.${idsToUpdate.length > 0 ? ' الباقي هيتحدث عادي.' : ''}`);
+        if (idsToUpdate.length === 0) return;
+      }
+    }
+
     setIsBulkProcessing(true);
     try {
-      for (const id of selectedRowIds) {
+      for (const id of idsToUpdate) {
         await onUpdateReceiptStatus(id, received);
       }
       setSelectedRowIds([]);
@@ -545,15 +588,35 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                       )}
                     </td>
                     <td className="py-3 px-4 text-center">
-                      <label className="inline-flex items-center gap-2 cursor-pointer bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">
-                        <input
-                          type="checkbox"
-                          checked={req.receiptReceived}
-                          onChange={(e) => onUpdateReceiptStatus(req.id, e.target.checked)}
-                          className="h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-400 cursor-pointer"
-                        />
-                        <span className="text-[10px] font-black text-slate-700 select-none">تم الاستلام</span>
-                      </label>
+                      <div className="flex items-center justify-center gap-1.5">
+                        <label className="inline-flex items-center gap-2 cursor-pointer bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={req.receiptReceived}
+                            onChange={(e) => {
+                              if (e.target.checked && !hasReceiptProof(req)) {
+                                alert(missingProofMessage);
+                                return;
+                              }
+                              onUpdateReceiptStatus(req.id, e.target.checked);
+                            }}
+                            className="h-4 w-4 text-amber-500 border-slate-300 rounded focus:ring-amber-400 cursor-pointer"
+                          />
+                          <span className="text-[10px] font-black text-slate-700 select-none">تم الاستلام</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setUploadTarget(req)}
+                          title="إرفاق أصل الإيصال"
+                          className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                            hasReceiptProof(req)
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-600 hover:bg-emerald-100'
+                              : 'bg-white border-slate-200 text-slate-500 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600'
+                          }`}
+                        >
+                          <Paperclip className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -562,6 +625,20 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
           </table>
         </TableScrollWrapper>
       </div>
+
+      {/* Attach Original Receipt Modal */}
+      {uploadTarget && (
+        <UploadDocumentModal
+          request={uploadTarget}
+          user={user}
+          dropdowns={dropdowns}
+          onClose={() => setUploadTarget(null)}
+          onSuccess={() => {
+            setUploadTarget(null);
+            if (onRefresh) onRefresh();
+          }}
+        />
+      )}
     </div>
   );
 }
