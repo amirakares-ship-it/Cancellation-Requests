@@ -21,7 +21,7 @@ interface AdvanceReceiptsProps {
 // user: at least one of these must be attached before they can tick "تم
 // الاستلام". International-membership users need a different category
 // (the account number) instead.
-const CLUB_RECEIPT_PROOF_CATEGORIES = ['صورة الإيصال', 'مذكرة فقد', 'حافظة شيكات'];
+const CLUB_RECEIPT_PROOF_CATEGORIES = ['أصل الإيصال', 'مذكرة فقد', 'حافظة شيكات'];
 const INTERNATIONAL_RECEIPT_PROOF_CATEGORY = 'رقم الحساب';
 
 export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus, labelNames, dropdowns, onRefresh }: AdvanceReceiptsProps) {
@@ -64,7 +64,7 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
 
   const missingProofMessage = user.role === 'international_user'
     ? 'محتاجة ترفقي مستند "رقم الحساب" أولًا قبل تأكيد استلام الأصل.'
-    : 'محتاجة ترفقي مستند "صورة الإيصال" أو "مذكرة فقد" أو "حافظة شيكات" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل.';
+    : 'محتاجة ترفقي مستند "أصل الإيصال" أو "مذكرة فقد" أو "حافظة شيكات" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل.';
 
   const getLabel = (key: string, fallback: string) => {
     return labelNames?.[key] || fallback;
@@ -632,6 +632,16 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
           request={uploadTarget}
           user={user}
           dropdowns={dropdowns}
+          defaultCategory={
+            user.role === 'international_user' ? INTERNATIONAL_RECEIPT_PROOF_CATEGORY :
+            user.role === 'club' ? 'أصل الإيصال' :
+            undefined
+          }
+          priorityCategories={
+            user.role === 'international_user' ? [INTERNATIONAL_RECEIPT_PROOF_CATEGORY] :
+            user.role === 'club' ? CLUB_RECEIPT_PROOF_CATEGORIES :
+            undefined
+          }
           onClose={() => setUploadTarget(null)}
           onSuccess={() => {
             setUploadTarget(null);
