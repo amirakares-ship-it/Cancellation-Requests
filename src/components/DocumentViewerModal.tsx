@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   X, Download, Eye, ZoomIn, ZoomOut, RotateCw, FileText, Image as ImageIcon,
-  Lock, Trash2, Calendar, User, Building, AlertCircle, CheckCircle, ExternalLink, ShieldCheck, ShieldAlert
+  Lock, Trash2, Calendar, User, Building, AlertCircle, CheckCircle, ExternalLink, ShieldCheck, ShieldAlert, Printer
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
 import { formatDateCustom } from '../utils';
@@ -17,13 +17,17 @@ interface DocumentViewerModalProps {
   onClose: () => void;
   onDelete?: (attachmentId: string, requestId?: number | string) => void;
   canDelete?: boolean;
+  // Only an admin gets to download the raw file -- everyone else can only
+  // print it (view + hard copy, no file leaves the browser).
+  isAdmin?: boolean;
 }
 
 export default function DocumentViewerModal({
   attachment,
   onClose,
   onDelete,
-  canDelete = false
+  canDelete = false,
+  isAdmin = false
 }: DocumentViewerModalProps) {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
@@ -142,15 +146,27 @@ export default function DocumentViewerModal({
               </>
             )}
 
-            <button
-              type="button"
-              onClick={handleDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer"
-              title="تحميل الملف"
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">تحميل</span>
-            </button>
+            {isAdmin ? (
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                title="تحميل الملف"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden sm:inline">تحميل</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handlePrint}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-lg transition-colors cursor-pointer"
+                title="طباعة الملف"
+              >
+                <Printer className="w-4 h-4" />
+                <span className="hidden sm:inline">طباعة</span>
+              </button>
+            )}
 
             {canDelete && onDelete && (
               <button

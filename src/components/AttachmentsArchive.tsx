@@ -3,7 +3,7 @@ import {
   Search, FileText, Image as ImageIcon, Download, Eye, Trash2, Upload, RefreshCw,
   Lock, Unlock, Filter, Layers, LayoutGrid, LayoutList, Calendar, User, Building,
   AlertCircle, CheckCircle2, ShieldCheck, ExternalLink, ShieldAlert, ArrowUpDown,
-  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw
+  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw, Printer
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
 import { formatDateCustom } from '../utils';
@@ -184,8 +184,8 @@ export default function AttachmentsArchive({
   const handleDeleteAttachment = async (itemToDelete: any) => {
     if (!itemToDelete) return;
 
-    if (itemToDelete.isLocked && currentUser?.role !== 'admin') {
-      setErrorMessage('لا يمكن حذف هذا المستند نظراً لاعتماد مراجعة الأدمن للطلب لحماية السجلات الرسمية.');
+    if (currentUser?.role !== 'admin') {
+      setErrorMessage('حذف المستندات متاح للأدمن فقط.');
       return;
     }
 
@@ -229,6 +229,35 @@ export default function AttachmentsArchive({
       console.error('Download error:', err);
     }
   };
+
+  const handlePrint = (item: any) => {
+    try {
+      const isPdf = item.fileType === 'application/pdf' || String(item.fileName).toLowerCase().endsWith('.pdf') || String(item.fileData).startsWith('data:application/pdf');
+      if (isPdf) {
+        const printWindow = window.open(item.fileData, '_blank');
+        printWindow?.focus();
+      } else {
+        const printWindow = window.open('', '_blank');
+        if (printWindow) {
+          printWindow.document.write(`
+            <html>
+              <head><title>${item.fileName || 'طباعة مستند'}</title></head>
+              <body style="margin:0;display:flex;justify-content:center;align-items:center;background:#fff;">
+                <img src="${item.fileData}" style="max-width:100%;max-height:100vh;object-fit:contain;" onload="window.print();window.close();"/>
+              </body>
+            </html>
+          `);
+          printWindow.document.close();
+        } else {
+          alert('يرجى السماح بالنوافذ المنبثقة (Popups) لهذا الموقع عشان تقدري تطبعي المستند.');
+        }
+      }
+    } catch (err) {
+      console.error('Print error:', err);
+    }
+  };
+
+  const isAdmin = currentUser?.role === 'admin';
 
   const formatFileSize = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '—';
@@ -687,11 +716,11 @@ export default function AttachmentsArchive({
 
                       <button
                         type="button"
-                        onClick={() => handleDownload(item)}
+                        onClick={() => isAdmin ? handleDownload(item) : handlePrint(item)}
                         className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                        title="تحميل الملف"
+                        title={isAdmin ? "تحميل الملف" : "طباعة الملف"}
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        {isAdmin ? <Download className="w-3.5 h-3.5" /> : <Printer className="w-3.5 h-3.5" />}
                       </button>
 
                       <button
@@ -704,24 +733,24 @@ export default function AttachmentsArchive({
                       </button>
                     </div>
 
-                    {/* Delete Action */}
+                    {/* Delete Action -- Admin only */}
                     <div>
-                      {item.isLocked && currentUser?.role !== 'admin' ? (
-                        <div 
-                          className="p-1.5 text-slate-300 cursor-not-allowed rounded-lg"
-                          title="تمت مراجعة الطلب (Reviewed) - المستند محمي ولا يمكن حذفه"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                        </div>
-                      ) : (
+                      {isAdmin ? (
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(item)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title={item.isLocked ? "حذف المستند (صلاحية الأدمن)" : "حذف المستند"}
+                          title="حذف المستند"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      ) : (
+                        <div 
+                          className="p-1.5 text-slate-300 cursor-not-allowed rounded-lg"
+                          title="الحذف متاح للأدمن فقط"
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -814,11 +843,11 @@ export default function AttachmentsArchive({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDownload(item)}
+                            onClick={() => isAdmin ? handleDownload(item) : handlePrint(item)}
                             className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                            title="تحميل"
+                            title={isAdmin ? "تحميل" : "طباعة"}
                           >
-                            <Download className="w-3.5 h-3.5" />
+                            {isAdmin ? <Download className="w-3.5 h-3.5" /> : <Printer className="w-3.5 h-3.5" />}
                           </button>
                           <button
                             type="button"
@@ -828,22 +857,22 @@ export default function AttachmentsArchive({
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
-                          {item.isLocked && currentUser?.role !== 'admin' ? (
-                            <span 
-                              className="p-1.5 text-slate-300 cursor-not-allowed"
-                              title="محمي بعد المراجعة - لا يمكن حذفه"
-                            >
-                              <Lock className="w-3 h-3" />
-                            </span>
-                          ) : (
+                          {isAdmin ? (
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(item)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title={item.isLocked ? "حذف المستند (صلاحية الأدمن)" : "حذف المستند"}
+                              title="حذف المستند"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
+                          ) : (
+                            <span 
+                              className="p-1.5 text-slate-300 cursor-not-allowed"
+                              title="الحذف متاح للأدمن فقط"
+                            >
+                              <Lock className="w-3 h-3" />
+                            </span>
                           )}
                         </div>
                       </td>
@@ -861,7 +890,8 @@ export default function AttachmentsArchive({
         <DocumentViewerModal
           attachment={activeViewerAttachment}
           onClose={() => setActiveViewerAttachment(null)}
-          canDelete={currentUser?.role === 'admin' || !activeViewerAttachment.isLocked}
+          canDelete={isAdmin}
+          isAdmin={isAdmin}
           onDelete={() => {
             const target = activeViewerAttachment;
             setActiveViewerAttachment(null);
