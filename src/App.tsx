@@ -134,6 +134,7 @@ export default function App() {
   const [requestViewMode, setRequestViewMode] = useState<'list' | 'create' | 'edit'>('list');
   const [editingRequest, setEditingRequest] = useState<any | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -243,7 +244,16 @@ export default function App() {
       // Requests
       const resRequests = await fetch('/api/requests', { headers });
       const dataRequests = await safeJson(resRequests);
-      if (dataRequests) setRequests(dataRequests);
+      if (dataRequests) {
+        setRequests(dataRequests);
+        // If a request's details modal happens to be open, refresh its
+        // content too instead of leaving it showing stale data.
+        setSelectedRequest((prev: any) => {
+          if (!prev) return prev;
+          const updated = dataRequests.find((r: any) => String(r.id) === String(prev.id));
+          return updated || prev;
+        });
+      }
 
       // Dropdowns
       const resDropdowns = await fetch('/api/dropdowns', { headers });
@@ -283,6 +293,18 @@ export default function App() {
     }
   };
 
+  // Manual "soft" refresh: re-pulls the latest data from the server (in
+  // case another user changed something) without navigating away from
+  // whichever tab, filters, or open details modal the person is currently on.
+  const handleManualRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await fetchAllData();
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     const handleCFUpdate = () => {
       fetchAllData();
@@ -290,6 +312,21 @@ export default function App() {
     window.addEventListener('custom-fields-updated', handleCFUpdate);
     return () => window.removeEventListener('custom-fields-updated', handleCFUpdate);
   }, [authToken]);
+
+  // Automatic background sync: periodically re-pulls the latest data so
+  // changes another logged-in user makes (e.g. an admin reviewing a
+  // request) show up here without anyone needing to hit manual refresh.
+  // Paused while a request create/edit form is open, so a background pull
+  // never resets fields someone is actively typing into.
+  useEffect(() => {
+    if (!authToken || !currentUser) return;
+    const intervalId = setInterval(() => {
+      if (requestViewMode === 'list') {
+        fetchAllData();
+      }
+    }, 45000); // every 45 seconds
+    return () => clearInterval(intervalId);
+  }, [authToken, currentUser, requestViewMode]);
 
   useEffect(() => {
     if (currentUser) {
@@ -1617,6 +1654,15 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isManualRefreshing}
+              title="تحديث البيانات (Refresh)"
+              className="p-2 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors flex items-center justify-center cursor-pointer shadow-2xs disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-4 h-4 text-amber-500 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+            </button>
             <div className="flex gap-1">
               <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-400 text-neutral-950 shadow-2xs">AR</span>
               <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">EN</span>
