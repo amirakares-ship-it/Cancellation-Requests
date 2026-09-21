@@ -152,7 +152,7 @@ const DEFAULT_DB = {
       "طلب الإلغاء الموقع",
       "طلب التراجع",
       "صورة بطاقة الرقم القومي",
-      "صورة الإيصال",
+      "أصل الإيصال",
       "مذكرة فقد",
       "حافظة شيكات",
       "رقم الحساب",
@@ -617,15 +617,19 @@ async function loadDb() {
       }
     }
 
-    if (db.dropdowns && Array.isArray(db.dropdowns.documentTypes)) {
-      if (!db.dropdowns.documentTypes.includes("طلب التراجع")) {
-        db.dropdowns.documentTypes.push("طلب التراجع");
-      }
-      ["صورة الإيصال", "مذكرة فقد", "حافظة شيكات", "رقم الحساب"].forEach((docType) => {
+    // Seed these newer document-type defaults into an existing installation
+    // exactly ONCE, guarded by a flag -- NOT on every load like a plain
+    // "add if missing" check would do, since that would keep undoing an
+    // admin's deliberate rename or deletion of one of these options every
+    // time the server restarts.
+    if (!db._seedFlags) db._seedFlags = {};
+    if (!db._seedFlags.documentTypesV2 && db.dropdowns && Array.isArray(db.dropdowns.documentTypes)) {
+      ["طلب التراجع", "أصل الإيصال", "مذكرة فقد", "حافظة شيكات", "رقم الحساب"].forEach((docType) => {
         if (!db.dropdowns.documentTypes.includes(docType)) {
           db.dropdowns.documentTypes.push(docType);
         }
       });
+      db._seedFlags.documentTypesV2 = true;
     }
 
     // One-time cleanup: strip the auto-generated "[بريد] تم إرسال إشعار
@@ -2395,14 +2399,14 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   if (isOnlyReceiptUpdate && req.body.receiptReceived === true && (user.role === "club" || user.role === "international_user")) {
     const requiredCategories = user.role === "international_user"
       ? ["رقم الحساب"]
-      : ["صورة الإيصال", "مذكرة فقد", "حافظة شيكات"];
+      : ["أصل الإيصال", "مذكرة فقد", "حافظة شيكات"];
     const attachments = existingRequest.attachments || [];
     const hasProof = attachments.some((a: any) => a.category && requiredCategories.includes(a.category));
     if (!hasProof) {
       return res.status(403).json({
         error: user.role === "international_user"
           ? "لازم ترفقي مستند \"رقم الحساب\" أولًا قبل تأكيد استلام الأصل."
-          : "لازم ترفقي مستند \"صورة الإيصال\" أو \"مذكرة فقد\" أو \"حافظة شيكات\" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل."
+          : "لازم ترفقي مستند \"أصل الإيصال\" أو \"مذكرة فقد\" أو \"حافظة شيكات\" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل."
       });
     }
   }
