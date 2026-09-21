@@ -58,23 +58,55 @@ export default function DocumentViewerModal({
   };
 
   const handlePrint = () => {
+    // Print via a hidden iframe injected into the current page, instead of
+    // opening a new tab/window -- stays on the same page; only the
+    // browser's native print dialog appears.
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = '0';
+    iframe.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(iframe);
+
+    const cleanup = () => {
+      setTimeout(() => {
+        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+      }, 1000);
+    };
+
     if (isPdf) {
-      const printWindow = window.open(attachment.fileData, '_blank');
-      printWindow?.focus();
+      iframe.onload = () => {
+        setTimeout(() => {
+          try {
+            iframe.contentWindow?.focus();
+            iframe.contentWindow?.print();
+          } catch (e) {
+            console.error('PDF print error:', e);
+          }
+        }, 300);
+      };
+      iframe.src = attachment.fileData;
     } else {
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(`
-          <html>
-            <head><title>${attachment.fileName}</title></head>
-            <body style="margin:0;display:flex;justify-content:center;align-items:center;background:#fff;">
-              <img src="${attachment.fileData}" style="max-width:100%;max-height:100vh;object-fit:contain;" onload="window.print();window.close();"/>
-            </body>
-          </html>
-        `);
-        printWindow.document.close();
-      }
+      iframe.srcdoc = `
+        <html>
+          <head>
+            <style>
+              body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
+              img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+            </style>
+          </head>
+          <body>
+            <img src="${attachment.fileData}" onload="window.focus();window.print();" />
+          </body>
+        </html>
+      `;
     }
+
+    window.addEventListener('focus', cleanup, { once: true });
+    setTimeout(cleanup, 60000);
   };
 
   return (
