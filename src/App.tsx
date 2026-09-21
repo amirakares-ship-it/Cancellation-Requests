@@ -758,6 +758,9 @@ export default function App() {
         // Update details modal instantly
         const updated = await res.json();
         setSelectedRequest(updated.request);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'حدث خطأ أثناء تحديث حالة الاستلام');
       }
     } catch (err) {
       console.error(err);
@@ -1805,6 +1808,8 @@ export default function App() {
             user={currentUser}
             onUpdateReceiptStatus={handleUpdateReceiptStatus}
             labelNames={labelNames}
+            dropdowns={dropdowns}
+            onRefresh={fetchAllData}
           />
         )}
 
