@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useScrollBarContext } from './contexts/ScrollBarContext';
 import * as XLSX from 'xlsx';
 import { 
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
@@ -136,6 +137,7 @@ export default function App() {
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
+  const { activeRef: activeTableScrollRef } = useScrollBarContext();
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -306,26 +308,33 @@ export default function App() {
     }
   };
 
-  // Footer horizontal scroll controls -- scrolls the main content area
-  // left/right, matching the same convention used by TableScrollWrapper.
+  // Footer horizontal scroll controls -- targets whichever table is
+  // currently registered (via ScrollBarContext) as the active scroll
+  // target, falling back to the main page content area when no table is
+  // mounted (e.g. the Dashboard, which has no wide table).
+  const getFooterScrollEl = (): HTMLElement | null => {
+    return activeTableScrollRef?.current || mainContentRef.current;
+  };
   const handleFooterScrollRight = () => {
-    mainContentRef.current?.scrollBy({ left: 350, behavior: 'smooth' });
+    getFooterScrollEl()?.scrollBy({ left: 350, behavior: 'smooth' });
   };
   const handleFooterScrollLeft = () => {
-    mainContentRef.current?.scrollBy({ left: -350, behavior: 'smooth' });
+    getFooterScrollEl()?.scrollBy({ left: -350, behavior: 'smooth' });
   };
   const handleFooterScrollToStart = () => {
-    if (mainContentRef.current) {
-      const isNegativeMode = mainContentRef.current.scrollLeft <= 0;
-      mainContentRef.current.scrollTo({ left: isNegativeMode ? 0 : 10000, behavior: 'smooth' });
+    const el = getFooterScrollEl();
+    if (el) {
+      const isNegativeMode = el.scrollLeft <= 0;
+      el.scrollTo({ left: isNegativeMode ? 0 : 10000, behavior: 'smooth' });
     }
   };
   const handleFooterScrollToEnd = () => {
-    if (mainContentRef.current) {
-      const { scrollWidth, clientWidth, scrollLeft } = mainContentRef.current;
+    const el = getFooterScrollEl();
+    if (el) {
+      const { scrollWidth, clientWidth, scrollLeft } = el;
       const maxScroll = scrollWidth - clientWidth;
       const isNegativeMode = scrollLeft <= 0;
-      mainContentRef.current.scrollTo({ left: isNegativeMode ? -maxScroll : 0, behavior: 'smooth' });
+      el.scrollTo({ left: isNegativeMode ? -maxScroll : 0, behavior: 'smooth' });
     }
   };
 
