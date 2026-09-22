@@ -58,6 +58,7 @@ export default function DropdownsManager({
     committeeResults: 'قرار اللجنة (Accepted & Rejected)',
     cancellationStatuses: 'حالة الإلغاء (Pending & Cancelled & Revoked & Deletion)',
     exceptions: 'الاستثناءات (حالة انسانية & جهة سيادية & حل مشكلة & بدون رد اى مبلغ)',
+    documentTypes: 'نوع المستند',
   };
 
   const coreCategories = [
@@ -67,7 +68,8 @@ export default function DropdownsManager({
     'cancellationReasons',
     'committeeResults',
     'cancellationStatuses',
-    'exceptions'
+    'exceptions',
+    'documentTypes'
   ];
 
   // Add Option to Category

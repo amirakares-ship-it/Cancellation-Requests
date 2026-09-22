@@ -3,7 +3,7 @@ import {
   Search, Eye, Edit3, Trash2, Calendar, CreditCard, Layers, Tag, Plus, CheckSquare, AlertTriangle, RotateCcw, RefreshCw, Upload, Download, FileText, Check,
   CheckCircle2, XCircle, ShieldCheck, Clock, FileCheck, FileUp, X, Paperclip
 } from 'lucide-react';
-import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
+import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode } from '../utils';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 import SettlementStatementModal from './SettlementStatementModal';
@@ -86,6 +86,7 @@ export default function RequestsList({
   const [selectedCommittees, setSelectedCommittees] = useState<string[]>([]);
   const [selectedCommitteeYears, setSelectedCommitteeYears] = useState<string[]>([]);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [reviewedFilter, setReviewedFilter] = useState<'all' | 'reviewed' | 'unreviewed'>('all');
 
   const handleOpenRejectionModal = (r: any) => {
     setRejectionModalTarget(r);
@@ -325,9 +326,16 @@ export default function RequestsList({
       }
       if (selectedSubscriptionTypes.length > 0 && !selectedSubscriptionTypes.includes(r.type)) return false;
 
+      // Viewed / Not Viewed Filter (Admin only)
+      if (user.role === 'admin' && reviewedFilter !== 'all') {
+        const isReviewed = !!r.reviewed;
+        if (reviewedFilter === 'reviewed' && !isReviewed) return false;
+        if (reviewedFilter === 'unreviewed' && isReviewed) return false;
+      }
+
       return true;
     });
-  }, [requests, user, search, selectedClubs, selectedStatuses, selectedPayments, selectedCommittees, selectedCommitteeYears, selectedSubscriptionTypes]);
+  }, [requests, user, search, selectedClubs, selectedStatuses, selectedPayments, selectedCommittees, selectedCommitteeYears, selectedSubscriptionTypes, reviewedFilter]);
 
   // Unique subscription duration options (e.g. اقل من 3 شهور، اقل من شهر، سنة، 2 سنة...)
   const subscriptionTypeOptions = useMemo(() => {
@@ -405,7 +413,16 @@ export default function RequestsList({
               <input
                 type="text"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  // Same validation as the membership number field: block the
+                  // reserved "00400" sequence (and its prefixes) so it can't
+                  // be searched for either.
+                  if (isReservedMembershipCode(val)) {
+                    return; // Ignore this keystroke entirely
+                  }
+                  setSearch(val);
+                }}
                 placeholder="ابحث برقم العضوية أو الاسم..."
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-400 text-right"
               />
@@ -424,20 +441,17 @@ export default function RequestsList({
             />
           </div>
 
-          {/* Club Filter */}
-          {user.role !== 'club' ? (
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">الفرع / النادي</label>
-              <MultiSelect
-                options={dropdowns.clubs}
-                selected={selectedClubs}
-                onChange={setSelectedClubs}
-                placeholder="كل الفروع"
-              />
-            </div>
-          ) : (
-            <div></div>
-          )}
+          {/* Club Filter -- shown for every role now (previously hidden
+              specifically for 'club' role users). */}
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">الفرع / النادي</label>
+            <MultiSelect
+              options={dropdowns.clubs}
+              selected={selectedClubs}
+              onChange={setSelectedClubs}
+              placeholder="كل الفروع"
+            />
+          </div>
 
           {/* Status Filter */}
           <div>
@@ -485,6 +499,22 @@ export default function RequestsList({
               placeholder="كل سنوات اللجان"
             />
           </div>
+
+          {/* Viewed / Not Viewed Filter -- Admin only */}
+          {user.role === 'admin' && (
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">حالة المراجعة (Viewed)</label>
+              <select
+                value={reviewedFilter}
+                onChange={(e) => setReviewedFilter(e.target.value as 'all' | 'reviewed' | 'unreviewed')}
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400 text-right"
+              >
+                <option value="all">الكل</option>
+                <option value="reviewed">تمت المراجعة (Viewed)</option>
+                <option value="unreviewed">لم تتم المراجعة (Not Viewed)</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
@@ -673,6 +703,8 @@ export default function RequestsList({
                               getPendingSubStatus(r) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
                               getPendingSubStatus(r) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
+                              getPendingSubStatus(r) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
+                              getPendingSubStatus(r) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
                               'text-slate-500 font-medium'
                             }`}>
                               {getDisplaySubStatus(r)}
@@ -1230,6 +1262,7 @@ export default function RequestsList({
         <UploadDocumentModal
           request={uploadModalTarget}
           user={user}
+          dropdowns={dropdowns}
           onClose={() => setUploadModalTarget(null)}
           onSuccess={() => {
             setUploadModalTarget(null);

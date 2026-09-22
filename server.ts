@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 import { sqlDb, pool, ensureTablesExist } from "./src/db/index.js";
 import { appData } from "./src/db/schema.js";
 import { eq } from "drizzle-orm";
@@ -147,7 +148,23 @@ const DEFAULT_DB = {
     committeeResults: ["Accepted", "Rejected", "Pending"],
     cancellationStatuses: ["Pending", "Cancelled", "Revoked", "Deletion", "Rejected"],
     exceptions: ["لا يوجد", "حالة انسانية", "جهة سيادية", "حل مشكلة", "بدون رد اى مبلغ"],
-    currencies: ["جم", "ريال سعودى", "دولار"]
+    currencies: ["جم", "ريال سعودى", "دولار"],
+    documentTypes: [
+      "طلب الإلغاء الموقع",
+      "طلب التراجع",
+      "صورة بطاقة الرقم القومي",
+      "أصل الإيصال",
+      "مذكرة فقد",
+      "حافظة شيكات",
+      "رقم الحساب",
+      "إيصال سداد / مخالصة",
+      "إقرار وتنازل معتمد",
+      "تقرير طبي / مستندات استثناء",
+      "ملف مراجعة الإدارة المالية",
+      "شيكات / مستندات بنكية",
+      "استمارة الاشتراك الأصلية",
+      "أخرى"
+    ]
   },
   dropdownLabels: {
     clubs: "نادي الفرع",
@@ -157,7 +174,8 @@ const DEFAULT_DB = {
     committeeResults: "قرار اللجنة",
     cancellationStatuses: "حالة الإلغاء",
     exceptions: "الاستثناءات",
-    currencies: "العملة (Currency)"
+    currencies: "العملة (Currency)",
+    documentTypes: "نوع المستند"
   },
   labelNames: {
     membershipNumber: "رقم العضوية",
@@ -343,6 +361,11 @@ const DEFAULT_DB = {
   // membership never affects the shared template used by every other
   // membership on that same form.
   memoOverrides: {} as Record<string, { html: string; form?: string; savedBy: string; savedAt: string }>,
+  debtImportBatches: [] as any[],
+  // "مخالصة الإلغاءات": snapshot reports auto-generated whenever a bulk
+  // status change to "Cancelled" hits one or more company-payment-method
+  // requests -- one batch per company involved in that bulk action.
+  cancellationSettlementBatches: [] as any[],
   auditLogs: [
     {
       id: "log-1",
@@ -546,16 +569,18 @@ async function loadDb() {
       db.dropdownLabels = JSON.parse(JSON.stringify(DEFAULT_DB.dropdownLabels));
     }
 
-    // Ensure new core dropdown categories and missing options exist
+    // Seed any brand-new dropdown category that doesn't exist in this
+    // database yet (e.g. a category introduced in a later app update, like
+    // "documentTypes"), using the built-in defaults as a starting point.
+    //
+    // IMPORTANT: this only runs for a category that is entirely missing.
+    // It deliberately does NOT keep re-injecting individual default items
+    // into a category that already exists -- doing that used to silently
+    // undo an admin's deliberate deletion of a default option (e.g. from
+    // "نوع المستند") every time the server restarted / cold-started.
     for (const key of Object.keys(DEFAULT_DB.dropdowns)) {
       if (!db.dropdowns[key]) {
-        db.dropdowns[key] = (DEFAULT_DB.dropdowns as any)[key];
-      } else if (Array.isArray((db.dropdowns as any)[key])) {
-        for (const item of (DEFAULT_DB.dropdowns as any)[key]) {
-          if (!db.dropdowns[key].includes(item)) {
-            db.dropdowns[key].push(item);
-          }
-        }
+        db.dropdowns[key] = JSON.parse(JSON.stringify((DEFAULT_DB.dropdowns as any)[key]));
       }
     }
     for (const key of Object.keys(DEFAULT_DB.dropdownLabels)) {
@@ -566,6 +591,8 @@ async function loadDb() {
     if (!db.requests || !Array.isArray(db.requests)) db.requests = DEFAULT_DB.requests;
     if (!db.committees || !Array.isArray(db.committees)) db.committees = DEFAULT_DB.committees;
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = DEFAULT_DB.auditLogs;
+    if (!db.debtImportBatches || !Array.isArray(db.debtImportBatches)) db.debtImportBatches = [];
+    if (!db.cancellationSettlementBatches || !Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
     if (!db.emailLogs || !Array.isArray(db.emailLogs)) db.emailLogs = DEFAULT_DB.emailLogs;
     if (!db.smtpSettings) db.smtpSettings = DEFAULT_DB.smtpSettings;
     if (!db.formulas) {
@@ -589,6 +616,38 @@ async function loadDb() {
       if (!db.dropdowns.exceptions.includes("بدون رد اى مبلغ") && !db.dropdowns.exceptions.includes("بدون رد أي مبلغ")) {
         db.dropdowns.exceptions.push("بدون رد اى مبلغ");
       }
+    }
+
+    // Seed these newer document-type defaults into an existing installation
+    // exactly ONCE, guarded by a flag -- NOT on every load like a plain
+    // "add if missing" check would do, since that would keep undoing an
+    // admin's deliberate rename or deletion of one of these options every
+    // time the server restarts.
+    if (!db._seedFlags) db._seedFlags = {};
+    if (!db._seedFlags.documentTypesV2 && db.dropdowns && Array.isArray(db.dropdowns.documentTypes)) {
+      ["طلب التراجع", "أصل الإيصال", "مذكرة فقد", "حافظة شيكات", "رقم الحساب"].forEach((docType) => {
+        if (!db.dropdowns.documentTypes.includes(docType)) {
+          db.dropdowns.documentTypes.push(docType);
+        }
+      });
+      db._seedFlags.documentTypesV2 = true;
+    }
+
+    // One-time cleanup: strip the auto-generated "[بريد] تم إرسال إشعار
+    // للفرع..." notice lines that used to get appended (possibly more than
+    // once) into clubNote whenever a Club Notification email was sent --
+    // clubNote should only ever hold genuine notes typed by club staff.
+    if (Array.isArray(db.requests)) {
+      const noticeLine = "[بريد] تم إرسال إشعار للفرع بطلب استرداد أصول إيصالات العضوية";
+      db.requests.forEach((r: any) => {
+        if (typeof r.clubNote === "string" && r.clubNote.includes(noticeLine)) {
+          r.clubNote = r.clubNote
+            .split("\n")
+            .filter((line: string) => line.trim() !== noticeLine)
+            .join("\n")
+            .trim();
+        }
+      });
     }
 
     if (Array.isArray(db.users)) {
@@ -662,12 +721,12 @@ async function saveDb() {
 ensureDbLoaded();
 
 // Helper to log audit actions safely
-async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number, changes?: { field: string; label: string; from: string; to: string }[]) {
+async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
   try {
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
       db.auditLogs = [];
     }
-    const newLog: any = {
+    const newLog = {
       id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
       username,
       name,
@@ -677,9 +736,6 @@ async function logAudit(username: string, name: string, role: string, action: st
       timestamp: new Date().toISOString(),
       requestId
     };
-    if (changes && changes.length > 0) {
-      newLog.changes = changes;
-    }
     db.auditLogs.unshift(newLog);
     await saveDb();
   } catch (err) {
@@ -687,33 +743,23 @@ async function logAudit(username: string, name: string, role: string, action: st
   }
 }
 
-// Fields that never belong in a user-facing change-history table (internal
-// bookkeeping, not something a person edited on purpose).
-const DIFF_IGNORE_FIELDS = new Set(["id"]);
-
-// Build a field-by-field diff between the request's state before and after
-// an edit, using the same Arabic label names configured in the system
-// (db.labelNames) so the history table reads naturally instead of showing
-// raw field keys like "membershipNumber".
-function buildRequestDiff(before: any, after: any): { field: string; label: string; from: string; to: string }[] {
-  const changes: { field: string; label: string; from: string; to: string }[] = [];
-  const allKeys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
-  for (const key of allKeys) {
-    if (DIFF_IGNORE_FIELDS.has(key)) continue;
-    const oldVal = before ? before[key] : undefined;
-    const newVal = after ? after[key] : undefined;
-    const normOld = oldVal === undefined || oldVal === null ? "" : String(oldVal);
-    const normNew = newVal === undefined || newVal === null ? "" : String(newVal);
-    if (normOld !== normNew) {
-      changes.push({
-        field: key,
-        label: (db.labelNames && (db.labelNames as any)[key]) || key,
-        from: normOld === "" ? "—" : normOld,
-        to: normNew === "" ? "—" : normNew,
-      });
-    }
-  }
-  return changes;
+// Builds a live nodemailer transporter from the saved SMTP settings, or
+// returns null if they're not fully configured yet (host/username/password
+// all required). Reused by both the actual "send email" endpoint and the
+// "test connection" endpoint in Settings, so they always agree on what
+// counts as "configured".
+function getMailer() {
+  const cfg = db.smtpSettings;
+  if (!cfg || !cfg.host || !cfg.username || !cfg.password) return null;
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port || 587,
+    secure: Number(cfg.port) === 465,
+    auth: {
+      user: cfg.username,
+      pass: cfg.password,
+    },
+  });
 }
 
 // // Prevent any caching layer (browser or CDN) from serving stale API responses
@@ -2366,6 +2412,25 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   // to the request's data.
   const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote");
 
+  // A club/international user can only tick "تم الاستلام" (receiptReceived)
+  // once they've attached the required proof document to the request --
+  // club users need one of the receipt-image/loss-memo/checks-folder
+  // categories, international-membership users need the account-number one.
+  if (isOnlyReceiptUpdate && req.body.receiptReceived === true && (user.role === "club" || user.role === "international_user")) {
+    const requiredCategories = user.role === "international_user"
+      ? ["رقم الحساب"]
+      : ["أصل الإيصال", "مذكرة فقد", "حافظة شيكات"];
+    const attachments = existingRequest.attachments || [];
+    const hasProof = attachments.some((a: any) => a.category && requiredCategories.includes(a.category));
+    if (!hasProof) {
+      return res.status(403).json({
+        error: user.role === "international_user"
+          ? "يرجى إرفاق مستند \"رقم الحساب\" أولًا قبل تأكيد استلام الأصل."
+          : "يرجى إرفاق مستند \"أصل الإيصال\" أو \"مذكرة فقد\" أو \"حافظة شيكات\" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل."
+      });
+    }
+  }
+
   if (!isOnlyReceiptUpdate) {
     // Restrict modification if the request is already reviewed and user is not admin
     if (existingRequest.reviewed && user.role !== "admin") {
@@ -2460,8 +2525,7 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
     auditMsg = `[تنبيه دولي] قام مسؤول العضويات الدولية بتعديل طلب المشترك ${updatedRequest.memberName} رقم العضوية ${updatedRequest.membershipNumber}`;
   }
 
-  const fieldChanges = buildRequestDiff(existingRequest, updatedRequest);
-  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId, fieldChanges);
+  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId);
   res.json({ success: true, request: updatedRequest });
 });
 
@@ -2478,11 +2542,28 @@ app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
   }
 
   let updatedCount = 0;
+  let autoSentCount = 0;
+  const autoSentMembers: string[] = [];
   const strIds = ids.map((id) => String(id));
   db.requests.forEach((r) => {
     if (strIds.includes(String(r.id))) {
       r.reviewed = !!reviewed;
       updatedCount++;
+
+      // عند تحديد الطلب كـ "مُراجع" من الأدمن، ولو مدة الاشتراك أكثر من 3 شهور
+      // (أو أكثر من شهر حسب تاريخ الاشتراك)، يتم إرسال الطلب تلقائيًا للمدير الأول
+      // بمرفقاته الحالية، دون الحاجة لضغط الأدمن على زر "إرسال للمدير الأول" يدويًا.
+      // لا يتم إعادة الإرسال لو الطلب مُرسل بالفعل حتى لا يتم إفساد قرار سابق للمدير الأول.
+      const isLongDuration = r.type2 === "Over 3 months" || r.type2 === "Over 1 month";
+      if (reviewed && isLongDuration && !r.approvalSentToFirstManager) {
+        r.approvalSentToFirstManager = true;
+        r.firstManagerApproved = null;
+        r.result = "Pending";
+        r.firstManagerSentAt = new Date().toISOString();
+        r.firstManagerSentBy = `${user.name || user.username} (إرسال تلقائي عند المراجعة)`;
+        autoSentCount++;
+        autoSentMembers.push(`${r.memberName} (${r.membershipNumber})`);
+      }
     }
   });
 
@@ -2495,9 +2576,19 @@ app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
       reviewed ? "مراجعة جماعية للطلبات" : "إلغاء مراجعة جماعية",
       `تم تحديث حالة المراجعة لعدد ${updatedCount} طلبات إلى ${reviewed ? "مُراجع" : "غير مُراجع"}`
     );
+
+    if (autoSentCount > 0) {
+      logAudit(
+        user.username,
+        user.name,
+        user.role,
+        "إرسال تلقائي للمدير الأول بعد المراجعة",
+        `تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا لمهام واعتمادات المدير الأول (مدة الاشتراك أكثر من الحد المسموح) بمجرد تحديدها كمُراجعة: ${autoSentMembers.join("، ")}`
+      );
+    }
   }
 
-  res.json({ success: true, requests: db.requests });
+  res.json({ success: true, requests: db.requests, autoSentToFirstManagerCount: autoSentCount });
 });
 
 // Bulk Cancellation Status Route (Admin & Managers)
@@ -2521,6 +2612,19 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
   let updatedCount = 0;
   const strIds = ids.map((id) => String(id));
 
+  // Company payment methods for "مخالصة الإلغاءات" -- same definition
+  // already used for the company/bank debt-sheet workflow in Reports.tsx,
+  // kept consistent here.
+  const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
+  const isCompanySettlementMethod = (method: any) => {
+    const m = String(method || "").trim();
+    if (!m) return false;
+    return m === "ABK" || m === "المشرق" || !nonCompanyMethods.includes(m);
+  };
+  // Grouped by company/payment-method name -- one settlement batch gets
+  // created per company involved in this bulk action.
+  const companyRowsByMethod: Record<string, any[]> = {};
+
   db.requests.forEach((r) => {
     if (strIds.includes(String(r.id))) {
       r.status = status;
@@ -2538,8 +2642,37 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
       }
       
       updatedCount++;
+
+      if (status === 'Cancelled' && isCompanySettlementMethod(r.paymentMethod)) {
+        const key = String(r.paymentMethod || "").trim();
+        if (!companyRowsByMethod[key]) companyRowsByMethod[key] = [];
+        companyRowsByMethod[key].push({
+          membershipNumber: r.membershipNumber || '',
+          memberName: r.memberName || '',
+          nationalId: r.nationalId || '',
+          externalId: r.externalId || '',
+        });
+      }
     }
   });
+
+  let settlementBatchesCreated = 0;
+  if (status === 'Cancelled') {
+    if (!Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
+    for (const companyName of Object.keys(companyRowsByMethod)) {
+      const rows = companyRowsByMethod[companyName];
+      if (rows.length === 0) continue;
+      db.cancellationSettlementBatches.unshift({
+        id: `csb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        companyName,
+        statusDate: statusDate || '',
+        createdAt: new Date().toISOString(),
+        createdBy: user.name || user.username,
+        rows,
+      });
+      settlementBatchesCreated++;
+    }
+  }
 
   if (updatedCount > 0) {
     await saveDb();
@@ -2550,9 +2683,18 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
       "تحديث حالة الإلغاء الجماعية",
       `تم تحديث حالة الإلغاء لعدد ${updatedCount} عضوية إلى (${status}) وتاريخ (${statusDate || '—'})`
     );
+    if (settlementBatchesCreated > 0) {
+      logAudit(
+        user.username,
+        user.name,
+        user.role,
+        "إنشاء مخالصة إلغاءات",
+        `تم إنشاء ${settlementBatchesCreated} تقرير/تقارير مخالصة إلغاءات تلقائيًا (${Object.keys(companyRowsByMethod).join('، ')})`
+      );
+    }
   }
 
-  res.json({ success: true, updatedCount, requests: db.requests });
+  res.json({ success: true, updatedCount, settlementBatchesCreated, requests: db.requests });
 });
 
 app.post("/api/requests/bulk-finance-sent", requireAuth, async (req, res) => {
@@ -2801,10 +2943,11 @@ app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, async (re
     return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
   }
 
-  // If request is reviewed by Admin, only Admin has permission to delete attachments
-  if (request.reviewed && user.role !== "admin") {
+  // Deleting an attachment is admin-only, regardless of the request's
+  // review status.
+  if (user.role !== "admin") {
     return res.status(403).json({
-      error: "لا يمكن حذف هذا المستند المرفق بعد اعتماد مراجعة الأدمن (Review) للطلب إلا بواسطة الأدمن المركزي."
+      error: "حذف المستندات المرفقة متاح للأدمن المركزي فقط."
     });
   }
 
@@ -3033,31 +3176,116 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { requestId, type, recipient, subject, body } = req.body;
 
-  const newEmail = {
+  if (!recipient) {
+    return res.status(400).json({ error: "البريد الإلكتروني للمستلم مطلوب" });
+  }
+
+  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
+  const newEmail: any = {
     id: "mail-" + Date.now(),
-    sender: "Wadi Degla Cancellation Hub <cancellations@wadidegla.com>",
+    sender: `Wadi Degla Cancellation Hub <${senderAddress}>`,
     recipient,
     subject,
     body,
     sentAt: new Date().toISOString(),
     requestId,
-    type
+    type,
+    deliveryStatus: "failed",
+    deliveryError: undefined as string | undefined,
   };
+
+  const transporter = getMailer();
+  if (!transporter) {
+    newEmail.deliveryError = "إعدادات SMTP غير مكتملة";
+    db.emailLogs.unshift(newEmail);
+    await saveDb();
+    return res.status(422).json({
+      error: "لم يتم إرسال البريد فعليًا: إعدادات SMTP غير مكتملة. يرجى ضبطها من صفحة الإعدادات (إعدادات > SMTP) أولًا.",
+      email: newEmail
+    });
+  }
+
+  try {
+    await transporter.sendMail({
+      from: newEmail.sender,
+      to: recipient,
+      subject,
+      html: body,
+    });
+    newEmail.deliveryStatus = "sent";
+  } catch (err: any) {
+    newEmail.deliveryError = err?.message || "فشل الاتصال بخادم البريد";
+    db.emailLogs.unshift(newEmail);
+    await saveDb();
+    return res.status(502).json({
+      error: `تعذر إرسال البريد فعليًا: ${newEmail.deliveryError}`,
+      email: newEmail
+    });
+  }
 
   db.emailLogs.unshift(newEmail);
 
-  // If email type triggers internal state updates
-  if (requestId && type === "Club Notification") {
-    const request = db.requests.find((r) => r.id === requestId);
-    if (request) {
-      // Prompt original receipt collection workflow
-      request.clubNote = (request.clubNote || "") + "\n[بريد] تم إرسال إشعار للفرع بطلب استرداد أصول إيصالات العضوية";
-    }
-  }
-
   await saveDb();
-  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
+  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني فعليًا إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
   res.json({ success: true, email: newEmail });
+});
+
+// --- SMTP Settings (Admin only) ---
+app.get("/api/smtp-settings", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية الاطلاع على إعدادات البريد" });
+  }
+  const cfg = db.smtpSettings || DEFAULT_DB.smtpSettings;
+  // Never send the actual password back to the browser -- just whether
+  // one is currently saved, so the UI can show a placeholder instead of
+  // requiring it to be re-typed every time.
+  res.json({
+    host: cfg.host || "",
+    port: cfg.port || 587,
+    username: cfg.username || "",
+    hasPassword: !!cfg.password,
+  });
+});
+
+app.put("/api/smtp-settings", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل إعدادات البريد" });
+  }
+  const { host, port, username, password } = req.body;
+  if (!host || !username) {
+    return res.status(400).json({ error: "خادم البريد (Host) واسم المستخدم مطلوبين" });
+  }
+  if (!db.smtpSettings) db.smtpSettings = { host: "", port: 587, username: "", password: "" };
+  db.smtpSettings.host = String(host).trim();
+  db.smtpSettings.port = Number(port) || 587;
+  db.smtpSettings.username = String(username).trim();
+  // Only overwrite the stored password if a new one was actually typed,
+  // so re-saving the host/port later doesn't wipe out the saved password.
+  if (password) {
+    db.smtpSettings.password = password;
+  }
+  await saveDb();
+  logAudit(user.username, user.name, user.role, "تحديث إعدادات SMTP", `تم تحديث إعدادات خادم البريد الإلكتروني (${db.smtpSettings.host})`);
+  res.json({ success: true });
+});
+
+app.post("/api/smtp-settings/test", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اختبار إعدادات البريد" });
+  }
+  const transporter = getMailer();
+  if (!transporter) {
+    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك ادخلي الخادم واسم المستخدم وكلمة المرور واحفظيهم أولًا." });
+  }
+  try {
+    await transporter.verify();
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message || "فشل الاتصال بخادم البريد. تأكدي من صحة البيانات (الخادم، المنفذ، اسم المستخدم، كلمة المرور)." });
+  }
 });
 
 // --- System Status Reconciliation (Excel upload update) ---
@@ -3087,17 +3315,11 @@ app.post("/api/requests/reconcile-system-status", requireAuth, async (req, res) 
 });
 
 // --- Bulk Company / Bank Debts Import Endpoint ---
-app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "auditor") {
-    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
-  }
-
-  const { rows } = req.body;
-  if (!rows || !Array.isArray(rows)) {
-    return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
-  }
-
+// Shared matching + update logic for a company/bank debt import, used by
+// both the original "/api/requests/import-company-debts" endpoint and the
+// newer tagged-batch "/api/debt-import-batches" endpoint below, so both
+// stay in sync and never diverge.
+function applyCompanyDebtsImport(rows: any[]) {
   let updatedCount = 0;
   let nonZeroDebtCount = 0;
   let zeroDebtCount = 0;
@@ -3112,8 +3334,7 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     const cleanMNum = mNumRaw.replace(/^0+/, '');
     const cleanNatId = String(row.nationalId || '').trim();
 
-    // Match in db.requests by exact membership number, unpadded membership number, or nationalId
-    const matchingRequests = db.requests.filter((r) => {
+    const matchingRequests = db.requests.filter((r: any) => {
       const dbMNum = String(r.membershipNumber || '').trim();
       const cleanDbMNum = dbMNum.replace(/^0+/, '');
       if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
@@ -3132,21 +3353,14 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
 
       const todayStr = new Date().toISOString().split("T")[0];
 
-      matchingRequests.forEach((request) => {
+      matchingRequests.forEach((request: any) => {
         const prevDebt = request.debtABKCompanies || 0;
         request.debtABKCompanies = newDebt;
 
-        // Automatically record the date the debt was first entered into the
-        // system (whether via this Excel upload or manual entry elsewhere)
-        // -- used to show the correct "تاريخ الحالة" while the memo is
-        // being prepared for ABK/Companies requests. Only set once, so a
-        // later re-upload/correction of the same debt doesn't overwrite
-        // the original entry date.
         if (newDebt > 0 && !request.debtEnteredDate) {
           request.debtEnteredDate = todayStr;
         }
 
-        // Update optional fields if present in Excel
         if (row.loanUnderName && String(row.loanUnderName).trim() && row.loanUnderName !== 'لا يوجد') {
           request.loanUnderName = String(row.loanUnderName).trim();
         }
@@ -3157,14 +3371,12 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
           request.paymentMethod = String(row.paymentMethod).trim();
         }
 
-        // Automatically set statusDate to the date debts were uploaded/imported onto the system
         request.statusDate = todayStr;
         const sDate = new Date(todayStr);
         if (!isNaN(sDate.getFullYear()) && (request.status === 'Cancelled' || request.status === 'Deletion' || request.status === 'Revoked')) {
           request.refundYear = sDate.getFullYear();
         }
 
-        // Recalculate fields based on updated debt using the current active db.formulas
         const recalculated = calculateRequestFields(request, db.formulas);
         Object.assign(request, recalculated);
 
@@ -3186,6 +3398,22 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     }
   });
 
+  return { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList };
+}
+
+app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
+  }
+
+  const { rows } = req.body;
+  if (!rows || !Array.isArray(rows)) {
+    return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
+  }
+
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList } = applyCompanyDebtsImport(rows);
+
   await saveDb();
   logAudit(
     user.username,
@@ -3206,6 +3434,259 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     updatedMembersList,
     requests: db.requests
   });
+});
+
+// --- Reports: tagged company/bank debt import batches ---
+// Same underlying matching/update logic as the endpoint above, but each
+// upload is also saved as a labeled batch (company/bank + committee
+// number), so it can be found and re-exported later with extra columns
+// from the "Reports" page.
+app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
+  }
+
+  const { rows, paymentMethod, committeeNo, committeeYear } = req.body;
+  if (!rows || !Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
+  }
+  if (!paymentMethod || !String(paymentMethod).trim()) {
+    return res.status(400).json({ error: "يرجى اختيار الشركة/طريقة الدفع قبل الرفع" });
+  }
+  if (!committeeNo || !String(committeeNo).trim()) {
+    return res.status(400).json({ error: "يرجى اختيار رقم اللجنة قبل الرفع" });
+  }
+
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList } = applyCompanyDebtsImport(rows);
+
+  // Map membership number -> the debt value it had right BEFORE this
+  // batch was applied, so an accidental/wrong upload can be reverted
+  // later via the delete/undo endpoint below.
+  const prevDebtByMembership: Record<string, number> = {};
+  updatedMembersList.forEach((m: any) => {
+    prevDebtByMembership[String(m.membershipNumber || '').trim()] = m.previousDebt || 0;
+  });
+
+  if (!db.debtImportBatches) db.debtImportBatches = [];
+  const batch = {
+    id: `batch-${Date.now()}`,
+    paymentMethod: String(paymentMethod).trim(),
+    committeeNo: String(committeeNo).trim(),
+    committeeYear: committeeYear ? String(committeeYear).trim() : "",
+    uploadedAt: new Date().toISOString(),
+    uploadedBy: user.name || user.username,
+    rows: rows.map((r: any) => {
+      const mNum = String(r.membershipNumber || "").trim();
+      return {
+        membershipNumber: mNum,
+        loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
+        nationalId: r.nationalId ? String(r.nationalId).trim() : "",
+        paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
+        debtAmount: parseSmartNumber(r.debtABKCompanies),
+        previousDebtAmount: prevDebtByMembership[mNum] ?? 0,
+      };
+    }),
+  };
+  db.debtImportBatches.unshift(batch);
+
+  await saveDb();
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "رفع دفعة مديونية (تقارير)",
+    `تم رفع دفعة مديونية جديدة لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo}، تم تحديث ${updatedCount} طلب (بإجمالي ${totalDebtAmount.toLocaleString()} ج.م)`
+  );
+
+  res.json({
+    success: true,
+    batchId: batch.id,
+    updatedCount,
+    nonZeroDebtCount,
+    zeroDebtCount,
+    totalDebtAmount,
+    notFoundCount: notFoundList.length,
+    notFoundList,
+    updatedMembersList,
+    requests: db.requests
+  });
+});
+
+app.get("/api/debt-import-batches", requireAuth, async (req, res) => {
+  const batches = (db.debtImportBatches || []).map((b: any) => ({
+    id: b.id,
+    paymentMethod: b.paymentMethod,
+    committeeNo: b.committeeNo,
+    committeeYear: b.committeeYear,
+    uploadedAt: b.uploadedAt,
+    uploadedBy: b.uploadedBy,
+    rowCount: (b.rows || []).length,
+  }));
+  res.json({ batches });
+});
+
+app.get("/api/debt-import-batches/:id/export", requireAuth, async (req, res) => {
+  const batch = (db.debtImportBatches || []).find((b: any) => b.id === req.params.id);
+  if (!batch) {
+    return res.status(404).json({ error: "دفعة الرفع غير موجودة" });
+  }
+
+  const enrichedRows = batch.rows.map((row: any) => {
+    const mNumRaw = String(row.membershipNumber || "").trim();
+    const cleanMNum = mNumRaw.replace(/^0+/, '');
+    const cleanNatId = String(row.nationalId || '').trim();
+
+    const match = db.requests.find((r: any) => {
+      const dbMNum = String(r.membershipNumber || '').trim();
+      const cleanDbMNum = dbMNum.replace(/^0+/, '');
+      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
+      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
+      return false;
+    });
+
+    return {
+      membershipNumber: row.membershipNumber,
+      memberName: match?.memberName || '',
+      nationalId: match?.nationalId || row.nationalId || '',
+      externalId: match?.externalId || '',
+      subscriptionValue: match?.subscriptionValue || 0,
+      transferValue: match?.transferValue || 0,
+      subscriptionDate: match?.subscriptionDate || '',
+      requestDate: match?.requestDate || '',
+      debtAmount: match ? (match.debtABKCompanies || 0) : row.debtAmount,
+      paymentMethod: match?.paymentMethod || row.paymentMethod,
+    };
+  });
+
+  res.json({
+    batch: {
+      id: batch.id,
+      paymentMethod: batch.paymentMethod,
+      committeeNo: batch.committeeNo,
+      committeeYear: batch.committeeYear,
+      uploadedAt: batch.uploadedAt,
+      uploadedBy: batch.uploadedBy,
+    },
+    rows: enrichedRows,
+  });
+});
+
+// Delete/undo an accidentally-uploaded debt import batch: reverts every
+// matched request's debt back to whatever it was right BEFORE this batch
+// was applied, then removes the batch from the history list.
+app.delete("/api/debt-import-batches/:id", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف دفعات المديونية" });
+  }
+
+  const batchIndex = (db.debtImportBatches || []).findIndex((b: any) => b.id === req.params.id);
+  if (batchIndex === -1) {
+    return res.status(404).json({ error: "دفعة الرفع غير موجودة" });
+  }
+  const batch = db.debtImportBatches[batchIndex];
+
+  let revertedCount = 0;
+  batch.rows.forEach((row: any) => {
+    const mNumRaw = String(row.membershipNumber || "").trim();
+    if (!mNumRaw) return;
+    const cleanMNum = mNumRaw.replace(/^0+/, '');
+    const cleanNatId = String(row.nationalId || '').trim();
+
+    const matchingRequests = db.requests.filter((r: any) => {
+      const dbMNum = String(r.membershipNumber || '').trim();
+      const cleanDbMNum = dbMNum.replace(/^0+/, '');
+      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
+      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
+      return false;
+    });
+
+    matchingRequests.forEach((request: any) => {
+      // Only revert if the request's debt still matches what THIS batch
+      // set it to -- if she's uploaded another (correct) batch since,
+      // that later value takes priority and shouldn't be clobbered by
+      // undoing an older batch.
+      if ((request.debtABKCompanies || 0) === (row.debtAmount || 0)) {
+        request.debtABKCompanies = row.previousDebtAmount || 0;
+        const recalculated = calculateRequestFields(request, db.formulas);
+        Object.assign(request, recalculated);
+        revertedCount++;
+      }
+    });
+  });
+
+  db.debtImportBatches.splice(batchIndex, 1);
+  await saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "حذف/تراجع دفعة مديونية (تقارير)",
+    `تم حذف دفعة المديونية لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo} (رُفعت بتاريخ ${batch.uploadedAt}) وتم إرجاع المديونية لـ ${revertedCount} طلب لقيمتها السابقة`
+  );
+
+  res.json({ success: true, revertedCount, requests: db.requests });
+});
+
+// ----- "مخالصة الإلغاءات" (Cancellation Settlement Reports) -----
+// Read-only history of the settlement batches auto-created by
+// /api/requests/bulk-cancellation-status whenever a bulk "Cancelled"
+// status change hits company-payment-method requests.
+
+app.get("/api/cancellation-settlements", requireAuth, async (req, res) => {
+  const batches = (db.cancellationSettlementBatches || []).map((b: any) => ({
+    id: b.id,
+    companyName: b.companyName,
+    statusDate: b.statusDate,
+    createdAt: b.createdAt,
+    createdBy: b.createdBy,
+    rowCount: (b.rows || []).length,
+  }));
+  res.json({ batches });
+});
+
+app.get("/api/cancellation-settlements/:id/export", requireAuth, async (req, res) => {
+  const batch = (db.cancellationSettlementBatches || []).find((b: any) => b.id === req.params.id);
+  if (!batch) {
+    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
+  }
+  res.json({
+    batch: {
+      id: batch.id,
+      companyName: batch.companyName,
+      statusDate: batch.statusDate,
+      createdAt: batch.createdAt,
+      createdBy: batch.createdBy,
+    },
+    rows: batch.rows || [],
+  });
+});
+
+app.delete("/api/cancellation-settlements/:id", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin" && user.role !== "auditor") {
+    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف تقارير مخالصة الإلغاءات" });
+  }
+
+  const batchIndex = (db.cancellationSettlementBatches || []).findIndex((b: any) => b.id === req.params.id);
+  if (batchIndex === -1) {
+    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
+  }
+  const batch = db.cancellationSettlementBatches[batchIndex];
+  db.cancellationSettlementBatches.splice(batchIndex, 1);
+  await saveDb();
+
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "حذف مخالصة إلغاءات (تقارير)",
+    `تم حذف تقرير مخالصة الإلغاءات لشركة "${batch.companyName}" (أُنشئ بتاريخ ${batch.createdAt})`
+  );
+
+  res.json({ success: true });
 });
 
 // Update single request statusDate (Admin only)
@@ -3438,17 +3919,6 @@ app.get("/api/logs/audit", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
   }
   res.json(db.auditLogs);
-});
-
-// Per-request change history -- open to every authenticated user (not just
-// admin), since any user can now track any membership's request regardless
-// of club. Unlike /api/logs/audit above, this only ever returns entries
-// scoped to the one request id asked for, so it never leaks unrelated
-// admin-only actions (user management, password resets, etc.).
-app.get("/api/requests/:id/logs", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const logs = (db.auditLogs || []).filter((l: any) => String(l.requestId) === String(id));
-  res.json(logs);
 });
 
 // --- Global Error Handler ---

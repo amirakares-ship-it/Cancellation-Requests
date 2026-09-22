@@ -3,7 +3,7 @@ import {
   Search, FileText, Image as ImageIcon, Download, Eye, Trash2, Upload, RefreshCw,
   Lock, Unlock, Filter, Layers, LayoutGrid, LayoutList, Calendar, User, Building,
   AlertCircle, CheckCircle2, ShieldCheck, ExternalLink, ShieldAlert, ArrowUpDown,
-  Plus, Check, X, FileCheck, Tag, Info, Paperclip
+  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw, Printer
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
 import { formatDateCustom } from '../utils';
@@ -18,6 +18,10 @@ interface AttachmentsArchiveProps {
   onRequestViewDetails?: (request: any) => void;
   onRefreshRequests?: () => void;
 }
+
+// The dedicated document category for revocation requests ("طلب التراجع"),
+// used to drive the dedicated tab in this archive page.
+const REVOCATION_CATEGORY = 'طلب التراجع';
 
 export default function AttachmentsArchive({
   currentUser,
@@ -112,6 +116,10 @@ export default function AttachmentsArchive({
       // 3. Category filter
       if (selectedCategory !== 'all') {
         if (item.category !== selectedCategory) return false;
+      } else {
+        // "كل المستندات" tab: revocation-request documents live only in
+        // their own dedicated tab, so exclude them from the general view.
+        if (item.category === REVOCATION_CATEGORY) return false;
       }
 
       // 4. File Type filter
@@ -135,15 +143,25 @@ export default function AttachmentsArchive({
     });
   }, [attachments, searchQuery, selectedClub, selectedCategory, selectedFileType, selectedLockStatus, sortOrder]);
 
-  // Statistics calculation
+  // Statistics calculation.
+  // "طلب التراجع" documents are excluded from the general (non-revocation)
+  // counts so the top stats cards and the "كل المستندات" tab badge reflect
+  // only what actually shows up in that tab -- revocation docs get their
+  // own separate count instead.
   const stats = useMemo(() => {
-    const totalCount = attachments.length;
+    let totalCount = 0;
     let pdfCount = 0;
     let imageCount = 0;
     let lockedCount = 0;
+    let revocationCount = 0;
     const uniqueReqs = new Set();
 
     attachments.forEach(item => {
+      if (item.category === REVOCATION_CATEGORY) {
+        revocationCount++;
+        return;
+      }
+      totalCount++;
       const isPdf = item.fileType === 'application/pdf' || String(item.fileName).toLowerCase().endsWith('.pdf');
       if (isPdf) pdfCount++;
       else imageCount++;
@@ -157,7 +175,8 @@ export default function AttachmentsArchive({
       imageCount,
       lockedCount,
       unlockedCount: totalCount - lockedCount,
-      requestsCount: uniqueReqs.size
+      requestsCount: uniqueReqs.size,
+      revocationCount
     };
   }, [attachments]);
 
@@ -165,8 +184,8 @@ export default function AttachmentsArchive({
   const handleDeleteAttachment = async (itemToDelete: any) => {
     if (!itemToDelete) return;
 
-    if (itemToDelete.isLocked && currentUser?.role !== 'admin') {
-      setErrorMessage('لا يمكن حذف هذا المستند نظراً لاعتماد مراجعة الأدمن للطلب لحماية السجلات الرسمية.');
+    if (currentUser?.role !== 'admin') {
+      setErrorMessage('حذف المستندات متاح للأدمن فقط.');
       return;
     }
 
@@ -211,6 +230,63 @@ export default function AttachmentsArchive({
     }
   };
 
+  const handlePrint = (item: any) => {
+    try {
+      const isPdf = item.fileType === 'application/pdf' || String(item.fileName).toLowerCase().endsWith('.pdf') || String(item.fileData).startsWith('data:application/pdf');
+
+      if (isPdf) {
+        // Chrome's native PDF viewer (rendered out-of-process) doesn't
+        // reliably respond to a script-triggered print() call on a freshly
+        // created iframe -- opening it directly is the only reliable way
+        // to reach its own (working) print icon, without needing to click
+        // through this list into the preview modal first.
+        const win = window.open(item.fileData, '_blank');
+        win?.focus();
+        return;
+      }
+
+      // Images: print via a hidden iframe injected into the current page,
+      // instead of opening a new tab/window -- stays on the same page;
+      // only the browser's native print dialog appears.
+      const iframe = document.createElement('iframe');
+      iframe.style.position = 'fixed';
+      iframe.style.right = '0';
+      iframe.style.bottom = '0';
+      iframe.style.width = '0';
+      iframe.style.height = '0';
+      iframe.style.border = '0';
+      iframe.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(iframe);
+
+      const cleanup = () => {
+        setTimeout(() => {
+          if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+        }, 1000);
+      };
+
+      iframe.srcdoc = `
+        <html>
+          <head>
+            <style>
+              body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
+              img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+            </style>
+          </head>
+          <body>
+            <img src="${item.fileData}" onload="window.focus();window.print();" />
+          </body>
+        </html>
+      `;
+
+      window.addEventListener('focus', cleanup, { once: true });
+      setTimeout(cleanup, 60000);
+    } catch (err) {
+      console.error('Print error:', err);
+    }
+  };
+
+  const isAdmin = currentUser?.role === 'admin';
+
   const formatFileSize = (bytes?: number) => {
     if (!bytes || bytes <= 0) return '—';
     if (bytes < 1024) return `${bytes} B`;
@@ -220,19 +296,21 @@ export default function AttachmentsArchive({
 
   // Categories list from existing attachments
   const availableCategories = useMemo(() => {
-    const defaultCategories = [
-      'طلب الإلغاء الموقع',
-      'صورة بطاقة الرقم القومي',
-      'إيصال سداد / مخالصة',
-      'إقرار وتنازل معتمد',
-      'تقرير طبي / مستندات استثناء',
-      'ملف مراجعة الإدارة المالية',
-      'شيكات / مستندات بنكية',
-      'أخرى'
-    ];
+    const defaultCategories = (dropdowns?.documentTypes && dropdowns.documentTypes.length > 0)
+      ? dropdowns.documentTypes
+      : [
+        'طلب الإلغاء الموقع',
+        'صورة بطاقة الرقم القومي',
+        'إيصال سداد / مخالصة',
+        'إقرار وتنازل معتمد',
+        'تقرير طبي / مستندات استثناء',
+        'ملف مراجعة الإدارة المالية',
+        'شيكات / مستندات بنكية',
+        'أخرى'
+      ];
     const fromData = Array.from(new Set(attachments.map(a => a.category).filter(Boolean)));
     return Array.from(new Set([...defaultCategories, ...fromData]));
-  }, [attachments]);
+  }, [attachments, dropdowns]);
 
   return (
     <div className="space-y-5 text-right font-sans" dir="rtl">
@@ -244,9 +322,11 @@ export default function AttachmentsArchive({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h2 className="text-lg font-black text-slate-900">أرشيف المستندات والمرفقات</h2>
+              <h2 className="text-lg font-black text-slate-900">
+                {selectedCategory === REVOCATION_CATEGORY ? 'أرشيف طلبات التراجع' : 'أرشيف المستندات والمرفقات'}
+              </h2>
               <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                {stats.totalCount} مستند
+                {selectedCategory === REVOCATION_CATEGORY ? stats.revocationCount : stats.totalCount} مستند
               </span>
             </div>
           </div>
@@ -263,6 +343,34 @@ export default function AttachmentsArchive({
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
             <span>تحديث</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Dedicated Tabs: All Documents / Revocation Requests */}
+      <div className="bg-white p-2 rounded-2xl border border-slate-200/80 shadow-2xs">
+        <div className="inline-flex rounded-xl bg-slate-100 p-1 gap-1">
+          <button
+            type="button"
+            onClick={() => setSelectedCategory('all')}
+            className={`px-4 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              selectedCategory !== REVOCATION_CATEGORY ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>كل المستندات</span>
+            <span className="text-[10px] bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded-full font-mono">{stats.totalCount}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSelectedCategory(REVOCATION_CATEGORY)}
+            className={`px-4 py-2 rounded-lg text-xs font-black transition-all cursor-pointer flex items-center gap-1.5 ${
+              selectedCategory === REVOCATION_CATEGORY ? 'bg-white text-sky-700 shadow-2xs' : 'text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>طلبات التراجع</span>
+            <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded-full font-mono">{stats.revocationCount}</span>
           </button>
         </div>
       </div>
@@ -636,11 +744,11 @@ export default function AttachmentsArchive({
 
                       <button
                         type="button"
-                        onClick={() => handleDownload(item)}
+                        onClick={() => isAdmin ? handleDownload(item) : handlePrint(item)}
                         className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                        title="تحميل الملف"
+                        title={isAdmin ? "تحميل الملف" : "طباعة الملف"}
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        {isAdmin ? <Download className="w-3.5 h-3.5" /> : <Printer className="w-3.5 h-3.5" />}
                       </button>
 
                       <button
@@ -653,24 +761,24 @@ export default function AttachmentsArchive({
                       </button>
                     </div>
 
-                    {/* Delete Action */}
+                    {/* Delete Action -- Admin only */}
                     <div>
-                      {item.isLocked && currentUser?.role !== 'admin' ? (
-                        <div 
-                          className="p-1.5 text-slate-300 cursor-not-allowed rounded-lg"
-                          title="تمت مراجعة الطلب (Reviewed) - المستند محمي ولا يمكن حذفه"
-                        >
-                          <Lock className="w-3.5 h-3.5" />
-                        </div>
-                      ) : (
+                      {isAdmin ? (
                         <button
                           type="button"
                           onClick={() => setDeleteTarget(item)}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                          title={item.isLocked ? "حذف المستند (صلاحية الأدمن)" : "حذف المستند"}
+                          title="حذف المستند"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
+                      ) : (
+                        <div 
+                          className="p-1.5 text-slate-300 cursor-not-allowed rounded-lg"
+                          title="الحذف متاح للأدمن فقط"
+                        >
+                          <Lock className="w-3.5 h-3.5" />
+                        </div>
                       )}
                     </div>
                   </div>
@@ -763,11 +871,11 @@ export default function AttachmentsArchive({
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleDownload(item)}
+                            onClick={() => isAdmin ? handleDownload(item) : handlePrint(item)}
                             className="p-1.5 text-slate-500 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                            title="تحميل"
+                            title={isAdmin ? "تحميل" : "طباعة"}
                           >
-                            <Download className="w-3.5 h-3.5" />
+                            {isAdmin ? <Download className="w-3.5 h-3.5" /> : <Printer className="w-3.5 h-3.5" />}
                           </button>
                           <button
                             type="button"
@@ -777,22 +885,22 @@ export default function AttachmentsArchive({
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
-                          {item.isLocked && currentUser?.role !== 'admin' ? (
-                            <span 
-                              className="p-1.5 text-slate-300 cursor-not-allowed"
-                              title="محمي بعد المراجعة - لا يمكن حذفه"
-                            >
-                              <Lock className="w-3 h-3" />
-                            </span>
-                          ) : (
+                          {isAdmin ? (
                             <button
                               type="button"
                               onClick={() => setDeleteTarget(item)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                              title={item.isLocked ? "حذف المستند (صلاحية الأدمن)" : "حذف المستند"}
+                              title="حذف المستند"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
+                          ) : (
+                            <span 
+                              className="p-1.5 text-slate-300 cursor-not-allowed"
+                              title="الحذف متاح للأدمن فقط"
+                            >
+                              <Lock className="w-3 h-3" />
+                            </span>
                           )}
                         </div>
                       </td>
@@ -810,7 +918,8 @@ export default function AttachmentsArchive({
         <DocumentViewerModal
           attachment={activeViewerAttachment}
           onClose={() => setActiveViewerAttachment(null)}
-          canDelete={currentUser?.role === 'admin' || !activeViewerAttachment.isLocked}
+          canDelete={isAdmin}
+          isAdmin={isAdmin}
           onDelete={() => {
             const target = activeViewerAttachment;
             setActiveViewerAttachment(null);
@@ -824,6 +933,7 @@ export default function AttachmentsArchive({
         <UploadDocumentModal
           request={activeUploadTarget}
           currentUser={currentUser}
+          dropdowns={dropdowns}
           onClose={() => setActiveUploadTarget(null)}
           onUploadSuccess={() => {
             setSuccessMessage('تم رفع وإضافة المستندات الجديدة بنجاح إلى الأرشيف');

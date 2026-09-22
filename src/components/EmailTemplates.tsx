@@ -153,7 +153,7 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
 
       const data = await res.json();
       if (res.ok) {
-        setSuccessMsg('تم إرسال البريد الإلكتروني المحاكي بنجاح، وتم قيد هذه الحركة في سجل مراسلات المنظومة المعتمد!');
+        setSuccessMsg('تم إرسال البريد الإلكتروني فعليًا بنجاح، وتم قيد هذه الحركة في سجل مراسلات المنظومة المعتمد!');
         onSendSuccess();
         fetchEmailLogs();
       } else {

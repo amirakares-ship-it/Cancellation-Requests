@@ -1120,12 +1120,29 @@ export function getPendingSubStatus(r: {
   receiptReceived?: boolean;
   paymentMethod?: string;
   debtABKCompanies?: number;
+  reviewed?: boolean;
+  type2?: string;
+  approvalSentToFirstManager?: boolean;
+  firstManagerApproved?: boolean | null;
 }): string {
   const statusStr = (r.status || '').trim().toLowerCase();
   const isPending = !r.status || statusStr === 'pending' || statusStr === 'قيد الانتظار' || r.status === 'Pending';
   if (!isPending) return '';
 
-  // 1. لعدم اعتماد اللجنة
+  // 0. لسه معملهاش الأدمن "Viewed" -- الطلب لسه قيد المراجعة الأولية
+  if (!r.reviewed) {
+    return '(قيد المراجعة)';
+  }
+
+  // 0.5 طلبات طويلة المدة (أكتر من شهر/3 شهور) اتبعتت للمدير الأول
+  // ولسه في انتظار قراره (موافقة مبدئية)
+  const isLongDuration = r.type2 === 'Over 3 months' || r.type2 === 'Over 1 month';
+  if (isLongDuration && r.approvalSentToFirstManager && r.firstManagerApproved !== true) {
+    return '(فى انتظار الموافقة المبدئية)';
+  }
+
+  // 1. لعدم اعتماد اللجنة (يشمل: الطلبات قصيرة المدة بعد المراجعة مباشرة،
+  // والطلبات طويلة المدة بعد موافقة المدير الأول)
   if (r.result !== 'Accepted') {
     return '(فى انتظار انعقاد اللجنة)';
   }
@@ -1293,6 +1310,21 @@ export function normalizeMembershipNumber(mem: any): string {
     .replace(/ئ/g, 'ي')
     .replace(/ؤ/g, 'و')
     .replace(/[-_–—\s\/\.\\]/g, ''); // Remove hyphens, underscores, slashes, periods, spaces
+}
+
+/**
+ * Checks whether a purely-numeric input is the reserved "00400" sequence
+ * or one of its prefixes (0, 00, 004, 0040, 00400, 00400x...).
+ * Used to block "00400" both when entering a membership number and when
+ * searching by membership number, so the two stay consistent.
+ * Only applies when the value is digits-only (letters/hyphens bypass it),
+ * so it never blocks free-text searches by name or other fields.
+ */
+export function isReservedMembershipCode(val: string): boolean {
+  if (!val) return false;
+  const digitsOnly = val.replace(/[^0-9]/g, '');
+  if (!digitsOnly || val !== digitsOnly) return false;
+  return '00400'.startsWith(digitsOnly) || digitsOnly.startsWith('00400');
 }
 
 export function isSameMembershipNumber(mem1: any, mem2: any): boolean {

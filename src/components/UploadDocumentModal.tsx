@@ -12,6 +12,14 @@ interface UploadDocumentModalProps {
   onSuccess?: () => void;
   currentUser?: any;
   user?: any;
+  dropdowns?: any;
+  // Optional context override: which document-type category is
+  // pre-selected for newly added files, and which categories should be
+  // listed first in the select (in this order), e.g. from the "أصل
+  // الإيصال" page where club/international users need specific document
+  // types front and center instead of scrolling the whole shared list.
+  defaultCategory?: string;
+  priorityCategories?: string[];
 }
 
 const DOCUMENT_CATEGORIES = [
@@ -31,9 +39,25 @@ export default function UploadDocumentModal({
   onUploadSuccess,
   onSuccess,
   currentUser,
-  user
+  user,
+  dropdowns,
+  defaultCategory,
+  priorityCategories
 }: UploadDocumentModalProps) {
   const activeUser = currentUser || user;
+  // Document type options come from the admin-managed "نوع المستند" dropdown
+  // list when available, falling back to the built-in defaults otherwise.
+  // When priorityCategories is given, those are moved to the front (in that
+  // order) so the relevant ones for this page/role don't need scrolling to.
+  const documentCategoryOptions: string[] = (() => {
+    const base = (dropdowns?.documentTypes && dropdowns.documentTypes.length > 0)
+      ? dropdowns.documentTypes
+      : DOCUMENT_CATEGORIES;
+    if (!priorityCategories || priorityCategories.length === 0) return base;
+    const priority = priorityCategories.filter(c => base.includes(c));
+    const rest = base.filter((c: string) => !priority.includes(c));
+    return [...priority, ...rest];
+  })();
   const [existingAttachments, setExistingAttachments] = useState<any[]>(request.attachments || []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filesToUpload, setFilesToUpload] = useState<Array<{
@@ -138,7 +162,7 @@ export default function UploadDocumentModal({
           fileType: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
           fileSize: file.size,
           fileData,
-          category: 'طلب الإلغاء الموقع',
+          category: defaultCategory && documentCategoryOptions.includes(defaultCategory) ? defaultCategory : 'طلب الإلغاء الموقع',
           notes: ''
         });
       } catch (err) {
@@ -450,7 +474,7 @@ export default function UploadDocumentModal({
                             onChange={(e) => updateCategory(item.id, e.target.value)}
                             className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:border-amber-400"
                           >
-                            {DOCUMENT_CATEGORIES.map(cat => (
+                            {documentCategoryOptions.map(cat => (
                               <option key={cat} value={cat}>{cat}</option>
                             ))}
                           </select>

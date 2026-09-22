@@ -433,7 +433,8 @@ export default function CancellationStatusManager({
 
       setFeedbackMsg({
         type: 'success',
-        text: `تم تحديث حالة الإلغاء بنجاح لعدد ${data.updatedCount || selectedIds.length} عضوية (${translateStatus(targetStatus)})`
+        text: `تم تحديث حالة الإلغاء بنجاح لعدد ${data.updatedCount || selectedIds.length} عضوية (${translateStatus(targetStatus)})` +
+          (data.settlementBatchesCreated > 0 ? ` -- وتم إنشاء ${data.settlementBatchesCreated} تقرير/تقارير مخالصة إلغاءات في صفحة التقارير.` : '')
       });
       setSelectedIds([]);
       onRefresh();
@@ -928,6 +929,8 @@ export default function CancellationStatusManager({
                               getPendingSubStatus(r) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
                               getPendingSubStatus(r) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
                               getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
+                              getPendingSubStatus(r) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
+                              getPendingSubStatus(r) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
                               'text-slate-500 font-medium'
                             }`}>
                               {getDisplaySubStatus(r)}

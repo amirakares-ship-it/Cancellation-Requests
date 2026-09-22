@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useScrollBarContext } from './contexts/ScrollBarContext';
 import * as XLSX from 'xlsx';
 import { 
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal
 } from 'lucide-react';
 
 // Subcomponents
@@ -22,6 +23,7 @@ import FormulasManager from './components/FormulasManager';
 import DropdownsManager from './components/DropdownsManager';
 import CancellationStatusManager from './components/CancellationStatusManager';
 import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
+import Reports from './components/Reports';
 import AttachmentsArchive from './components/AttachmentsArchive';
 import { ConfirmModal } from './components/ConfirmModal';
 import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
@@ -100,7 +102,7 @@ export default function App() {
   });
 
   // UI Control states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'reports'>('dashboard');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -133,6 +135,9 @@ export default function App() {
   const [requestViewMode, setRequestViewMode] = useState<'list' | 'create' | 'edit'>('list');
   const [editingRequest, setEditingRequest] = useState<any | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
+  const { activeRef: activeTableScrollRef } = useScrollBarContext();
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -242,7 +247,16 @@ export default function App() {
       // Requests
       const resRequests = await fetch('/api/requests', { headers });
       const dataRequests = await safeJson(resRequests);
-      if (dataRequests) setRequests(dataRequests);
+      if (dataRequests) {
+        setRequests(dataRequests);
+        // If a request's details modal happens to be open, refresh its
+        // content too instead of leaving it showing stale data.
+        setSelectedRequest((prev: any) => {
+          if (!prev) return prev;
+          const updated = dataRequests.find((r: any) => String(r.id) === String(prev.id));
+          return updated || prev;
+        });
+      }
 
       // Dropdowns
       const resDropdowns = await fetch('/api/dropdowns', { headers });
@@ -282,6 +296,48 @@ export default function App() {
     }
   };
 
+  // Manual "soft" refresh: re-pulls the latest data from the server (in
+  // case another user changed something) without navigating away from
+  // whichever tab, filters, or open details modal the person is currently on.
+  const handleManualRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await fetchAllData();
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
+  // Footer horizontal scroll controls -- targets whichever table is
+  // currently registered (via ScrollBarContext) as the active scroll
+  // target, falling back to the main page content area when no table is
+  // mounted (e.g. the Dashboard, which has no wide table).
+  const getFooterScrollEl = (): HTMLElement | null => {
+    return activeTableScrollRef?.current || mainContentRef.current;
+  };
+  const handleFooterScrollRight = () => {
+    getFooterScrollEl()?.scrollBy({ left: 350, behavior: 'smooth' });
+  };
+  const handleFooterScrollLeft = () => {
+    getFooterScrollEl()?.scrollBy({ left: -350, behavior: 'smooth' });
+  };
+  const handleFooterScrollToStart = () => {
+    const el = getFooterScrollEl();
+    if (el) {
+      const isNegativeMode = el.scrollLeft <= 0;
+      el.scrollTo({ left: isNegativeMode ? 0 : 10000, behavior: 'smooth' });
+    }
+  };
+  const handleFooterScrollToEnd = () => {
+    const el = getFooterScrollEl();
+    if (el) {
+      const { scrollWidth, clientWidth, scrollLeft } = el;
+      const maxScroll = scrollWidth - clientWidth;
+      const isNegativeMode = scrollLeft <= 0;
+      el.scrollTo({ left: isNegativeMode ? -maxScroll : 0, behavior: 'smooth' });
+    }
+  };
+
   useEffect(() => {
     const handleCFUpdate = () => {
       fetchAllData();
@@ -290,10 +346,25 @@ export default function App() {
     return () => window.removeEventListener('custom-fields-updated', handleCFUpdate);
   }, [authToken]);
 
+  // Automatic background sync: periodically re-pulls the latest data so
+  // changes another logged-in user makes (e.g. an admin reviewing a
+  // request) show up here without anyone needing to hit manual refresh.
+  // Paused while a request create/edit form is open, so a background pull
+  // never resets fields someone is actively typing into.
+  useEffect(() => {
+    if (!authToken || !currentUser) return;
+    const intervalId = setInterval(() => {
+      if (requestViewMode === 'list') {
+        fetchAllData();
+      }
+    }, 45000); // every 45 seconds
+    return () => clearInterval(intervalId);
+  }, [authToken, currentUser, requestViewMode]);
+
   useEffect(() => {
     if (currentUser) {
       fetchAllData();
-      if (currentUser.role !== 'admin' && ['cancellation_status', 'memo', 'reconcile', 'formulas', 'dropdowns_lists', 'emails', 'settings'].includes(activeTab)) {
+      if (currentUser.role !== 'admin' && ['cancellation_status', 'memo', 'reconcile', 'reports', 'formulas', 'dropdowns_lists', 'emails', 'settings'].includes(activeTab)) {
         setActiveTab('dashboard');
       }
     }
@@ -474,7 +545,12 @@ export default function App() {
         } else {
           fetchAllData();
         }
-        if (ids.length > 1) {
+        const autoSentCount = data.autoSentToFirstManagerCount || 0;
+        if (autoSentCount > 0) {
+          alert(
+            `${ids.length > 1 ? `تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!\n` : ''}تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا للمدير الأول بمرفقاتها (المدة أكثر من 3 شهور/شهر).`
+          );
+        } else if (ids.length > 1) {
           alert(`تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!`);
         }
       } else {
@@ -752,6 +828,9 @@ export default function App() {
         // Update details modal instantly
         const updated = await res.json();
         setSelectedRequest(updated.request);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'حدث خطأ أثناء تحديث حالة الاستلام');
       }
     } catch (err) {
       console.error(err);
@@ -1108,7 +1187,14 @@ export default function App() {
 
   // Custom Report EXCEL Export (With Dynamic Custom Fields)
   const handleExportExcelReport = (customData?: any[]) => {
-    const listToExport = Array.isArray(customData) ? customData : requests;
+    let listToExport = Array.isArray(customData) ? customData : requests;
+
+    // Security: club users can only ever export their own club's data,
+    // regardless of what's currently shown/filtered on screen.
+    if (currentUser?.role === 'club') {
+      listToExport = listToExport.filter((r) => isSameClub(r.club, currentUser.club));
+    }
+
     if (!listToExport || listToExport.length === 0) {
       alert('لا توجد بيانات متاحة للتصدير حالياً طبقاً للتصفية المحددة');
       return;
@@ -1389,6 +1475,22 @@ export default function App() {
             </button>
           )}
 
+          {/* 5.5 التقارير Reports */}
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={() => setActiveTab('reports')}
+              title="التقارير"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <BarChart3 className={`w-4 h-4 shrink-0 ${activeTab === 'reports' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>التقارير</span>}
+            </button>
+          )}
+
           {/* 6. طباعة المذكرة Memo */}
           {currentUser.role === 'admin' && (
             <button
@@ -1585,6 +1687,15 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isManualRefreshing}
+              title="تحديث البيانات (Refresh)"
+              className="p-2 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors flex items-center justify-center cursor-pointer shadow-2xs disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-4 h-4 text-amber-500 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+            </button>
             <div className="flex gap-1">
               <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-400 text-neutral-950 shadow-2xs">AR</span>
               <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">EN</span>
@@ -1603,7 +1714,7 @@ export default function App() {
         </header>
 
         {/* Page Content Workspace */}
-        <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        <div ref={mainContentRef} className="flex-1 p-6 md:p-8 overflow-y-auto overflow-x-auto space-y-6">
         
         {/* TAB WORKFLOW INJECTION */}
 
@@ -1776,6 +1887,8 @@ export default function App() {
             user={currentUser}
             onUpdateReceiptStatus={handleUpdateReceiptStatus}
             labelNames={labelNames}
+            dropdowns={dropdowns}
+            onRefresh={fetchAllData}
           />
         )}
 
@@ -1814,6 +1927,17 @@ export default function App() {
           />
         )}
 
+        {/* Tab 5.5: Reports -- tagged debt import batches (Company + Committee), re-downloadable with extra columns */}
+        {activeTab === 'reports' && currentUser.role === 'admin' && (
+          <Reports
+            requests={requests}
+            dropdowns={dropdowns}
+            committees={committees}
+            authToken={authToken || ''}
+            user={currentUser}
+          />
+        )}
+
         {/* Formulas Management Tab (Admin only) */}
         {activeTab === 'formulas' && currentUser.role === 'admin' && (
           <FormulasManager
@@ -1845,19 +1969,41 @@ export default function App() {
 
       </div>
 
-      {/* Bottom Status Bar */}
-      <footer className="h-8 bg-white border-t border-slate-200 px-8 flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase shrink-0 no-print flex-row-reverse">
-        <div className="flex gap-4 flex-row-reverse">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> 
-            قاعدة البيانات متصلة (Database Connected)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-blue-500"></span> 
-            المزامنة تامة (Sync Complete)
-          </span>
-        </div>
-        <div>نظام إلغاء العضويات وادى دجلة v1.0.42 — Powered by DeepMind</div>
+      {/* Bottom Left-Right Scroll Bar */}
+      <footer className="h-9 bg-white border-t border-slate-200 px-4 flex items-center justify-center gap-2 shrink-0 no-print flex-row-reverse">
+        <MoveHorizontal className="w-4 h-4 text-amber-500 shrink-0" />
+        <button
+          type="button"
+          onClick={handleFooterScrollToStart}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى اليمين"
+        >
+          <ChevronsRight className="w-4 h-4 text-amber-600" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollRight}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يميناً"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollLeft}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يساراً"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollToEnd}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى الشمال"
+        >
+          <ChevronsLeft className="w-4 h-4 text-amber-600" />
+        </button>
       </footer>
     </main>
 
