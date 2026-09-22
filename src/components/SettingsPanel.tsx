@@ -75,7 +75,10 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
   const [smtpPort, setSmtpPort] = useState(587);
   const [smtpUser, setSmtpUser] = useState('wd.cancellations@gmail.com');
   const [smtpPass, setSmtpPass] = useState('');
+  const [smtpHasSavedPassword, setSmtpHasSavedPassword] = useState(false);
   const [smtpSuccess, setSmtpSuccess] = useState('');
+  const [smtpError, setSmtpError] = useState('');
+  const [isSmtpSaving, setIsSmtpSaving] = useState(false);
 
   // Backup state
   const [backupSuccess, setBackupSuccess] = useState('');
@@ -139,10 +142,29 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
     }
   };
 
+  const fetchSmtpSettings = async () => {
+    if (user.role !== 'admin') return;
+    try {
+      const res = await fetch('/api/smtp-settings', {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSmtpHost(data.host || 'smtp.gmail.com');
+        setSmtpPort(data.port || 587);
+        setSmtpUser(data.username || '');
+        setSmtpHasSavedPassword(!!data.hasPassword);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchLabelNames();
     fetchCustomFields();
+    fetchSmtpSettings();
     // Pre-set default club value
     if (dropdowns.clubs && dropdowns.clubs.length > 0) {
       setNewClub(dropdowns.clubs[0]);
@@ -1082,8 +1104,13 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
             <p className="text-xxs text-slate-400">إدخال إعدادات البريد الإلكتروني الرسمي لتمكين النظام من إرسال مذكرات المطابقة والتنبيهات المباشرة للفروع والجهات الخارجية تلقائياً</p>
 
             {smtpSuccess && (
-              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-lg text-xs font-bold">
+              <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-xs font-bold">
                 {smtpSuccess}
+              </div>
+            )}
+            {smtpError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg text-xs font-bold">
+                {smtpError}
               </div>
             )}
 
@@ -1125,18 +1152,70 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
                   type="password"
                   value={smtpPass}
                   onChange={(e) => setSmtpPass(e.target.value)}
-                  placeholder="••••••••••••••••"
+                  placeholder={smtpHasSavedPassword ? "•••••••••••••••• (محفوظة -- اكتبي كلمة جديدة فقط لو عايزة تغيّريها)" : "••••••••••••••••"}
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-left font-mono focus:ring-2 focus:ring-amber-400 focus:outline-none"
                 />
               </div>
 
               <button
-                onClick={() => {
-                  setSmtpSuccess('تم التحقق وحفظ وتحديث تكوين البريد SMTP بنجاح!');
+                disabled={isSmtpSaving}
+                onClick={async () => {
+                  setSmtpSuccess('');
+                  setSmtpError('');
+                  if (!smtpHost.trim() || !smtpUser.trim()) {
+                    setSmtpError('خادم البريد واسم المستخدم مطلوبين.');
+                    return;
+                  }
+                  if (!smtpHasSavedPassword && !smtpPass.trim()) {
+                    setSmtpError('من فضلك أدخلي كلمة المرور (App Password) أول مرة.');
+                    return;
+                  }
+                  setIsSmtpSaving(true);
+                  try {
+                    const saveRes = await fetch('/api/smtp-settings', {
+                      method: 'PUT',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                      },
+                      body: JSON.stringify({
+                        host: smtpHost.trim(),
+                        port: smtpPort,
+                        username: smtpUser.trim(),
+                        password: smtpPass.trim() || undefined
+                      })
+                    });
+                    const saveData = await saveRes.json();
+                    if (!saveRes.ok) {
+                      setSmtpError(saveData.error || 'حدث خطأ أثناء حفظ الإعدادات');
+                      return;
+                    }
+
+                    // Confirm the credentials actually work before declaring success
+                    const testRes = await fetch('/api/smtp-settings/test', {
+                      method: 'POST',
+                      headers: { 'Authorization': `Bearer ${authToken}` }
+                    });
+                    const testData = await testRes.json();
+                    if (!testRes.ok) {
+                      setSmtpError(`تم حفظ الإعدادات، لكن الاتصال فشل: ${testData.error || 'تأكدي من صحة البيانات'}`);
+                      setSmtpHasSavedPassword(true);
+                      setSmtpPass('');
+                      return;
+                    }
+
+                    setSmtpSuccess('تم التحقق وحفظ وتحديث تكوين البريد SMTP بنجاح! الاتصال شغال والنظام جاهز يبعت إيميلات فعلية.');
+                    setSmtpHasSavedPassword(true);
+                    setSmtpPass('');
+                  } catch (err) {
+                    setSmtpError('تعذر الاتصال بالسيرفر. حاولي تاني.');
+                  } finally {
+                    setIsSmtpSaving(false);
+                  }
                 }}
-                className="w-full py-2.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold text-xs rounded-lg cursor-pointer shadow-xs transition-colors"
+                className="w-full py-2.5 bg-amber-400 hover:bg-amber-500 disabled:opacity-60 disabled:cursor-not-allowed text-neutral-950 font-bold text-xs rounded-lg cursor-pointer shadow-xs transition-colors"
               >
-                حفظ التكوين واختبار الاتصال المباشر
+                {isSmtpSaving ? 'جارِ الحفظ والاختبار...' : 'حفظ التكوين واختبار الاتصال المباشر'}
               </button>
             </div>
           </div>
