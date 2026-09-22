@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import nodemailer from "nodemailer";
 import { sqlDb, pool, ensureTablesExist } from "./src/db/index.js";
 import { appData } from "./src/db/schema.js";
 import { eq } from "drizzle-orm";
@@ -740,6 +741,25 @@ async function logAudit(username: string, name: string, role: string, action: st
   } catch (err) {
     console.warn("Could not write audit log:", err);
   }
+}
+
+// Builds a live nodemailer transporter from the saved SMTP settings, or
+// returns null if they're not fully configured yet (host/username/password
+// all required). Reused by both the actual "send email" endpoint and the
+// "test connection" endpoint in Settings, so they always agree on what
+// counts as "configured".
+function getMailer() {
+  const cfg = db.smtpSettings;
+  if (!cfg || !cfg.host || !cfg.username || !cfg.password) return null;
+  return nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port || 587,
+    secure: Number(cfg.port) === 465,
+    auth: {
+      user: cfg.username,
+      pass: cfg.password,
+    },
+  });
 }
 
 // // Prevent any caching layer (browser or CDN) from serving stale API responses
@@ -3156,22 +3176,116 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { requestId, type, recipient, subject, body } = req.body;
 
-  const newEmail = {
+  if (!recipient) {
+    return res.status(400).json({ error: "البريد الإلكتروني للمستلم مطلوب" });
+  }
+
+  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
+  const newEmail: any = {
     id: "mail-" + Date.now(),
-    sender: "Wadi Degla Cancellation Hub <cancellations@wadidegla.com>",
+    sender: `Wadi Degla Cancellation Hub <${senderAddress}>`,
     recipient,
     subject,
     body,
     sentAt: new Date().toISOString(),
     requestId,
-    type
+    type,
+    deliveryStatus: "failed",
+    deliveryError: undefined as string | undefined,
   };
+
+  const transporter = getMailer();
+  if (!transporter) {
+    newEmail.deliveryError = "إعدادات SMTP غير مكتملة";
+    db.emailLogs.unshift(newEmail);
+    await saveDb();
+    return res.status(422).json({
+      error: "لم يتم إرسال البريد فعليًا: إعدادات SMTP غير مكتملة. يرجى ضبطها من صفحة الإعدادات (إعدادات > SMTP) أولًا.",
+      email: newEmail
+    });
+  }
+
+  try {
+    await transporter.sendMail({
+      from: newEmail.sender,
+      to: recipient,
+      subject,
+      html: body,
+    });
+    newEmail.deliveryStatus = "sent";
+  } catch (err: any) {
+    newEmail.deliveryError = err?.message || "فشل الاتصال بخادم البريد";
+    db.emailLogs.unshift(newEmail);
+    await saveDb();
+    return res.status(502).json({
+      error: `تعذر إرسال البريد فعليًا: ${newEmail.deliveryError}`,
+      email: newEmail
+    });
+  }
 
   db.emailLogs.unshift(newEmail);
 
   await saveDb();
-  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
+  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني فعليًا إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
   res.json({ success: true, email: newEmail });
+});
+
+// --- SMTP Settings (Admin only) ---
+app.get("/api/smtp-settings", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية الاطلاع على إعدادات البريد" });
+  }
+  const cfg = db.smtpSettings || DEFAULT_DB.smtpSettings;
+  // Never send the actual password back to the browser -- just whether
+  // one is currently saved, so the UI can show a placeholder instead of
+  // requiring it to be re-typed every time.
+  res.json({
+    host: cfg.host || "",
+    port: cfg.port || 587,
+    username: cfg.username || "",
+    hasPassword: !!cfg.password,
+  });
+});
+
+app.put("/api/smtp-settings", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل إعدادات البريد" });
+  }
+  const { host, port, username, password } = req.body;
+  if (!host || !username) {
+    return res.status(400).json({ error: "خادم البريد (Host) واسم المستخدم مطلوبين" });
+  }
+  if (!db.smtpSettings) db.smtpSettings = { host: "", port: 587, username: "", password: "" };
+  db.smtpSettings.host = String(host).trim();
+  db.smtpSettings.port = Number(port) || 587;
+  db.smtpSettings.username = String(username).trim();
+  // Only overwrite the stored password if a new one was actually typed,
+  // so re-saving the host/port later doesn't wipe out the saved password.
+  if (password) {
+    db.smtpSettings.password = password;
+  }
+  await saveDb();
+  logAudit(user.username, user.name, user.role, "تحديث إعدادات SMTP", `تم تحديث إعدادات خادم البريد الإلكتروني (${db.smtpSettings.host})`);
+  res.json({ success: true });
+});
+
+app.post("/api/smtp-settings/test", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اختبار إعدادات البريد" });
+  }
+  const transporter = getMailer();
+  if (!transporter) {
+    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك ادخلي الخادم واسم المستخدم وكلمة المرور واحفظيهم أولًا." });
+  }
+  try {
+    await transporter.verify();
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message || "فشل الاتصال بخادم البريد. تأكدي من صحة البيانات (الخادم، المنفذ، اسم المستخدم، كلمة المرور)." });
+  }
 });
 
 // --- System Status Reconciliation (Excel upload update) ---
