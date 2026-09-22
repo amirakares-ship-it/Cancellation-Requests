@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   X, Download, Eye, ZoomIn, ZoomOut, RotateCw, FileText, Image as ImageIcon,
   Lock, Trash2, Calendar, User, Building, AlertCircle, CheckCircle, ExternalLink, ShieldCheck, ShieldAlert, Printer
@@ -32,6 +32,10 @@ export default function DocumentViewerModal({
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // Reference to the PDF preview iframe that's already visible in the page,
+  // so print can reuse the browser's own already-initialized PDF viewer
+  // instance instead of trying (and failing) to spin up a fresh hidden one.
+  const pdfIframeRef = useRef<HTMLIFrameElement>(null);
 
   const isPdf = attachment.fileType === 'application/pdf' || 
     attachment.fileName.toLowerCase().endsWith('.pdf') || 
@@ -58,9 +62,22 @@ export default function DocumentViewerModal({
   };
 
   const handlePrint = () => {
-    // Print via a hidden iframe injected into the current page, instead of
-    // opening a new tab/window -- stays on the same page; only the
-    // browser's native print dialog appears.
+    if (isPdf) {
+      // Reuse the already-visible, already-initialized PDF preview iframe --
+      // this is far more reliable than creating a fresh hidden one, since
+      // the browser's native PDF viewer inside it is already fully loaded.
+      try {
+        pdfIframeRef.current?.contentWindow?.focus();
+        pdfIframeRef.current?.contentWindow?.print();
+      } catch (e) {
+        console.error('PDF print error:', e);
+      }
+      return;
+    }
+
+    // Images: print via a hidden iframe injected into the current page,
+    // instead of opening a new tab/window -- stays on the same page; only
+    // the browser's native print dialog appears.
     const iframe = document.createElement('iframe');
     iframe.style.position = 'fixed';
     iframe.style.right = '0';
@@ -77,33 +94,19 @@ export default function DocumentViewerModal({
       }, 1000);
     };
 
-    if (isPdf) {
-      iframe.onload = () => {
-        setTimeout(() => {
-          try {
-            iframe.contentWindow?.focus();
-            iframe.contentWindow?.print();
-          } catch (e) {
-            console.error('PDF print error:', e);
-          }
-        }, 300);
-      };
-      iframe.src = attachment.fileData;
-    } else {
-      iframe.srcdoc = `
-        <html>
-          <head>
-            <style>
-              body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
-              img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-            </style>
-          </head>
-          <body>
-            <img src="${attachment.fileData}" onload="window.focus();window.print();" />
-          </body>
-        </html>
-      `;
-    }
+    iframe.srcdoc = `
+      <html>
+        <head>
+          <style>
+            body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
+            img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+          </style>
+        </head>
+        <body>
+          <img src="${attachment.fileData}" onload="window.focus();window.print();" />
+        </body>
+      </html>
+    `;
 
     window.addEventListener('focus', cleanup, { once: true });
     setTimeout(cleanup, 60000);
@@ -257,6 +260,7 @@ export default function DocumentViewerModal({
         <div className="flex-1 bg-slate-100 relative overflow-hidden flex items-center justify-center p-2">
           {isPdf ? (
             <iframe
+              ref={pdfIframeRef}
               src={attachment.fileData}
               title={attachment.fileName}
               className="w-full h-full rounded-lg border border-slate-300 shadow-inner bg-white"

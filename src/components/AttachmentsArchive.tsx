@@ -234,9 +234,20 @@ export default function AttachmentsArchive({
     try {
       const isPdf = item.fileType === 'application/pdf' || String(item.fileName).toLowerCase().endsWith('.pdf') || String(item.fileData).startsWith('data:application/pdf');
 
-      // Print via a hidden iframe injected into the current page, instead
-      // of opening a new tab/window -- keeps the person on the same page
-      // the whole time; only the browser's native print dialog appears.
+      if (isPdf) {
+        // Chrome's native PDF viewer (rendered out-of-process) doesn't
+        // reliably respond to a script-triggered print() call on a freshly
+        // created iframe -- opening it directly is the only reliable way
+        // to reach its own (working) print icon, without needing to click
+        // through this list into the preview modal first.
+        const win = window.open(item.fileData, '_blank');
+        win?.focus();
+        return;
+      }
+
+      // Images: print via a hidden iframe injected into the current page,
+      // instead of opening a new tab/window -- stays on the same page;
+      // only the browser's native print dialog appears.
       const iframe = document.createElement('iframe');
       iframe.style.position = 'fixed';
       iframe.style.right = '0';
@@ -253,37 +264,19 @@ export default function AttachmentsArchive({
         }, 1000);
       };
 
-      if (isPdf) {
-        iframe.onload = () => {
-          setTimeout(() => {
-            try {
-              iframe.contentWindow?.focus();
-              iframe.contentWindow?.print();
-            } catch (e) {
-              console.error('PDF print error:', e);
-            }
-          }, 300);
-        };
-        iframe.src = item.fileData;
-      } else {
-        iframe.onload = () => {
-          // The img's own onload (below) triggers the print once it has
-          // actually painted, so nothing else to do here.
-        };
-        iframe.srcdoc = `
-          <html>
-            <head>
-              <style>
-                body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
-                img { max-width: 100%; max-height: 100vh; object-fit: contain; }
-              </style>
-            </head>
-            <body>
-              <img src="${item.fileData}" onload="window.focus();window.print();" />
-            </body>
-          </html>
-        `;
-      }
+      iframe.srcdoc = `
+        <html>
+          <head>
+            <style>
+              body { margin: 0; display: flex; justify-content: center; align-items: center; background: #fff; }
+              img { max-width: 100%; max-height: 100vh; object-fit: contain; }
+            </style>
+          </head>
+          <body>
+            <img src="${item.fileData}" onload="window.focus();window.print();" />
+          </body>
+        </html>
+      `;
 
       window.addEventListener('focus', cleanup, { once: true });
       setTimeout(cleanup, 60000);
