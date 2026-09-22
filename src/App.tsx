@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { 
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal
 } from 'lucide-react';
 
 // Subcomponents
@@ -135,6 +135,7 @@ export default function App() {
   const [editingRequest, setEditingRequest] = useState<any | null>(null);
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -302,6 +303,29 @@ export default function App() {
       await fetchAllData();
     } finally {
       setIsManualRefreshing(false);
+    }
+  };
+
+  // Footer horizontal scroll controls -- scrolls the main content area
+  // left/right, matching the same convention used by TableScrollWrapper.
+  const handleFooterScrollRight = () => {
+    mainContentRef.current?.scrollBy({ left: 350, behavior: 'smooth' });
+  };
+  const handleFooterScrollLeft = () => {
+    mainContentRef.current?.scrollBy({ left: -350, behavior: 'smooth' });
+  };
+  const handleFooterScrollToStart = () => {
+    if (mainContentRef.current) {
+      const isNegativeMode = mainContentRef.current.scrollLeft <= 0;
+      mainContentRef.current.scrollTo({ left: isNegativeMode ? 0 : 10000, behavior: 'smooth' });
+    }
+  };
+  const handleFooterScrollToEnd = () => {
+    if (mainContentRef.current) {
+      const { scrollWidth, clientWidth, scrollLeft } = mainContentRef.current;
+      const maxScroll = scrollWidth - clientWidth;
+      const isNegativeMode = scrollLeft <= 0;
+      mainContentRef.current.scrollTo({ left: isNegativeMode ? -maxScroll : 0, behavior: 'smooth' });
     }
   };
 
@@ -1681,7 +1705,7 @@ export default function App() {
         </header>
 
         {/* Page Content Workspace */}
-        <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6">
+        <div ref={mainContentRef} className="flex-1 p-6 md:p-8 overflow-y-auto overflow-x-auto space-y-6">
         
         {/* TAB WORKFLOW INJECTION */}
 
@@ -1936,19 +1960,41 @@ export default function App() {
 
       </div>
 
-      {/* Bottom Status Bar */}
-      <footer className="h-8 bg-white border-t border-slate-200 px-8 flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase shrink-0 no-print flex-row-reverse">
-        <div className="flex gap-4 flex-row-reverse">
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span> 
-            قاعدة البيانات متصلة (Database Connected)
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-blue-500"></span> 
-            المزامنة تامة (Sync Complete)
-          </span>
-        </div>
-        <div>نظام إلغاء العضويات وادى دجلة v1.0.42 — Powered by DeepMind</div>
+      {/* Bottom Left-Right Scroll Bar */}
+      <footer className="h-9 bg-white border-t border-slate-200 px-4 flex items-center justify-center gap-2 shrink-0 no-print flex-row-reverse">
+        <MoveHorizontal className="w-4 h-4 text-amber-500 shrink-0" />
+        <button
+          type="button"
+          onClick={handleFooterScrollToStart}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى اليمين"
+        >
+          <ChevronsRight className="w-4 h-4 text-amber-600" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollRight}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يميناً"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollLeft}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يساراً"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollToEnd}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى الشمال"
+        >
+          <ChevronsLeft className="w-4 h-4 text-amber-600" />
+        </button>
       </footer>
     </main>
 
