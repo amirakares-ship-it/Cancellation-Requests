@@ -3,7 +3,7 @@ import {
   ArrowRight, Calculator, Check, AlertCircle, RefreshCw, Layers, Info,
   Upload, Paperclip, FileText, Image as ImageIcon, Trash2, Eye, Lock, Plus, X, ShieldCheck
 } from 'lucide-react';
-import { calculateAllFields, CalculationInput, toInputDateStr, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, isSameClub, isSameMembershipNumber, isArabicOnly, isValidExternalId, cleanLeadingZero, isBankPaymentMethod, isInternationalRequest } from '../utils';
+import { calculateAllFields, CalculationInput, toInputDateStr, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, isSameClub, isSameMembershipNumber, isArabicOnly, isValidExternalId, cleanLeadingZero, isBankPaymentMethod, isInternationalRequest, isReservedMembershipCode } from '../utils';
 import { CustomField, RequestAttachment } from '../types';
 import DocumentViewerModal from './DocumentViewerModal';
 
@@ -155,7 +155,16 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
   const [visaAmount, setVisaAmount] = useState(0);
   const [checksPaid, setChecksPaid] = useState(0);
   const [checksUnpaid, setChecksUnpaid] = useState(0);
+  // "اجمالى الشيكات" is a data-entry convenience only -- it is never sent in
+  // the payload or stored, and never touches any existing formula. It just
+  // helps fill checksPaid/checksUnpaid faster and mirrors their sum back.
+  const [checksTotal, setChecksTotal] = useState(0);
   const [annualRenewalDue, setAnnualRenewalDue] = useState(0);
+  // Tracks whether the user has actually entered a value (including 0) for
+  // "التجديد السنوي المستحق", since the displayed input is blank both when
+  // untouched and when the value is 0 -- this lets 0 count as a valid,
+  // deliberate entry while still catching a field left completely blank.
+  const [annualRenewalDueTouched, setAnnualRenewalDueTouched] = useState(false);
   const [debtABKCompanies, setDebtABKCompanies] = useState(0);
 
   // Overrides Support (Admins or designated roles can bypass standard formulas)
@@ -284,7 +293,9 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       setVisaAmount(request.visaAmount || 0);
       setChecksPaid(request.checksPaid || 0);
       setChecksUnpaid(request.checksUnpaid || 0);
+      setChecksTotal((request.checksPaid || 0) + (request.checksUnpaid || 0));
       setAnnualRenewalDue(request.annualRenewalDue || 0);
+      setAnnualRenewalDueTouched(true); // Existing request already has a stored value
       setDebtABKCompanies(request.debtABKCompanies || 0);
 
       // Check if overrides were explicitly set
@@ -574,6 +585,30 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
       setErrorMessage('قيمة التحويلة مطلوبة وإجبارية وأكبر من الصفر عند السداد عن طريق الشركات أو البنوك');
       return;
     }
+    if (paymentMethod === 'شيكات' && checksPaid <= 0 && checksUnpaid <= 0) {
+      setErrorMessage('يجب إدخال مبلغ في الشيكات المسددة أو الشيكات الغير مسددة على الأقل عند اختيار طريقة الدفع شيكات');
+      return;
+    }
+    if ((paymentMethod === 'نقدا' || paymentMethod === 'نقداً') && cashAmount <= 0 && visaAmount <= 0) {
+      setErrorMessage('يجب إدخال مبلغ في حقل مقدم نقدي أو مقدم فيزا على الأقل عند اختيار طريقة الدفع نقدا');
+      return;
+    }
+    if (!annualRenewalDueTouched) {
+      setErrorMessage('حقل (التجديد السنوي المستحق) إجباري، يمكنك إدخال صفر إذا لم يوجد تجديد مستحق');
+      return;
+    }
+
+    // At least the signed cancellation request document must be attached
+    // before a brand-new request can be registered. Only enforced when
+    // creating a new request -- editing an existing one that predates this
+    // rule shouldn't get blocked retroactively.
+    if (!isEditing) {
+      const hasCancellationRequestDoc = attachments.some(a => a.category === 'طلب الإلغاء الموقع');
+      if (!hasCancellationRequestDoc) {
+        setErrorMessage('يرجى رفع مستند "طلب الإلغاء الموقع" على الأقل قبل تسجيل الطلب.');
+        return;
+      }
+    }
 
     setErrorMessage('');
 
@@ -751,7 +786,10 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">{getLabel('membershipNumber', 'رقم العضوية')} <span className="text-rose-500">*</span></label>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">
+                  {getLabel('membershipNumber', 'رقم العضوية')} <span className="text-rose-500">*</span>
+                  {!isInternational && <span className="text-slate-400 font-normal"> (بدون 00400)</span>}
+                </label>
                 <input
                   type="text"
                   required
@@ -763,7 +801,7 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                       val = val.replace(/[^0-9]/g, '');
                       // Block any value that IS a prefix of, or starts with, the reserved sequence 00400
                       // (so typing 0, 00, 004, 0040, or 00400... is rejected at every step)
-                      if (val && ('00400'.startsWith(val) || val.startsWith('00400'))) {
+                      if (isReservedMembershipCode(val)) {
                         return; // Ignore this keystroke entirely
                       }
                     }
@@ -1443,6 +1481,18 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               يمكنك رفع استمارة طلب الإلغاء الموقعة، وصور بطاقة الرقم القومي، وإيصالات السداد، والتقارير الطبية/الاستثناءات بصيغة صور أو ملفات PDF.
             </p>
 
+            {!isEditing && (
+              <p className={`text-xs font-bold flex items-center gap-1.5 ${
+                attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? 'text-emerald-700' : 'text-rose-600'
+              }`}>
+                <span>{attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? '✓' : '⚠'}</span>
+                <span>
+                  رفع مستند "طلب الإلغاء الموقع" <span className="text-rose-500">إجباري</span> قبل تسجيل الطلب
+                  {attachments.some(a => a.category === 'طلب الإلغاء الموقع') ? ' (تم الرفع)' : ''}
+                </span>
+              </p>
+            )}
+
             {/* Dropzone */}
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -1551,13 +1601,12 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                               onChange={(e) => handleUpdateAttachmentCategory(att.id, e.target.value)}
                               className="w-full text-xs bg-white border border-slate-200 rounded-lg p-1.5 font-bold text-slate-800 focus:outline-none focus:border-amber-400 disabled:bg-slate-100 disabled:cursor-not-allowed"
                             >
-                              <option value="طلب الإلغاء الموقع">طلب الإلغاء الموقع</option>
-                              <option value="صورة بطاقة الرقم القومي">صورة بطاقة الرقم القومي</option>
-                              <option value="إيصال سداد / مخالصة">إيصال سداد / مخالصة</option>
-                              <option value="إقرار وتنازل معتمد">إقرار وتنازل معتمد</option>
-                              <option value="تقرير طبي / مستندات استثناء">تقرير طبي / مستندات استثناء</option>
-                              <option value="شيكات / مستندات بنكية">شيكات / مستندات بنكية</option>
-                              <option value="أخرى">أخرى</option>
+                              {(dropdowns?.documentTypes && dropdowns.documentTypes.length > 0
+                                ? dropdowns.documentTypes
+                                : ['طلب الإلغاء الموقع', 'صورة بطاقة الرقم القومي', 'إيصال سداد / مخالصة', 'إقرار وتنازل معتمد', 'تقرير طبي / مستندات استثناء', 'شيكات / مستندات بنكية', 'أخرى']
+                              ).map((cat: string) => (
+                                <option key={cat} value={cat}>{cat}</option>
+                              ))}
                             </select>
                           </div>
 
@@ -1660,13 +1709,39 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                 </div>
               </div>
 
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">اجمالى الشيكات</label>
+                <input
+                  type="number"
+                  value={checksTotal === 0 ? '' : checksTotal}
+                  onChange={(e) => {
+                    const newTotal = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                    setChecksTotal(newTotal);
+                    // Auto-fill convenience: only distribute the amount into
+                    // "شيكات غير مسددة" when "الشيكات المسددة" is still empty.
+                    // If the user already put something in "الشيكات المسددة",
+                    // leave both fields untouched and let them adjust manually.
+                    if (checksPaid === 0) {
+                      setChecksUnpaid(newTotal);
+                    }
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="0"
+                  className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left font-mono"
+                />
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">الشيكات المسددة</label>
                   <input
                     type="number"
                     value={checksPaid === 0 ? '' : checksPaid}
-                    onChange={(e) => setChecksPaid(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const newVal = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                      setChecksPaid(newVal);
+                      setChecksTotal(newVal + checksUnpaid);
+                    }}
                     onFocus={(e) => e.target.select()}
                     placeholder="0"
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left font-mono"
@@ -1677,7 +1752,11 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
                   <input
                     type="number"
                     value={checksUnpaid === 0 ? '' : checksUnpaid}
-                    onChange={(e) => setChecksUnpaid(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                    onChange={(e) => {
+                      const newVal = e.target.value === '' ? 0 : parseFloat(e.target.value) || 0;
+                      setChecksUnpaid(newVal);
+                      setChecksTotal(checksPaid + newVal);
+                    }}
                     onFocus={(e) => e.target.select()}
                     placeholder="0"
                     className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left font-mono"
@@ -1686,11 +1765,15 @@ export default function RequestForm({ request, user, dropdowns, existingRequests
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">التجديد السنوي المستحق</label>
+                <label className="block text-xs font-medium text-slate-500 mb-1">التجديد السنوي المستحق <span className="text-rose-500">*</span></label>
                 <input
                   type="number"
-                  value={annualRenewalDue === 0 ? '' : annualRenewalDue}
-                  onChange={(e) => setAnnualRenewalDue(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0)}
+                  value={annualRenewalDue === 0 ? (annualRenewalDueTouched ? 0 : '') : annualRenewalDue}
+                  onChange={(e) => {
+                    setAnnualRenewalDueTouched(true);
+                    setAnnualRenewalDue(e.target.value === '' ? 0 : parseFloat(e.target.value) || 0);
+                  }}
+                  onBlur={() => setAnnualRenewalDueTouched(true)}
                   onFocus={(e) => e.target.select()}
                   placeholder="0"
                   className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-amber-400 text-left font-mono"
