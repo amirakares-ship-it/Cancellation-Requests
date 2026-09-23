@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  FileCheck2, Search, CheckSquare, Calendar, RefreshCw, Filter, AlertCircle, CheckCircle2, RotateCcw, Tag, FileText, Edit3
+  FileCheck2, Search, CheckSquare, Calendar, RefreshCw, Filter, AlertCircle, CheckCircle2, RotateCcw, Tag, FileText, Edit3, Pin
 } from 'lucide-react';
 import { CancellationRequest, User, Dropdowns } from '../types';
 import { translateStatus, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, toInputDateStr, isSameClub, isInternationalRequest } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 import SettlementStatementModal from './SettlementStatementModal';
@@ -28,6 +29,7 @@ export default function CancellationStatusManager({
   const [memberNameSearch, setMemberNameSearch] = useState('');
   const [loanUnderNameSearch, setLoanUnderNameSearch] = useState('');
   const [membershipNumberSearch, setMembershipNumberSearch] = useState('');
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('cancellation-status-manager', user?.username);
   const [subscriptionTypeFilter, setSubscriptionTypeFilter] = useState<string[]>([]);
   const [committeeNoSearch, setCommitteeNoSearch] = useState<string[]>([]);
   const [committeeYearSearch, setCommitteeYearSearch] = useState<string[]>([]);
@@ -515,10 +517,25 @@ export default function CancellationStatusManager({
       {/* Advanced Multi-Field Search Panel */}
       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-          <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider flex items-center gap-2">
-            <Filter className="h-4 w-4 text-amber-500" />
-            <span>معايير البحث والفلترة المخصصة</span>
-          </h3>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleFiltersVisible}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+              title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+            >
+              <Filter className="h-4 w-4" />
+              <span>معايير البحث والفلترة المخصصة</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleFiltersPinned}
+              className={`flex items-center justify-center p-1.5 rounded-lg cursor-pointer transition-colors ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+              title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+            >
+              <Pin className={`h-3.5 w-3.5 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+            </button>
+          </div>
           <button
             type="button"
             onClick={handleResetFilters}
@@ -528,6 +545,7 @@ export default function CancellationStatusManager({
           </button>
         </div>
 
+        {filtersVisible && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
           {/* 1. Member Name */}
           <div>
@@ -635,6 +653,7 @@ export default function CancellationStatusManager({
             />
           </div>
         </div>
+        )}
       </div>
 
       {/* Bulk Status Update Control Panel */}

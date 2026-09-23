@@ -1,10 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { 
   FileSpreadsheet, Upload, Download, CheckCircle2, Building2, Search, Filter, 
-  Calculator, DollarSign, Info, Save, RefreshCw, ChevronDown, Check, ArrowRight, ShieldAlert, FileText, AlertCircle, X, CheckSquare, Square
+  Calculator, DollarSign, Info, Save, RefreshCw, ChevronDown, Check, ArrowRight, ShieldAlert, FileText, AlertCircle, X, CheckSquare, Square, Pin
 } from 'lucide-react';
 import { CancellationRequest, User, Dropdowns } from '../types';
 import { translateStatus, isCompanyPaymentMethod, isSameClub, isInternationalRequest } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import TableScrollWrapper from './TableScrollWrapper';
 import * as XLSX from 'xlsx';
 
@@ -41,6 +42,7 @@ export default function CompanyAndABKDebtsManager({
   const [clubFilter, setClubFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('ABK');
   const [debtStatusFilter, setDebtStatusFilter] = useState(''); // 'all', 'entered', 'pending'
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('company-abk-debts', user?.username);
 
   // Row selection checkboxes (One or All)
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -258,15 +260,31 @@ export default function CompanyAndABKDebtsManager({
           {/* Filters Bar */}
           <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-              <span className="text-xs font-black text-slate-700 flex items-center gap-2">
-                <Filter className="h-4 w-4 text-amber-500" />
-                <span>خيارات البحث وتصفية عضويات ABK والشركات</span>
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={toggleFiltersVisible}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-black cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                  title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+                >
+                  <Filter className="h-4 w-4" />
+                  <span>خيارات البحث وتصفية عضويات ABK والشركات</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={toggleFiltersPinned}
+                  className={`flex items-center justify-center p-1.5 rounded-lg cursor-pointer transition-colors ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+                  title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+                >
+                  <Pin className={`h-3.5 w-3.5 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+                </button>
+              </div>
               <span className="text-xxs font-bold text-slate-400">
                 إجمالي النتائج المطابقة: <strong className="text-amber-600 font-mono text-xs">{eligibleRequests.length}</strong> عضوية
               </span>
             </div>
 
+            {filtersVisible && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
               {/* Multi-Select Search (Membership No, Name, National ID, Loan Name) */}
               <div className="col-span-1 sm:col-span-2 lg:col-span-2 space-y-1.5">
@@ -389,6 +407,7 @@ export default function CompanyAndABKDebtsManager({
                 </select>
               </div>
             </div>
+            )}
           </div>
 
           {/* Action Feedback Notification */}

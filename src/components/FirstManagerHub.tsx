@@ -2,10 +2,11 @@ import React, { useState, useMemo } from 'react';
 import { 
   ShieldCheck, Clock, Layers, CheckCircle2, XCircle, Database, Search, 
   Download, FileText, Printer, AlertTriangle, RotateCcw, CheckSquare, 
-  Square, Sparkles, Filter, Eye, UserCheck, Check, FileCheck
+  Square, Sparkles, Filter, Eye, UserCheck, Check, FileCheck, Pin
 } from 'lucide-react';
 import { CancellationRequest } from '../types';
 import { formatCommitteeWithYear, formatCommitteeYear, containsSearchQuery, isInternationalRequest, isSameClub } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import SettlementStatementModal from './SettlementStatementModal';
 import FirstManagerDecisionModal from './FirstManagerDecisionModal';
@@ -56,6 +57,7 @@ export default function FirstManagerHub({
   const [selectedSubscriptionTypes, setSelectedSubscriptionTypes] = useState<string[]>([]);
   const [selectedCommittees, setSelectedCommittees] = useState<string[]>([]);
   const [selectedCommitteeYears, setSelectedCommitteeYears] = useState<string[]>([]);
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('first-manager-hub', user?.username);
   
   // Selection for bulk actions
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -608,9 +610,24 @@ export default function FirstManagerHub({
       {/* 3. Sub-filters and Search section */}
       <div className="bg-white p-4 rounded-xl border border-slate-200/90 shadow-2xs space-y-3">
         <div className="flex flex-col md:flex-row items-center justify-between gap-3 border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2 text-xs font-bold text-slate-700">
-            <Filter className="w-4 h-4 text-amber-600" />
-            <span>تصفية وتخصيص نتائج العرض الحالي ({filteredRequests.length} طلب)</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleFiltersVisible}
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+              title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+            >
+              <Filter className="w-4 h-4" />
+              <span>تصفية وتخصيص نتائج العرض الحالي ({filteredRequests.length} طلب)</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleFiltersPinned}
+              className={`flex items-center justify-center p-1.5 rounded-lg cursor-pointer transition-colors ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+              title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+            >
+              <Pin className={`w-3.5 h-3.5 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+            </button>
           </div>
 
           {hasActiveSubFilters && (
@@ -625,6 +642,7 @@ export default function FirstManagerHub({
           )}
         </div>
 
+        {filtersVisible && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {/* Quick Search */}
           <div className="relative">
@@ -696,6 +714,7 @@ export default function FirstManagerHub({
             />
           </div>
         </div>
+        )}
       </div>
 
       {/* Amber alert helper */}

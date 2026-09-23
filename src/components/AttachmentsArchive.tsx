@@ -3,10 +3,11 @@ import {
   Search, FileText, Image as ImageIcon, Download, Eye, Trash2, Upload, RefreshCw,
   Lock, Unlock, Filter, Layers, LayoutGrid, LayoutList, Calendar, User, Building,
   AlertCircle, CheckCircle2, ShieldCheck, ExternalLink, ShieldAlert, ArrowUpDown,
-  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw, Printer
+  Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw, Printer, Pin
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
 import { formatDateCustom } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
 
@@ -32,6 +33,7 @@ export default function AttachmentsArchive({
   onRefreshRequests
 }: AttachmentsArchiveProps) {
   const activeUser = currentUser || user;
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('attachments-archive', activeUser?.username);
   const [attachments, setAttachments] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState('');
@@ -336,6 +338,23 @@ export default function AttachmentsArchive({
         <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
           <button
             type="button"
+            onClick={toggleFiltersVisible}
+            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+            title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>فلاتر</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleFiltersPinned}
+            className={`flex items-center justify-center p-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+            title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+          >
+            <Pin className={`w-3.5 h-3.5 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+          </button>
+          <button
+            type="button"
             onClick={fetchAllAttachments}
             disabled={isLoading}
             className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
@@ -401,6 +420,7 @@ export default function AttachmentsArchive({
       )}
 
       {/* Filter & Search Bar */}
+      {filtersVisible && (
       <div className="bg-white p-3.5 sm:p-4 rounded-2xl border border-slate-200/80 shadow-2xs space-y-3">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
           {/* Search Box */}
@@ -490,6 +510,7 @@ export default function AttachmentsArchive({
           </div>
         </div>
       </div>
+      )}
 
       {/* Attachments Content View */}
       {isLoading ? (

@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip } from 'lucide-react';
+import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
 import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 import UploadDocumentModal from './UploadDocumentModal';
@@ -32,6 +33,7 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
   const [selectedCommittees, setSelectedCommittees] = useState<string[]>([]);
   const [selectedSubscriptionTypes, setSelectedSubscriptionTypes] = useState<string[]>([]);
   const [receiptFilters, setReceiptFilters] = useState<string[]>([]); // received, pending
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('advance-receipts', user?.username);
 
   // Subscription duration options
   const subscriptionTypeOptions = useMemo(() => {
@@ -373,6 +375,26 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
 
       {/* Filters bar */}
       <div className="bg-white p-4 rounded-xl border border-slate-100 shadow-xs flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleFiltersVisible}
+            className={`flex items-center gap-1.5 px-3.5 py-2 font-bold text-xs rounded-xl transition-all cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+            title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+          >
+            <Filter className="w-3.5 h-3.5" />
+            <span>فلاتر</span>
+          </button>
+          <button
+            type="button"
+            onClick={toggleFiltersPinned}
+            className={`flex items-center justify-center p-2 rounded-xl transition-all cursor-pointer ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+            title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+          >
+            <Pin className={`w-3.5 h-3.5 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+          </button>
+        </div>
+        {filtersVisible && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 items-center">
           {/* Search text */}
           <div className="relative">
@@ -453,6 +475,7 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
             />
           </div>
         </div>
+        )}
 
         {/* Request Count and Reset */}
         <div className="flex justify-between items-center pt-2 border-t border-slate-100 text-xxs font-bold text-slate-400">

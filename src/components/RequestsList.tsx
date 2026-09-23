@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
 import { 
   Search, Eye, Edit3, Trash2, Calendar, CreditCard, Layers, Tag, Plus, CheckSquare, AlertTriangle, RotateCcw, RefreshCw, Upload, Download, FileText, Check,
-  CheckCircle2, XCircle, ShieldCheck, Clock, FileCheck, FileUp, X, Paperclip
+  CheckCircle2, XCircle, ShieldCheck, Clock, FileCheck, FileUp, X, Paperclip, Filter, Pin
 } from 'lucide-react';
 import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode } from '../utils';
+import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 import SettlementStatementModal from './SettlementStatementModal';
@@ -38,6 +39,7 @@ export default function RequestsList({
   const [historyRequest, setHistoryRequest] = useState<any | null>(null);
   const [historyLogs, setHistoryLogs] = useState<any[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('requests-list', user?.username);
 
   const openHistory = async (r: any) => {
     setHistoryRequest(r);
@@ -381,6 +383,23 @@ export default function RequestsList({
             </h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={toggleFiltersVisible}
+              className={`flex items-center gap-1.5 px-3.5 py-2 font-black text-xs rounded-xl transition-all cursor-pointer active:scale-95 ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+              title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
+            >
+              <Filter className="h-4 w-4" />
+              <span>فلاتر</span>
+            </button>
+            <button
+              type="button"
+              onClick={toggleFiltersPinned}
+              className={`flex items-center justify-center p-2 rounded-xl transition-all cursor-pointer active:scale-95 ${filtersPinned ? 'bg-sky-100 text-sky-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-500'}`}
+              title={filtersPinned ? 'إلغاء تثبيت حالة الفلاتر' : 'تثبيت حالة الفلاتر (ظاهرة/مخفية) لزياراتك القادمة'}
+            >
+              <Pin className={`h-4 w-4 ${filtersPinned ? 'fill-sky-700' : ''}`} />
+            </button>
             {onExportExcel && (
               <button
                 type="button"
@@ -405,6 +424,7 @@ export default function RequestsList({
           </div>
         </div>
 
+        {filtersVisible && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3">
           {/* Quick Search */}
           <div className="relative">
@@ -516,6 +536,7 @@ export default function RequestsList({
             </div>
           )}
         </div>
+        )}
       </div>
 
       {/* Bulk Review / Delete Actions */}
