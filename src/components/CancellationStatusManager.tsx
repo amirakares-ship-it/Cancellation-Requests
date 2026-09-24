@@ -506,10 +506,10 @@ export default function CancellationStatusManager({
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={onRefresh}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-all cursor-pointer"
+            className="flex items-center justify-center p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-all cursor-pointer"
+            title="تحديث البيانات"
           >
             <RefreshCw className="h-4 w-4 text-slate-500" />
-            <span>تحديث البيانات</span>
           </button>
         </div>
       </div>
@@ -521,11 +521,10 @@ export default function CancellationStatusManager({
             <button
               type="button"
               onClick={toggleFiltersVisible}
-              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+              className={`flex items-center justify-center p-2 rounded-lg cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
               title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
             >
               <Filter className="h-4 w-4" />
-              <span>معايير البحث والفلترة المخصصة</span>
             </button>
             <button
               type="button"

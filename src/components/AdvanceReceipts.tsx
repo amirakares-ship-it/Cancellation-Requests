@@ -379,11 +379,10 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
           <button
             type="button"
             onClick={toggleFiltersVisible}
-            className={`flex items-center gap-1.5 px-3.5 py-2 font-bold text-xs rounded-xl transition-all cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+            className={`flex items-center justify-center p-2 rounded-xl transition-all cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
             title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
           >
             <Filter className="w-3.5 h-3.5" />
-            <span>فلاتر</span>
           </button>
           <button
             type="button"

@@ -264,11 +264,10 @@ export default function CompanyAndABKDebtsManager({
                 <button
                   type="button"
                   onClick={toggleFiltersVisible}
-                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-black cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                  className={`flex items-center justify-center p-2 rounded-lg cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
                   title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
                 >
                   <Filter className="h-4 w-4" />
-                  <span>خيارات البحث وتصفية عضويات ABK والشركات</span>
                 </button>
                 <button
                   type="button"
@@ -447,10 +446,10 @@ export default function CompanyAndABKDebtsManager({
               
               <button
                 onClick={onRefresh}
-                className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold text-xxs rounded-lg border border-slate-200 cursor-pointer shrink-0"
+                className="flex items-center justify-center p-2 bg-slate-50 hover:bg-slate-100 text-slate-700 rounded-lg border border-slate-200 cursor-pointer shrink-0"
+                title="تحديث البيانات"
               >
                 <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
-                <span>تحديث البيانات</span>
               </button>
             </div>
 

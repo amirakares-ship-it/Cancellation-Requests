@@ -363,11 +363,10 @@ export default function AttachmentsArchive({
           <button
             type="button"
             onClick={toggleFiltersVisible}
-            className={`flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-xl transition-colors cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+            className={`flex items-center justify-center p-2 rounded-xl transition-colors cursor-pointer ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
             title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
           >
             <Filter className="w-3.5 h-3.5" />
-            <span>فلاتر</span>
           </button>
           <button
             type="button"
@@ -381,11 +380,10 @@ export default function AttachmentsArchive({
             type="button"
             onClick={fetchAllAttachments}
             disabled={isLoading}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+            className="flex items-center justify-center p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
             title="تحديث البيانات"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>تحديث</span>
           </button>
         </div>
       </div>

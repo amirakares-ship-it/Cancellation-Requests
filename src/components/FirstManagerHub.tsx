@@ -296,10 +296,10 @@ export default function FirstManagerHub({
             <button
               type="button"
               onClick={() => onRefresh()}
-              className="flex items-center gap-1.5 px-3 py-2 bg-slate-700/80 hover:bg-slate-600 text-slate-200 font-medium text-xs rounded-xl border border-slate-600 transition-colors cursor-pointer"
+              className="flex items-center justify-center p-2 bg-slate-700/80 hover:bg-slate-600 text-slate-200 rounded-xl border border-slate-600 transition-colors cursor-pointer"
+              title="تحديث"
             >
               <RotateCcw className="w-4 h-4 text-slate-400" />
-              <span>تحديث</span>
             </button>
           </div>
         </div>
@@ -614,12 +614,12 @@ export default function FirstManagerHub({
             <button
               type="button"
               onClick={toggleFiltersVisible}
-              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+              className={`flex items-center justify-center p-2 rounded-lg cursor-pointer transition-colors ${filtersVisible ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
               title={filtersVisible ? 'إخفاء الفلاتر' : 'إظهار الفلاتر'}
             >
               <Filter className="w-4 h-4" />
-              <span>تصفية وتخصيص نتائج العرض الحالي ({filteredRequests.length} طلب)</span>
             </button>
+            <span className="text-xs font-bold text-slate-500">({filteredRequests.length} طلب)</span>
             <button
               type="button"
               onClick={toggleFiltersPinned}
