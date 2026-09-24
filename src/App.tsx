@@ -1861,6 +1861,7 @@ export default function App() {
         {activeTab === 'attachments' && (
           <AttachmentsArchive 
             user={currentUser}
+            dropdowns={dropdowns}
             onRefreshRequests={fetchAllData}
           />
         )}
