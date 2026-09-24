@@ -6,7 +6,7 @@ import {
   Plus, Check, X, FileCheck, Tag, Info, Paperclip, RotateCcw, Printer, Pin
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
-import { formatDateCustom, formatCommitteeWithYear } from '../utils';
+import { formatDateCustom, formatCommitteeYear } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import DocumentViewerModal from './DocumentViewerModal';
 import UploadDocumentModal from './UploadDocumentModal';
@@ -745,23 +745,41 @@ export default function AttachmentsArchive({
                       {row.club || '—'}
                     </td>
                     <td className="py-3 px-3 text-slate-600 font-semibold whitespace-nowrap">
-                      {formatCommitteeWithYear(row.committeeNo, row.committeeYear)}
+                      {row.committeeNo ? (
+                        <div className="leading-tight">
+                          <div>لجنة رقم {row.committeeNo}</div>
+                          <div className="text-[10px] text-slate-400 font-normal">({formatCommitteeYear(row.committeeYear)})</div>
+                        </div>
+                      ) : (
+                        <span>—</span>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       <div className="flex flex-wrap items-center gap-1.5">
                         {row.documents.map((doc: any) => {
                           const docIsPdf = doc.fileType === 'application/pdf' || String(doc.fileName).toLowerCase().endsWith('.pdf');
                           return (
-                            <button
-                              key={doc.id}
-                              type="button"
-                              onClick={() => setActiveViewerAttachment(doc)}
-                              title={doc.fileName}
-                              className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg font-bold text-[11px] cursor-pointer transition-colors max-w-[170px] ${docIsPdf ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
-                            >
-                              {docIsPdf ? <FileText className="w-3.5 h-3.5 shrink-0" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
-                              <span className="truncate">{doc.category || doc.fileName}</span>
-                            </button>
+                            <div key={doc.id} className="inline-flex items-center rounded-lg overflow-hidden">
+                              <button
+                                type="button"
+                                onClick={() => setActiveViewerAttachment(doc)}
+                                title={doc.fileName}
+                                className={`inline-flex items-center gap-1 px-2 py-1 font-bold text-[11px] cursor-pointer transition-colors max-w-[170px] ${docIsPdf ? 'bg-rose-50 text-rose-700 hover:bg-rose-100' : 'bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
+                              >
+                                {docIsPdf ? <FileText className="w-3.5 h-3.5 shrink-0" /> : <ImageIcon className="w-3.5 h-3.5 shrink-0" />}
+                                <span className="truncate">{doc.category || doc.fileName}</span>
+                              </button>
+                              {isAdmin && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownload(doc)}
+                                  title="تحميل المستند"
+                                  className={`inline-flex items-center justify-center px-1.5 py-1 cursor-pointer transition-colors border-r ${docIsPdf ? 'bg-rose-50 text-rose-600 hover:bg-rose-100 border-rose-200' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-200'}`}
+                                >
+                                  <Download className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
                           );
                         })}
                         <button
