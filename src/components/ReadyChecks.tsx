@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Upload, RefreshCw, Search, CreditCard, Trash2, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { Upload, RefreshCw, Search, CreditCard, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { User } from '../types';
 import { formatDateCustom, translateStatus, parseReadyChecksWorkbook } from '../utils';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -211,12 +211,14 @@ export default function ReadyChecks({ user, authToken, onDataChanged }: ReadyChe
         )}
 
         {isAdmin && (
-          <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 flex items-start gap-2">
-            <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
-            <div className="text-xxs text-sky-800 leading-relaxed">
-              <span className="font-black">الأعمدة المطلوبة في شيت الرفع:</span>
-              <span className="font-bold"> الاسم — تاريخ استحقاق الشيك — مبلغ الشيك — البنك — رقم العميل</span>
-              <span> (عمود "رقم العميل" إجباري وهو المستخدم للربط التلقائي بالطلب؛ باقي الأعمدة اختيارية وممكن ترتيبها أي شكل).</span>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
+            <span className="font-bold text-slate-700 block mb-2">أعمدة شيت الشيكات الجاهزة للاستلام المطلوب رفعها:</span>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center font-mono text-xxs font-bold">
+              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. الاسم</div>
+              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">2. تاريخ استحقاق الشيك</div>
+              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. مبلغ الشيك</div>
+              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. البنك</div>
+              <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">5. رقم العميل *</div>
             </div>
           </div>
         )}
