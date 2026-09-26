@@ -504,7 +504,12 @@ const DEFAULT_DB = {
     },
     customPaymentMethods: []
   },
-  customFields: []
+  customFields: [],
+  // "شيكات جاهزة للاستلام": checks uploaded by the admin from a bank/company
+  // sheet, linked to requests by "رقم العميل" (externalId). Re-uploading a
+  // sheet with an externalId that already exists updates that row instead
+  // of duplicating it.
+  readyChecks: [] as any[],
 };
 
 // Database state
@@ -606,6 +611,7 @@ async function loadDb() {
       }
     }
     if (!db.customFields || !Array.isArray(db.customFields)) db.customFields = [];
+    if (!db.readyChecks || !Array.isArray(db.readyChecks)) db.readyChecks = [];
     if (!db.labelNames) {
       db.labelNames = DEFAULT_DB.labelNames;
     } else if (!db.labelNames.mobileNumber) {
@@ -3077,9 +3083,11 @@ app.post("/api/requests/:id/first-manager-action", requireAuth, async (req, res)
     return res.status(404).json({ error: "الطلب غير موجود" });
   }
 
-  const { approve, comments } = req.body;
+  const { approve, comments, rejectionDate } = req.body;
   const todayStr = new Date().toISOString().split("T")[0];
-  
+  const isValidDateStr = typeof rejectionDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rejectionDate);
+  const effectiveRejectionDate = isValidDateStr ? rejectionDate : todayStr;
+
   if (approve) {
     request.firstManagerApproved = true;
     request.firstManagerComments = comments || "";
@@ -3098,8 +3106,8 @@ app.post("/api/requests/:id/first-manager-action", requireAuth, async (req, res)
     request.firstManagerDecisionDate = todayStr;
     request.result = "Rejected";
     request.status = "Rejected" as any;
-    request.statusDate = todayStr;
-    (request as any).cancellationStatusDate = todayStr;
+    request.statusDate = effectiveRejectionDate;
+    (request as any).cancellationStatusDate = effectiveRejectionDate;
     request.approvalSentToSectorManager = false;
     request.sectorManagerApproved = null;
   }
@@ -3290,6 +3298,37 @@ app.post("/api/smtp-settings/test", requireAuth, async (req, res) => {
     res.json({ success: true });
   } catch (err: any) {
     res.status(502).json({ error: err?.message || "فشل الاتصال بخادم البريد. تأكدي من صحة البيانات (الخادم، المنفذ، اسم المستخدم، كلمة المرور)." });
+  }
+});
+
+// Unlike "/test" above (which only verifies the SMTP login/connection),
+// this actually sends a real email to a chosen address -- the only way to
+// confirm messages truly get delivered, not just that the login works.
+app.post("/api/smtp-settings/send-test", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اختبار إعدادات البريد" });
+  }
+  const { to } = req.body;
+  if (!to || !String(to).trim()) {
+    return res.status(400).json({ error: "من فضلك ادخلي بريد إلكتروني تستلمي عليه رسالة الاختبار" });
+  }
+  const transporter = getMailer();
+  if (!transporter) {
+    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك ادخلي الخادم واسم المستخدم وكلمة المرور واحفظيهم أولًا." });
+  }
+  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
+  try {
+    const info = await transporter.sendMail({
+      from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
+      to: String(to).trim(),
+      subject: "رسالة اختبار -- منظومة إلغاء العضويات وادي دجلة",
+      html: `<p>ده اختبار للتأكد إن إعدادات البريد شغالة صح.</p><p>لو وصلتك الرسالة دي، يبقى الإعدادات سليمة والنظام جاهز يبعت إيميلات فعلية.</p><p style="color:#888;font-size:12px">تم الإرسال في: ${new Date().toISOString()}</p>`,
+    });
+    logAudit(user.username, user.name, user.role, "إرسال بريد اختباري", `تم إرسال بريد اختباري إلى ${to}`);
+    res.json({ success: true, messageId: info?.messageId || null });
+  } catch (err: any) {
+    res.status(502).json({ error: err?.message || "فشل إرسال البريد الاختباري. تأكدي من صحة البيانات، ومن استخدام App Password صحيحة لو بتستخدمي Gmail." });
   }
 });
 
@@ -3924,6 +3963,127 @@ app.get("/api/logs/audit", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
   }
   res.json(db.auditLogs);
+});
+
+// ----- "شيكات جاهزة للاستلام" -----
+// Checks uploaded by the admin (matched to requests via "رقم العميل" /
+// externalId). Every non-admin role only ever sees the rows whose linked
+// request belongs to their own club.
+
+app.get("/api/ready-checks", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  const rows = (db.readyChecks || []).map((c: any) => {
+    const linkedRequest = c.requestId != null ? db.requests.find((r) => String(r.id) === String(c.requestId)) : null;
+    return {
+      id: c.id,
+      name: c.name,
+      checkDueDate: c.checkDueDate,
+      checkAmount: c.checkAmount,
+      bank: c.bank,
+      externalId: c.externalId,
+      uploadedAt: c.uploadedAt,
+      uploadedBy: c.uploadedBy,
+      requestId: c.requestId || null,
+      committeeNo: linkedRequest?.committeeNo || null,
+      committeeYear: linkedRequest?.committeeYear || null,
+      membershipNumber: linkedRequest?.membershipNumber || null,
+      paymentMethod: linkedRequest?.paymentMethod || null,
+      mobileNumber: linkedRequest?.mobileNumber || null,
+      club: linkedRequest?.club || null,
+      requestStatus: linkedRequest?.status || null,
+    };
+  });
+
+  const visibleRows = user.role === "admin"
+    ? rows
+    : rows.filter((c) => c.club && isSameClub(c.club, user.club));
+
+  const readyCount = visibleRows.filter((c) => ["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || "")).length;
+
+  res.json({ rows: visibleRows, readyCount });
+});
+
+app.post("/api/ready-checks/upload", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية رفع شيت الشيكات الجاهزة للاستلام" });
+  }
+
+  const { rows } = req.body;
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return res.status(400).json({ error: "الشيت فارغ أو غير صالح" });
+  }
+
+  if (!Array.isArray(db.readyChecks)) db.readyChecks = [];
+
+  let updatedCount = 0;
+  let addedCount = 0;
+  let linkedCount = 0;
+
+  for (const row of rows) {
+    const externalId = String(row.externalId || "").trim();
+    if (!externalId) continue;
+
+    const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
+
+    const existingIndex = db.readyChecks.findIndex((c: any) => String(c.externalId || "").trim() === externalId);
+    const entry = {
+      id: existingIndex >= 0 ? db.readyChecks[existingIndex].id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: row.name || "",
+      checkDueDate: row.checkDueDate || "",
+      checkAmount: Number(row.checkAmount) || 0,
+      bank: row.bank || "",
+      externalId,
+      requestId: linkedRequest ? linkedRequest.id : null,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: user.name || user.username,
+    };
+
+    if (existingIndex >= 0) {
+      db.readyChecks[existingIndex] = entry;
+      updatedCount++;
+    } else {
+      db.readyChecks.push(entry);
+      addedCount++;
+    }
+
+    if (linkedRequest) {
+      linkedCount++;
+      // Marks this request's finance-memo stage as "الشيك جاهز للاستلام"
+      // instead of "تم ارسال المذكرة الى الادارة المالية" -- harmless/inert
+      // for requests that have already moved past that stage.
+      linkedRequest.checkReadyForPickup = true;
+    }
+  }
+
+  await saveDb();
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "رفع شيت شيكات جاهزة للاستلام",
+    `تم رفع ${rows.length} صف (${addedCount} جديد، ${updatedCount} تحديث)، تم ربط ${linkedCount} منهم بطلبات موجودة`
+  );
+
+  res.json({ success: true, addedCount, updatedCount, linkedCount });
+});
+
+app.delete("/api/ready-checks/:id", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية حذف صفوف شيكات جاهزة للاستلام" });
+  }
+
+  const index = (db.readyChecks || []).findIndex((c: any) => c.id === req.params.id);
+  if (index === -1) {
+    return res.status(404).json({ error: "الصف غير موجود" });
+  }
+  const removed = db.readyChecks[index];
+  db.readyChecks.splice(index, 1);
+  await saveDb();
+
+  logAudit(user.username, user.name, user.role, "حذف صف شيك جاهز للاستلام", `تم حذف شيك "${removed.name}" (رقم عميل ${removed.externalId})`);
+  res.json({ success: true });
 });
 
 // --- Global Error Handler ---

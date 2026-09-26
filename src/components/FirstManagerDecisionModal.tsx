@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { CheckCircle2, XCircle, AlertCircle, MessageSquare, ShieldCheck, X, FileText, Printer, FileCheck } from 'lucide-react';
+import { CheckCircle2, XCircle, AlertCircle, MessageSquare, ShieldCheck, X, FileText, Printer, FileCheck, Calendar } from 'lucide-react';
 import { CancellationRequest } from '../types';
 
 interface FirstManagerDecisionModalProps {
   isOpen: boolean;
   request: CancellationRequest | null;
   onClose: () => void;
-  onDecision: (reqId: number, approve: boolean, comments: string) => Promise<void>;
+  onDecision: (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => Promise<void>;
   isSubmitting?: boolean;
   onOpenStatement?: (req: CancellationRequest) => void;
   onOpenPDF?: (req: CancellationRequest) => void;
@@ -23,11 +23,14 @@ export default function FirstManagerDecisionModal({
 }: FirstManagerDecisionModalProps) {
   const [comments, setComments] = useState('');
   const [error, setError] = useState('');
+  const todayInputStr = new Date().toISOString().split('T')[0];
+  const [rejectionDate, setRejectionDate] = useState(todayInputStr);
 
   useEffect(() => {
     if (request) {
       setComments(request.firstManagerComments || '');
       setError('');
+      setRejectionDate(todayInputStr);
     }
   }, [request]);
 
@@ -41,14 +44,8 @@ export default function FirstManagerDecisionModal({
       return;
     }
     setError('');
-    await onDecision(request.id, approve, comments.trim());
+    await onDecision(request.id, approve, comments.trim(), approve ? undefined : rejectionDate);
   };
-
-  const todayStr = new Date().toLocaleDateString('ar-EG', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-right no-print" dir="rtl">
@@ -231,13 +228,30 @@ export default function FirstManagerDecisionModal({
           )}
         </div>
 
+        {/* Rejection Date -- only relevant when rejecting; defaults to today, editable manually */}
+        <div className="space-y-1.5">
+          <label className="block text-xs font-bold text-slate-700 flex items-center gap-1.5">
+            <Calendar className="h-3.5 w-3.5 text-slate-400" />
+            تاريخ الرفض (في حالة اختيار رفض الطلب):
+          </label>
+          <input
+            type="date"
+            value={rejectionDate}
+            onChange={(e) => setRejectionDate(e.target.value)}
+            className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono"
+          />
+          <p className="text-[10px] text-slate-400">
+            افتراضيًا تاريخ اليوم، ويمكن تغييره يدويًا قبل تأكيد الرفض.
+          </p>
+        </div>
+
         {/* Info banner */}
         <div className="text-[11px] text-slate-500 bg-amber-50/60 p-2.5 rounded-lg border border-amber-200/60 flex items-start gap-2">
           <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="leading-relaxed">
             <ul className="list-disc list-inside space-y-0.5 text-xxs">
               <li><strong>في حالة الموافقة (Accept)</strong>: يتم تحويل الطلب تلقائياً لملف رئيس قطاع المالية للاعتماد النهائي.</li>
-              <li><strong>في حالة الرفض (Reject)</strong>: يتم تحويل حالة الطلب إلى <span className="font-bold text-rose-600">Rejected</span> وتثبيت تاريخ الحالة إلى تاريخ اليوم (<span className="font-mono">{todayStr}</span>).</li>
+              <li><strong>في حالة الرفض (Reject)</strong>: يتم تحويل حالة الطلب إلى <span className="font-bold text-rose-600">Rejected</span> وتثبيت تاريخ الحالة إلى التاريخ المحدد أعلاه (<span className="font-mono">{rejectionDate}</span>).</li>
             </ul>
           </div>
         </div>

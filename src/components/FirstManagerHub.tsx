@@ -20,8 +20,8 @@ interface FirstManagerHubProps {
   mode?: 'pending' | 'decided' | 'all';
   onRefresh: () => Promise<void> | void;
   onExportExcel?: (reqs: any[]) => void;
-  onFirstManagerDecision: (reqId: number, approve: boolean, comments: string) => Promise<void>;
-  onBulkDecision?: (ids: number[], approve: boolean, comments: string) => Promise<void>;
+  onFirstManagerDecision: (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => Promise<void>;
+  onBulkDecision?: (ids: number[], approve: boolean, comments: string, rejectionDate?: string) => Promise<void>;
   onAttachPdf?: (reqId: number, pdfData: string, pdfName: string, pdfSize: number, notes: string) => Promise<void>;
 }
 
@@ -63,6 +63,7 @@ export default function FirstManagerHub({
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkActionType, setBulkActionType] = useState<'accept' | 'reject' | null>(null);
   const [bulkComments, setBulkComments] = useState('');
+  const [bulkRejectionDate, setBulkRejectionDate] = useState(new Date().toISOString().split('T')[0]);
   const [isBulkSubmitting, setIsBulkSubmitting] = useState(false);
 
   // Modals target
@@ -205,10 +206,10 @@ export default function FirstManagerHub({
     }
   };
 
-  const handleIndividualDecision = async (reqId: number, approve: boolean, comments: string) => {
+  const handleIndividualDecision = async (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => {
     setIsSubmittingDecision(true);
     try {
-      await onFirstManagerDecision(reqId, approve, comments);
+      await onFirstManagerDecision(reqId, approve, comments, rejectionDate);
       setDecisionModalTarget(null);
     } finally {
       setIsSubmittingDecision(false);
@@ -225,16 +226,18 @@ export default function FirstManagerHub({
 
     setIsBulkSubmitting(true);
     try {
+      const effectiveRejectionDate = approve ? undefined : bulkRejectionDate;
       if (onBulkDecision) {
-        await onBulkDecision(selectedIds, approve, bulkComments.trim());
+        await onBulkDecision(selectedIds, approve, bulkComments.trim(), effectiveRejectionDate);
       } else {
         for (const id of selectedIds) {
-          await onFirstManagerDecision(id, approve, bulkComments.trim());
+          await onFirstManagerDecision(id, approve, bulkComments.trim(), effectiveRejectionDate);
         }
       }
       setSelectedIds([]);
       setBulkActionType(null);
       setBulkComments('');
+      setBulkRejectionDate(new Date().toISOString().split('T')[0]);
       await onRefresh();
     } catch (err) {
       console.error("Bulk decision failed:", err);
@@ -814,6 +817,18 @@ export default function FirstManagerHub({
                   className="text-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-white w-60 focus:outline-none focus:ring-1 focus:ring-amber-400"
                 />
 
+                {bulkActionType === 'reject' && (
+                  <div className="flex items-center gap-1.5">
+                    <label className="text-xxs text-slate-400 font-bold whitespace-nowrap">تاريخ الرفض:</label>
+                    <input
+                      type="date"
+                      value={bulkRejectionDate}
+                      onChange={(e) => setBulkRejectionDate(e.target.value)}
+                      className="text-xs bg-slate-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono focus:outline-none focus:ring-1 focus:ring-amber-400"
+                    />
+                  </div>
+                )}
+
                 <button
                   type="button"
                   disabled={isBulkSubmitting}
@@ -829,7 +844,7 @@ export default function FirstManagerHub({
 
                 <button
                   type="button"
-                  onClick={() => { setBulkActionType(null); setBulkComments(''); }}
+                  onClick={() => { setBulkActionType(null); setBulkComments(''); setBulkRejectionDate(new Date().toISOString().split('T')[0]); }}
                   className="text-xs text-slate-400 hover:text-white px-2"
                 >
                   تراجع

@@ -79,6 +79,9 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
   const [smtpSuccess, setSmtpSuccess] = useState('');
   const [smtpError, setSmtpError] = useState('');
   const [isSmtpSaving, setIsSmtpSaving] = useState(false);
+  const [testEmailRecipient, setTestEmailRecipient] = useState('');
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
+  const [testEmailResult, setTestEmailResult] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Backup state
   const [backupSuccess, setBackupSuccess] = useState('');
@@ -160,15 +163,27 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
     }
   };
 
+  // Runs once on mount only -- these fetch this page's own saved settings,
+  // and must NOT re-run every time `dropdowns` refreshes in the background
+  // (the app polls it periodically), or an admin mid-edit here -- e.g.
+  // typing a new SMTP email/app password before saving -- would have their
+  // unsaved input silently overwritten back to what's already saved.
   useEffect(() => {
     fetchUsers();
     fetchLabelNames();
     fetchCustomFields();
     fetchSmtpSettings();
-    // Pre-set default club value
-    if (dropdowns.clubs && dropdowns.clubs.length > 0) {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Pre-set the default club for the "add user" form once the clubs list
+  // actually loads -- only when nothing has been chosen yet, so it doesn't
+  // clobber an in-progress selection on later background refreshes.
+  useEffect(() => {
+    if (!newClub && dropdowns.clubs && dropdowns.clubs.length > 0) {
       setNewClub(dropdowns.clubs[0]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dropdowns]);
 
   const resetCustomFieldForm = () => {
@@ -1217,6 +1232,64 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
               >
                 {isSmtpSaving ? 'جارِ الحفظ والاختبار...' : 'حفظ التكوين واختبار الاتصال المباشر'}
               </button>
+
+              {/* Real deliverability test -- unlike the connection check
+                  above, this actually sends a message to a real inbox so
+                  you can confirm it truly arrives, not just that login works. */}
+              <div className="pt-4 mt-4 border-t border-slate-100 space-y-2">
+                <label className="block text-xxs font-bold text-slate-500">
+                  اختبار إرسال فعلي (بريد حقيقي هيوصل لصندوق الوارد):
+                </label>
+                {testEmailResult && (
+                  <div className={`p-2.5 rounded-lg text-xxs font-bold ${testEmailResult.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'}`}>
+                    {testEmailResult.text}
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="email"
+                    value={testEmailRecipient}
+                    onChange={(e) => setTestEmailRecipient(e.target.value)}
+                    placeholder="اكتبي بريدك الإلكتروني عشان تستلمي رسالة الاختبار..."
+                    className="flex-1 border border-slate-200 rounded-lg p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <button
+                    type="button"
+                    disabled={isSendingTestEmail}
+                    onClick={async () => {
+                      setTestEmailResult(null);
+                      if (!testEmailRecipient.trim()) {
+                        setTestEmailResult({ type: 'error', text: 'من فضلك اكتبي بريد إلكتروني تستلمي عليه رسالة الاختبار' });
+                        return;
+                      }
+                      setIsSendingTestEmail(true);
+                      try {
+                        const res = await fetch('/api/smtp-settings/send-test', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${authToken}`
+                          },
+                          body: JSON.stringify({ to: testEmailRecipient.trim() })
+                        });
+                        const data = await res.json();
+                        if (res.ok) {
+                          setTestEmailResult({ type: 'success', text: 'تم إرسال رسالة الاختبار فعليًا -- افحصي بريدك الوارد (وصندوق الرسائل غير المرغوب فيها/Spam كمان) خلال دقيقة.' });
+                        } else {
+                          setTestEmailResult({ type: 'error', text: data.error || 'فشل إرسال رسالة الاختبار' });
+                        }
+                      } catch (err) {
+                        setTestEmailResult({ type: 'error', text: 'تعذر الاتصال بالسيرفر. حاولي تاني.' });
+                      } finally {
+                        setIsSendingTestEmail(false);
+                      }
+                    }}
+                    className="shrink-0 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-xs rounded-lg cursor-pointer transition-colors"
+                  >
+                    {isSendingTestEmail ? 'جارِ الإرسال...' : 'إرسال بريد اختباري'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

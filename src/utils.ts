@@ -692,6 +692,67 @@ export function isCompanyPaymentMethod(method: string): boolean {
   return !nonCompanyMethods.includes(method.trim());
 }
 
+// Parses an uploaded "شيكات جاهزة للاستلام" sheet. Expected columns (any
+// order): م / الاسم / تاريخ استحقاق الشيك / مبلغ الشيك / البنك / رقم العميل.
+// Rows with no client number (رقم العميل) are skipped since they can't be
+// linked to a request.
+export function parseReadyChecksWorkbook(data: Uint8Array): Array<{
+  name: string;
+  checkDueDate: string;
+  checkAmount: number;
+  bank: string;
+  externalId: string;
+}> {
+  const workbook = XLSX.read(data, { type: 'array' });
+  const sheetName = workbook.SheetNames[0];
+  const sheet = workbook.Sheets[sheetName];
+  if (!sheet) return [];
+
+  const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+
+  const findKey = (rowObj: any, candidates: string[]): string | null => {
+    const keys = Object.keys(rowObj);
+    for (const k of keys) {
+      const norm = normalizeHeaderKey(k);
+      if (candidates.some((c) => norm.includes(normalizeHeaderKey(c)))) {
+        return k;
+      }
+    }
+    return null;
+  };
+
+  const results: Array<{ name: string; checkDueDate: string; checkAmount: number; bank: string; externalId: string; }> = [];
+
+  for (const row of rawRows) {
+    const nameKey = findKey(row, ['الاسم', 'اسمالعضو', 'name']);
+    const dateKey = findKey(row, ['تاريخاستحقاق', 'تاريخالاستحقاق', 'duedate', 'تاريخالشيك']);
+    const amountKey = findKey(row, ['مبلغالشيك', 'المبلغ', 'amount']);
+    const bankKey = findKey(row, ['البنك', 'bank']);
+    const extIdKey = findKey(row, ['رقمالعميل', 'externalid', 'كودالعميل']);
+
+    const externalId = extIdKey ? String(row[extIdKey]).trim() : '';
+    if (!externalId) continue;
+
+    let checkDueDate: any = dateKey ? row[dateKey] : '';
+    if (typeof checkDueDate === 'number') {
+      const parsedDate = (XLSX as any).SSF?.parse_date_code?.(checkDueDate);
+      if (parsedDate) {
+        checkDueDate = `${parsedDate.y}-${String(parsedDate.m).padStart(2, '0')}-${String(parsedDate.d).padStart(2, '0')}`;
+      }
+    }
+
+    results.push({
+      name: nameKey ? String(row[nameKey]).trim() : '',
+      checkDueDate: String(checkDueDate || '').trim(),
+      checkAmount: amountKey ? parseSmartNumber(row[amountKey]) : 0,
+      bank: bankKey ? String(row[bankKey]).trim() : '',
+      externalId,
+    });
+  }
+
+  return results;
+}
+
 export function isBankPaymentMethod(method: string | undefined | null): boolean {
   if (!method) return false;
   const trimmed = method.trim();

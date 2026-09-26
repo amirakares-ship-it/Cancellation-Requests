@@ -587,7 +587,11 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                           </span>
                           {getPendingSubStatus(req) === '(الشيك تحت الاصدار)' && (
                             <span className="block text-[9px] font-bold text-slate-500 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
-                              ( تم ارسال المذكرة الى الادارة المالية )
+                              {req.checkReadyForPickup
+                                ? '( الشيك جاهز للاستلام )'
+                                : req.financeMemoSentDate
+                                  ? '( تم ارسال المذكرة الى الادارة المالية )'
+                                  : '( جارى تجهيز المذكرة )'}
                             </span>
                           )}
                         </>

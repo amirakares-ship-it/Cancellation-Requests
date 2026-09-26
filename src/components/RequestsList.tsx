@@ -231,6 +231,7 @@ export default function RequestsList({
   const getDisplaySubStatus = (r: any) => {
     const raw = getPendingSubStatus(r);
     if (raw === '(الشيك تحت الاصدار)') {
+      if (r.checkReadyForPickup) return 'الشيك جاهز للاستلام';
       return r.financeMemoSentDate ? 'تم ارسال المذكرة الى الادارة المالية' : '(جارى تجهيز المذكرة)';
     }
     return raw;
