@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Upload, RefreshCw, Search, CreditCard, Trash2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Upload, RefreshCw, Search, CreditCard, Trash2, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { User } from '../types';
 import { formatDateCustom, translateStatus, parseReadyChecksWorkbook } from '../utils';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -37,6 +37,9 @@ export default function ReadyChecks({ user, authToken, onDataChanged }: ReadyChe
   const [search, setSearch] = useState('');
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [selectedClub, setSelectedClub] = useState('all');
+  const [selectedCommitteeNo, setSelectedCommitteeNo] = useState('all');
+  const [selectedCommitteeYear, setSelectedCommitteeYear] = useState('all');
 
   const isAdmin = user.role === 'admin';
 
@@ -126,15 +129,38 @@ export default function ReadyChecks({ user, authToken, onDataChanged }: ReadyChe
     }
   };
 
+  const clubOptions = useMemo(() => {
+    const set = new Set<string>();
+    rows.forEach((r) => { if (r.club) set.add(r.club); });
+    return Array.from(set).sort();
+  }, [rows]);
+
+  const committeeNoOptions = useMemo(() => {
+    const set = new Set<string>();
+    rows.forEach((r) => { if (r.committeeNo) set.add(r.committeeNo); });
+    return Array.from(set).sort();
+  }, [rows]);
+
+  const committeeYearOptions = useMemo(() => {
+    const set = new Set<string>();
+    rows.forEach((r) => { if (r.committeeYear) set.add(r.committeeYear); });
+    return Array.from(set).sort();
+  }, [rows]);
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return rows;
-    return rows.filter((r) =>
-      (r.name || '').toLowerCase().includes(q) ||
-      (r.externalId || '').toLowerCase().includes(q) ||
-      (r.membershipNumber || '').toLowerCase().includes(q)
-    );
-  }, [rows, search]);
+    return rows.filter((r) => {
+      if (q && !(
+        (r.name || '').toLowerCase().includes(q) ||
+        (r.externalId || '').toLowerCase().includes(q) ||
+        (r.membershipNumber || '').toLowerCase().includes(q)
+      )) return false;
+      if (selectedClub !== 'all' && r.club !== selectedClub) return false;
+      if (selectedCommitteeNo !== 'all' && r.committeeNo !== selectedCommitteeNo) return false;
+      if (selectedCommitteeYear !== 'all' && r.committeeYear !== selectedCommitteeYear) return false;
+      return true;
+    });
+  }, [rows, search, selectedClub, selectedCommitteeNo, selectedCommitteeYear]);
 
   return (
     <div className="space-y-6 text-right font-sans" dir="rtl">
@@ -184,16 +210,58 @@ export default function ReadyChecks({ user, authToken, onDataChanged }: ReadyChe
           </div>
         )}
 
-        {/* Search */}
-        <div className="relative max-w-sm">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="ابحث بالاسم أو رقم العميل أو رقم العضوية..."
-            className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-400 text-right"
-          />
+        {isAdmin && (
+          <div className="bg-sky-50 border border-sky-200 rounded-lg p-3 flex items-start gap-2">
+            <Info className="h-4 w-4 text-sky-600 shrink-0 mt-0.5" />
+            <div className="text-xxs text-sky-800 leading-relaxed">
+              <span className="font-black">الأعمدة المطلوبة في شيت الرفع:</span>
+              <span className="font-bold"> الاسم — تاريخ استحقاق الشيك — مبلغ الشيك — البنك — رقم العميل</span>
+              <span> (عمود "رقم العميل" إجباري وهو المستخدم للربط التلقائي بالطلب؛ باقي الأعمدة اختيارية وممكن ترتيبها أي شكل).</span>
+            </div>
+          </div>
+        )}
+
+        {/* Search & Filters */}
+        <div className="flex flex-col md:flex-row md:items-center gap-2.5">
+          <div className="relative max-w-sm w-full">
+            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="ابحث بالاسم أو رقم العميل أو رقم العضوية..."
+              className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-amber-400 text-right"
+            />
+          </div>
+
+          {isAdmin && (
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={selectedClub}
+                onChange={(e) => setSelectedClub(e.target.value)}
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="all">النادي</option>
+                {clubOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select
+                value={selectedCommitteeNo}
+                onChange={(e) => setSelectedCommitteeNo(e.target.value)}
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="all">رقم اللجنة</option>
+                {committeeNoOptions.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select
+                value={selectedCommitteeYear}
+                onChange={(e) => setSelectedCommitteeYear(e.target.value)}
+                className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-amber-400"
+              >
+                <option value="all">السنة</option>
+                {committeeYearOptions.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
+          )}
         </div>
       </div>
 
