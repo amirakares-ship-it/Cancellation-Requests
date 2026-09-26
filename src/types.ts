@@ -135,6 +135,33 @@ export interface CancellationRequest {
   attachments?: RequestAttachment[]; // Attached cancellation forms, PDFs, receipts, IDs
 }
 
+// A club (or admin) asking the finance team to actually send out a
+// member's checks -- either the "شيك المقدم" (advance) checks or the
+// "الشيكات البنكية" (bank) checks. Created by clicking the send icon next
+// to a row in the checks page; decided (accept/reject) by the admin from
+// the "إرسال شيكات" review page.
+export interface SendChecksRequest {
+  id: string;
+  requestId: number;
+  checkType: 'advance' | 'bank';
+  status: 'pending' | 'accepted' | 'rejected';
+  requestedBy: string;
+  requestedByName: string;
+  requestedByRole: string;
+  requestedAt: string;
+  decidedBy?: string;
+  decidedByName?: string;
+  decidedAt?: string;
+  rejectionReason?: string;
+}
+
+// Who the "ارسال شيكات" email goes to for each check type -- editable by
+// the admin from the "إرسال شيكات" page.
+export interface SendChecksRecipient {
+  name: string;
+  email: string;
+}
+
 export interface RequestAttachment {
   id: string;
   fileName: string;

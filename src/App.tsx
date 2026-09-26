@@ -5,7 +5,7 @@ import {
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal, CreditCard
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal, CreditCard, Send
 } from 'lucide-react';
 
 // Subcomponents
@@ -26,6 +26,7 @@ import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
 import Reports from './components/Reports';
 import AttachmentsArchive from './components/AttachmentsArchive';
 import ReadyChecks from './components/ReadyChecks';
+import SendChecksHub from './components/SendChecksHub';
 import { ConfirmModal } from './components/ConfirmModal';
 import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
 import SettlementStatementModal from './components/SettlementStatementModal';
@@ -103,7 +104,7 @@ export default function App() {
   });
 
   // UI Control states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'send_checks_hub' | 'reports'>('dashboard');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -138,6 +139,7 @@ export default function App() {
   const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [readyChecksCount, setReadyChecksCount] = useState(0);
+  const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
   const mainContentRef = useRef<HTMLDivElement>(null);
   const { activeRef: activeTableScrollRef } = useScrollBarContext();
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
@@ -267,6 +269,20 @@ export default function App() {
         if (dataReadyChecks) setReadyChecksCount(dataReadyChecks.readyCount || 0);
       } catch (e) {
         console.error('Failed to load ready checks count', e);
+      }
+
+      // "إرسال شيكات" pending decisions count (admin only -- the endpoint itself is admin-gated)
+      if (currentUser?.role === 'admin') {
+        try {
+          const resSendChecks = await fetch('/api/send-checks-requests', { headers });
+          const dataSendChecks = await safeJson(resSendChecks);
+          if (dataSendChecks) {
+            const pending = (dataSendChecks.items || []).filter((i: any) => i.status === 'pending').length;
+            setSendChecksPendingCount(pending);
+          }
+        } catch (e) {
+          console.error('Failed to load send-checks pending count', e);
+        }
       }
 
       // Dropdowns
@@ -1470,10 +1486,10 @@ export default function App() {
             {!isSidebarCollapsed && <span>أرشيف</span>}
           </button>
 
-          {/* 4.6 شيكات جاهزة للاستلام */}
+          {/* 4.6 الشيكات (شيك المقدم / الشيكات البنكية) */}
           <button
             onClick={() => { setActiveTab('ready_checks'); }}
-            title="شيكات جاهزة للاستلام"
+            title="الشيكات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'ready_checks' 
                 ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
@@ -1482,14 +1498,37 @@ export default function App() {
           >
             <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <CreditCard className={`w-4 h-4 shrink-0 ${activeTab === 'ready_checks' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
-              {!isSidebarCollapsed && <span>شيكات جاهزة للاستلام</span>}
+              {!isSidebarCollapsed && <span>الشيكات</span>}
             </div>
             {readyChecksCount > 0 && (
-              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="شيكات جاهزة للاستلام (طلبات ملغاة/متراجع عنها/محذوفة)">
+              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="شيك المقدم الجاهز للاستلام (طلبات ملغاة/متراجع عنها/محذوفة)">
                 {readyChecksCount}
               </span>
             )}
           </button>
+
+          {/* 4.7 إرسال شيكات (Admin only) */}
+          {currentUser.role === 'admin' && (
+            <button
+              onClick={() => { setActiveTab('send_checks_hub'); }}
+              title="إرسال شيكات"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'send_checks_hub' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <Send className={`w-4 h-4 shrink-0 ${activeTab === 'send_checks_hub' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>إرسال شيكات</span>}
+              </div>
+              {sendChecksPendingCount > 0 && (
+                <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات إرسال شيكات بانتظار القرار">
+                  {sendChecksPendingCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* 5. مديونية الشركات */}
           {currentUser.role === 'admin' && (
@@ -1901,6 +1940,15 @@ export default function App() {
         {/* Tab: Ready Checks (شيكات جاهزة للاستلام) -- Admin uploads/sees all, everyone else sees their own club's rows only */}
         {activeTab === 'ready_checks' && (
           <ReadyChecks
+            user={currentUser}
+            authToken={authToken || ''}
+            onDataChanged={fetchAllData}
+          />
+        )}
+
+        {/* Tab: Send Checks review hub (Admin only) */}
+        {activeTab === 'send_checks_hub' && currentUser.role === 'admin' && (
+          <SendChecksHub
             user={currentUser}
             authToken={authToken || ''}
             onDataChanged={fetchAllData}

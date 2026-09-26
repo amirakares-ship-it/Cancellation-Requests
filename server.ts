@@ -510,6 +510,16 @@ const DEFAULT_DB = {
   // sheet with an externalId that already exists updates that row instead
   // of duplicating it.
   readyChecks: [] as any[],
+  // "الشيكات البنكية" -- a second, independent checks list with the exact
+  // same shape/upload mechanism as readyChecks, just a separate dataset.
+  bankChecks: [] as any[],
+  // "إرسال شيكات" workflow: requests to send a member's checks, and who
+  // the resulting email goes to for each check type.
+  sendChecksRequests: [] as any[],
+  sendChecksRecipients: {
+    advance: { name: "رامز", email: "Ramez.Anis@wadidegla.com" },
+    bank: { name: "ناجى", email: "nagy.mamdouh@wadidegla.com" },
+  },
 };
 
 // Database state
@@ -612,6 +622,13 @@ async function loadDb() {
     }
     if (!db.customFields || !Array.isArray(db.customFields)) db.customFields = [];
     if (!db.readyChecks || !Array.isArray(db.readyChecks)) db.readyChecks = [];
+    if (!db.bankChecks || !Array.isArray(db.bankChecks)) db.bankChecks = [];
+    if (!db.sendChecksRequests || !Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
+    if (!db.sendChecksRecipients) db.sendChecksRecipients = DEFAULT_DB.sendChecksRecipients;
+    else {
+      if (!db.sendChecksRecipients.advance) db.sendChecksRecipients.advance = DEFAULT_DB.sendChecksRecipients.advance;
+      if (!db.sendChecksRecipients.bank) db.sendChecksRecipients.bank = DEFAULT_DB.sendChecksRecipients.bank;
+    }
     if (!db.labelNames) {
       db.labelNames = DEFAULT_DB.labelNames;
     } else if (!db.labelNames.mobileNumber) {
@@ -3965,125 +3982,327 @@ app.get("/api/logs/audit", requireAuth, async (req, res) => {
   res.json(db.auditLogs);
 });
 
-// ----- "شيكات جاهزة للاستلام" -----
+// ----- "الشيكات" (شيك المقدم / الشيكات البنكية) -----
 // Checks uploaded by the admin (matched to requests via "رقم العميل" /
 // externalId). Every non-admin role only ever sees the rows whose linked
-// request belongs to their own club.
+// request belongs to their own club. "شيك المقدم" and "الشيكات البنكية"
+// are two fully independent lists with the exact same shape/mechanism --
+// registerChecksListEndpoints wires up one set of GET/upload/delete routes
+// per list so the logic isn't duplicated.
 
-app.get("/api/ready-checks", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const rows = (db.readyChecks || []).map((c: any) => {
-    const linkedRequest = c.requestId != null ? db.requests.find((r) => String(r.id) === String(c.requestId)) : null;
-    return {
-      id: c.id,
-      name: c.name,
-      checkDueDate: c.checkDueDate,
-      checkAmount: c.checkAmount,
-      bank: c.bank,
-      externalId: c.externalId,
-      uploadedAt: c.uploadedAt,
-      uploadedBy: c.uploadedBy,
-      requestId: c.requestId || null,
-      committeeNo: linkedRequest?.committeeNo || null,
-      committeeYear: linkedRequest?.committeeYear || null,
-      membershipNumber: linkedRequest?.membershipNumber || null,
-      paymentMethod: linkedRequest?.paymentMethod || null,
-      mobileNumber: linkedRequest?.mobileNumber || null,
-      club: linkedRequest?.club || null,
-      requestStatus: linkedRequest?.status || null,
-    };
+function getLatestSendChecksRequest(requestId: any, checkType: "advance" | "bank") {
+  const matches = (db.sendChecksRequests || []).filter(
+    (s: any) => String(s.requestId) === String(requestId) && s.checkType === checkType
+  );
+  if (matches.length === 0) return null;
+  return matches.reduce((latest: any, cur: any) => (cur.requestedAt > latest.requestedAt ? cur : latest));
+}
+
+function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkType: "advance" | "bank", routePrefix: string) {
+  app.get(`/api/${routePrefix}`, requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    const rows = (db[dbKey] || []).map((c: any) => {
+      const linkedRequest = c.requestId != null ? db.requests.find((r) => String(r.id) === String(c.requestId)) : null;
+      const sendReq = c.requestId != null ? getLatestSendChecksRequest(c.requestId, checkType) : null;
+      return {
+        id: c.id,
+        name: c.name,
+        checkDueDate: c.checkDueDate,
+        checkAmount: c.checkAmount,
+        bank: c.bank,
+        externalId: c.externalId,
+        uploadedAt: c.uploadedAt,
+        uploadedBy: c.uploadedBy,
+        requestId: c.requestId || null,
+        committeeNo: linkedRequest?.committeeNo || null,
+        committeeYear: linkedRequest?.committeeYear || null,
+        membershipNumber: linkedRequest?.membershipNumber || null,
+        paymentMethod: linkedRequest?.paymentMethod || null,
+        mobileNumber: linkedRequest?.mobileNumber || null,
+        club: linkedRequest?.club || null,
+        requestStatus: linkedRequest?.status || null,
+        sendCheckRequestId: sendReq?.id || null,
+        sendCheckStatus: sendReq?.status || null,
+        sendCheckRejectionReason: sendReq?.rejectionReason || null,
+      };
+    });
+
+    const visibleRows = user.role === "admin"
+      ? rows
+      : rows.filter((c) => c.club && isSameClub(c.club, user.club));
+
+    const readyCount = visibleRows.filter((c) => ["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || "")).length;
+
+    res.json({ rows: visibleRows, readyCount });
   });
 
-  const visibleRows = user.role === "admin"
-    ? rows
-    : rows.filter((c) => c.club && isSameClub(c.club, user.club));
+  app.post(`/api/${routePrefix}/upload`, requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== "admin") {
+      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية رفع شيت الشيكات" });
+    }
 
-  const readyCount = visibleRows.filter((c) => ["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || "")).length;
+    const { rows } = req.body;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: "الشيت فارغ أو غير صالح" });
+    }
 
-  res.json({ rows: visibleRows, readyCount });
-});
+    if (!Array.isArray(db[dbKey])) db[dbKey] = [];
 
-app.post("/api/ready-checks/upload", requireAuth, async (req, res) => {
+    let updatedCount = 0;
+    let addedCount = 0;
+    let linkedCount = 0;
+
+    for (const row of rows) {
+      const externalId = String(row.externalId || "").trim();
+      if (!externalId) continue;
+
+      const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
+
+      const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
+      const entry = {
+        id: existingIndex >= 0 ? db[dbKey][existingIndex].id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: row.name || "",
+        checkDueDate: row.checkDueDate || "",
+        checkAmount: Number(row.checkAmount) || 0,
+        bank: row.bank || "",
+        externalId,
+        requestId: linkedRequest ? linkedRequest.id : null,
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: user.name || user.username,
+      };
+
+      if (existingIndex >= 0) {
+        db[dbKey][existingIndex] = entry;
+        updatedCount++;
+      } else {
+        db[dbKey].push(entry);
+        addedCount++;
+      }
+
+      if (linkedRequest) {
+        linkedCount++;
+        if (checkType === "advance") {
+          // Marks this request's finance-memo stage as "الشيك جاهز للاستلام"
+          // instead of "تم ارسال المذكرة الى الادارة المالية" -- harmless/inert
+          // for requests that have already moved past that stage.
+          linkedRequest.checkReadyForPickup = true;
+        }
+      }
+    }
+
+    await saveDb();
+    logAudit(
+      user.username,
+      user.name,
+      user.role,
+      "رفع شيت شيكات",
+      `تم رفع ${rows.length} صف (${addedCount} جديد، ${updatedCount} تحديث)، تم ربط ${linkedCount} منهم بطلبات موجودة`
+    );
+
+    res.json({ success: true, addedCount, updatedCount, linkedCount });
+  });
+
+  app.delete(`/api/${routePrefix}/:id`, requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== "admin") {
+      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية حذف صفوف الشيكات" });
+    }
+
+    const index = (db[dbKey] || []).findIndex((c: any) => c.id === req.params.id);
+    if (index === -1) {
+      return res.status(404).json({ error: "الصف غير موجود" });
+    }
+    const removed = db[dbKey][index];
+    db[dbKey].splice(index, 1);
+    await saveDb();
+
+    logAudit(user.username, user.name, user.role, "حذف صف شيك", `تم حذف شيك "${removed.name}" (رقم عميل ${removed.externalId})`);
+    res.json({ success: true });
+  });
+}
+
+registerChecksListEndpoints("readyChecks", "advance", "ready-checks");
+registerChecksListEndpoints("bankChecks", "bank", "bank-checks");
+
+// ----- "إرسال شيكات" workflow -----
+// A club (or admin) asks the finance team to actually send a member's
+// checks. Admin accepts (an email goes out to the configured recipient
+// for that check type) or rejects (a reason is stored and shown back on
+// the checks-list row itself -- no email either way for a rejection).
+
+app.get("/api/send-checks-recipients", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية رفع شيت الشيكات الجاهزة للاستلام" });
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية عرض بيانات مستلمي إيميلات إرسال الشيكات" });
   }
+  res.json(db.sendChecksRecipients);
+});
 
-  const { rows } = req.body;
-  if (!Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "الشيت فارغ أو غير صالح" });
+app.put("/api/send-checks-recipients", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل بيانات مستلمي إيميلات إرسال الشيكات" });
   }
+  const { checkType, name, email } = req.body;
+  if (checkType !== "advance" && checkType !== "bank") {
+    return res.status(400).json({ error: "نوع الشيك غير صالح" });
+  }
+  if (!name || !String(name).trim() || !email || !String(email).trim()) {
+    return res.status(400).json({ error: "الاسم والإيميل مطلوبين" });
+  }
+  db.sendChecksRecipients[checkType] = { name: String(name).trim(), email: String(email).trim() };
+  await saveDb();
+  res.json({ success: true, recipients: db.sendChecksRecipients });
+});
 
-  if (!Array.isArray(db.readyChecks)) db.readyChecks = [];
-
-  let updatedCount = 0;
-  let addedCount = 0;
-  let linkedCount = 0;
-
-  for (const row of rows) {
-    const externalId = String(row.externalId || "").trim();
-    if (!externalId) continue;
-
-    const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
-
-    const existingIndex = db.readyChecks.findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-    const entry = {
-      id: existingIndex >= 0 ? db.readyChecks[existingIndex].id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name: row.name || "",
-      checkDueDate: row.checkDueDate || "",
-      checkAmount: Number(row.checkAmount) || 0,
-      bank: row.bank || "",
-      externalId,
-      requestId: linkedRequest ? linkedRequest.id : null,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: user.name || user.username,
+app.get("/api/send-checks-requests", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية عرض طلبات إرسال الشيكات" });
+  }
+  const enriched = (db.sendChecksRequests || []).map((s: any) => {
+    const linkedRequest = db.requests.find((r) => String(r.id) === String(s.requestId));
+    return {
+      ...s,
+      memberName: linkedRequest?.memberName || null,
+      membershipNumber: linkedRequest?.membershipNumber || null,
+      externalId: linkedRequest?.externalId || null,
+      club: linkedRequest?.club || null,
     };
-
-    if (existingIndex >= 0) {
-      db.readyChecks[existingIndex] = entry;
-      updatedCount++;
-    } else {
-      db.readyChecks.push(entry);
-      addedCount++;
-    }
-
-    if (linkedRequest) {
-      linkedCount++;
-      // Marks this request's finance-memo stage as "الشيك جاهز للاستلام"
-      // instead of "تم ارسال المذكرة الى الادارة المالية" -- harmless/inert
-      // for requests that have already moved past that stage.
-      linkedRequest.checkReadyForPickup = true;
-    }
-  }
-
-  await saveDb();
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "رفع شيت شيكات جاهزة للاستلام",
-    `تم رفع ${rows.length} صف (${addedCount} جديد، ${updatedCount} تحديث)، تم ربط ${linkedCount} منهم بطلبات موجودة`
-  );
-
-  res.json({ success: true, addedCount, updatedCount, linkedCount });
+  });
+  // Newest first
+  enriched.sort((a: any, b: any) => (a.requestedAt < b.requestedAt ? 1 : -1));
+  res.json({ items: enriched });
 });
 
-app.delete("/api/ready-checks/:id", requireAuth, async (req, res) => {
+app.post("/api/send-checks-requests", requireAuth, async (req, res) => {
   const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية حذف صفوف شيكات جاهزة للاستلام" });
+  const { requestId, checkType } = req.body;
+  if (checkType !== "advance" && checkType !== "bank") {
+    return res.status(400).json({ error: "نوع الشيك غير صالح" });
+  }
+  const linkedRequest = db.requests.find((r) => String(r.id) === String(requestId));
+  if (!linkedRequest) {
+    return res.status(404).json({ error: "الطلب غير موجود" });
+  }
+  if (user.role !== "admin" && !isSameClub(linkedRequest.club, user.club)) {
+    return res.status(403).json({ error: "لا يمكنك إرسال طلب لعضوية لا تتبع نفس النادي" });
   }
 
-  const index = (db.readyChecks || []).findIndex((c: any) => c.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: "الصف غير موجود" });
+  const existingPending = (db.sendChecksRequests || []).find(
+    (s: any) => String(s.requestId) === String(requestId) && s.checkType === checkType && s.status === "pending"
+  );
+  if (existingPending) {
+    return res.status(409).json({ error: "يوجد بالفعل طلب إرسال شيكات قيد الانتظار لنفس العضوية" });
   }
-  const removed = db.readyChecks[index];
-  db.readyChecks.splice(index, 1);
+
+  const entry = {
+    id: `sc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    requestId: linkedRequest.id,
+    checkType,
+    status: "pending",
+    requestedBy: user.username,
+    requestedByName: user.name || user.username,
+    requestedByRole: user.role,
+    requestedAt: new Date().toISOString(),
+  };
+  if (!Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
+  db.sendChecksRequests.push(entry);
   await saveDb();
 
-  logAudit(user.username, user.name, user.role, "حذف صف شيك جاهز للاستلام", `تم حذف شيك "${removed.name}" (رقم عميل ${removed.externalId})`);
-  res.json({ success: true });
+  logAudit(user.username, user.name, user.role, "طلب إرسال شيكات", `طلب إرسال شيكات (${checkType === "advance" ? "شيك المقدم" : "الشيكات البنكية"}) لعضوية ${linkedRequest.membershipNumber}`);
+  res.json({ success: true, item: entry });
+});
+
+app.post("/api/send-checks-requests/:id/decision", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اتخاذ قرار على طلبات إرسال الشيكات" });
+  }
+  const entry = (db.sendChecksRequests || []).find((s: any) => s.id === req.params.id);
+  if (!entry) {
+    return res.status(404).json({ error: "الطلب غير موجود" });
+  }
+  if (entry.status !== "pending") {
+    return res.status(409).json({ error: "تم اتخاذ قرار على هذا الطلب بالفعل" });
+  }
+
+  const { approve, rejectionReason } = req.body;
+  const linkedRequest = db.requests.find((r) => String(r.id) === String(entry.requestId));
+
+  if (!approve) {
+    if (!rejectionReason || !String(rejectionReason).trim()) {
+      return res.status(400).json({ error: "من فضلك اكتب سبب الرفض" });
+    }
+    entry.status = "rejected";
+    entry.rejectionReason = String(rejectionReason).trim();
+    entry.decidedBy = user.username;
+    entry.decidedByName = user.name || user.username;
+    entry.decidedAt = new Date().toISOString();
+    await saveDb();
+    logAudit(user.username, user.name, user.role, "رفض إرسال شيكات", `تم رفض طلب إرسال شيكات لعضوية ${linkedRequest?.membershipNumber || entry.requestId}: ${entry.rejectionReason}`);
+    return res.json({ success: true, item: entry });
+  }
+
+  // Approve -- send the actual email to the configured recipient for this check type
+  const recipient = db.sendChecksRecipients?.[entry.checkType as "advance" | "bank"];
+  if (!recipient?.email) {
+    return res.status(422).json({ error: "لا يوجد إيميل مستلم مضبوط لهذا النوع من الشيكات -- من فضلك اضبطيه أولًا." });
+  }
+  const transporter = getMailer();
+  if (!transporter) {
+    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك اضبطيها من صفحة الإعدادات أولًا." });
+  }
+
+  const memberName = linkedRequest?.memberName || "—";
+  const membershipNumber = linkedRequest?.membershipNumber || "—";
+  const externalId = linkedRequest?.externalId || "—";
+  const club = linkedRequest?.club || "—";
+  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9">
+      <p>ا/ ${recipient.name}</p>
+      <p>تحيه طيبه وبعد،</p>
+      <p>برجاء إرسال شيكات العضو الموضح بياناته أدناه:</p>
+      <table style="border-collapse:collapse;margin:12px 0">
+        <tr>
+          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">اسم العضو</td>
+          <td style="border:1px solid #ccc;padding:8px 14px">${memberName}</td>
+        </tr>
+        <tr>
+          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">رقم العضوية</td>
+          <td style="border:1px solid #ccc;padding:8px 14px">${membershipNumber}</td>
+        </tr>
+        <tr>
+          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">رقم العميل</td>
+          <td style="border:1px solid #ccc;padding:8px 14px">${externalId}</td>
+        </tr>
+      </table>
+      <p>الى نادى ${club}</p>
+      <p>ولكم منا جزيل الشكر،</p>
+    </div>
+  `;
+
+  try {
+    await transporter.sendMail({
+      from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
+      to: recipient.email,
+      subject: `ارسال شيكات - عضوية رقم ${membershipNumber}`,
+      html,
+    });
+  } catch (err: any) {
+    return res.status(502).json({ error: err?.message || "فشل إرسال الإيميل" });
+  }
+
+  entry.status = "accepted";
+  entry.decidedBy = user.username;
+  entry.decidedByName = user.name || user.username;
+  entry.decidedAt = new Date().toISOString();
+  await saveDb();
+  logAudit(user.username, user.name, user.role, "قبول إرسال شيكات", `تم قبول طلب إرسال شيكات لعضوية ${membershipNumber} وإرسال إيميل إلى ${recipient.email}`);
+  res.json({ success: true, item: entry });
 });
 
 // --- Global Error Handler ---
