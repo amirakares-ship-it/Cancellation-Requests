@@ -2433,7 +2433,7 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   // "Check" -- bypass the reviewed/approval-locked restrictions below,
   // since they're simple operational flags rather than substantive edits
   // to the request's data.
-  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote");
+  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote" || k === "financeMemoFormType");
 
   // A club/international user can only tick "تم الاستلام" (receiptReceived)
   // once they've attached the required proof document to the request --
@@ -3387,6 +3387,10 @@ function applyCompanyDebtsImport(rows: any[]) {
   let totalDebtAmount = 0;
   const notFoundList: string[] = [];
   const updatedMembersList: any[] = [];
+  // Rows where the debt amount was >= the request's own subscription value --
+  // rejected for that specific request only, the rest of the batch still
+  // goes through normally.
+  const rejectedDebtList: any[] = [];
 
   rows.forEach((row: any) => {
     const mNumRaw = String(row.membershipNumber || "").trim();
@@ -3405,16 +3409,32 @@ function applyCompanyDebtsImport(rows: any[]) {
 
     if (matchingRequests.length > 0) {
       const newDebt = parseSmartNumber(row.debtABKCompanies);
-      if (newDebt > 0) {
-        nonZeroDebtCount++;
-        totalDebtAmount += newDebt;
-      } else {
-        zeroDebtCount++;
-      }
 
       const todayStr = new Date().toISOString().split("T")[0];
 
       matchingRequests.forEach((request: any) => {
+        // Reject the debt for this specific request only if it's >= the
+        // request's own subscription value (a debt can never legitimately
+        // equal or exceed what the member actually subscribed for). Only
+        // enforced when subscriptionValue is actually known/positive, so
+        // older/incomplete records aren't silently blocked.
+        if ((request.subscriptionValue || 0) > 0 && newDebt >= request.subscriptionValue) {
+          rejectedDebtList.push({
+            membershipNumber: request.membershipNumber,
+            memberName: request.memberName,
+            subscriptionValue: request.subscriptionValue,
+            attemptedDebt: newDebt,
+          });
+          return; // skip this request only -- rest of the batch continues
+        }
+
+        if (newDebt > 0) {
+          nonZeroDebtCount++;
+          totalDebtAmount += newDebt;
+        } else {
+          zeroDebtCount++;
+        }
+
         const prevDebt = request.debtABKCompanies || 0;
         request.debtABKCompanies = newDebt;
 
@@ -3459,7 +3479,7 @@ function applyCompanyDebtsImport(rows: any[]) {
     }
   });
 
-  return { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList };
+  return { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList };
 }
 
 app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => {
@@ -3473,7 +3493,7 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
   }
 
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList } = applyCompanyDebtsImport(rows);
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows);
 
   await saveDb();
   logAudit(
@@ -3481,7 +3501,7 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     user.name,
     user.role,
     "تحديث مديونيات الشركات والبنك",
-    `تم تحديث مديونية البنوك/الشركات لعدد ${updatedCount} طلب (بإجمالي مديونيات ${totalDebtAmount.toLocaleString()} ج.م، منها ${nonZeroDebtCount} مديونية برصيد فعلي) عبر رفع شيت Excel`
+    `تم تحديث مديونية البنوك/الشركات لعدد ${updatedCount} طلب (بإجمالي مديونيات ${totalDebtAmount.toLocaleString()} ج.م، منها ${nonZeroDebtCount} مديونية برصيد فعلي) عبر رفع شيت Excel${rejectedDebtList.length > 0 ? `، وتم رفض ${rejectedDebtList.length} صف لأن المديونية فيها أكبر من أو تساوي قيمة الاشتراك` : ''}`
   );
 
   res.json({
@@ -3493,6 +3513,8 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     notFoundCount: notFoundList.length,
     notFoundList,
     updatedMembersList,
+    rejectedDebtCount: rejectedDebtList.length,
+    rejectedDebtList,
     requests: db.requests
   });
 });
@@ -3519,7 +3541,7 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "يرجى اختيار رقم اللجنة قبل الرفع" });
   }
 
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList } = applyCompanyDebtsImport(rows);
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows);
 
   // Map membership number -> the debt value it had right BEFORE this
   // batch was applied, so an accidental/wrong upload can be reverted
@@ -3528,6 +3550,7 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
   updatedMembersList.forEach((m: any) => {
     prevDebtByMembership[String(m.membershipNumber || '').trim()] = m.previousDebt || 0;
   });
+  const rejectedMembershipSet = new Set(rejectedDebtList.map((r: any) => String(r.membershipNumber || '').trim()));
 
   if (!db.debtImportBatches) db.debtImportBatches = [];
   const batch = {
@@ -3537,17 +3560,24 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     committeeYear: committeeYear ? String(committeeYear).trim() : "",
     uploadedAt: new Date().toISOString(),
     uploadedBy: user.name || user.username,
-    rows: rows.map((r: any) => {
-      const mNum = String(r.membershipNumber || "").trim();
-      return {
-        membershipNumber: mNum,
-        loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
-        nationalId: r.nationalId ? String(r.nationalId).trim() : "",
-        paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
-        debtAmount: parseSmartNumber(r.debtABKCompanies),
-        previousDebtAmount: prevDebtByMembership[mNum] ?? 0,
-      };
-    }),
+    // Rejected rows (debt >= subscription value) are excluded here since
+    // nothing was actually applied for them -- keeping them would make the
+    // delete/revert endpoint below wrongly try to "undo" a change that
+    // never happened.
+    rows: rows
+      .filter((r: any) => !rejectedMembershipSet.has(String(r.membershipNumber || "").trim()))
+      .map((r: any) => {
+        const mNum = String(r.membershipNumber || "").trim();
+        return {
+          membershipNumber: mNum,
+          loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
+          nationalId: r.nationalId ? String(r.nationalId).trim() : "",
+          paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
+          debtAmount: parseSmartNumber(r.debtABKCompanies),
+          previousDebtAmount: prevDebtByMembership[mNum] ?? 0,
+        };
+      }),
+    rejectedRows: rejectedDebtList,
   };
   db.debtImportBatches.unshift(batch);
 
@@ -3557,7 +3587,7 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     user.name,
     user.role,
     "رفع دفعة مديونية (تقارير)",
-    `تم رفع دفعة مديونية جديدة لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo}، تم تحديث ${updatedCount} طلب (بإجمالي ${totalDebtAmount.toLocaleString()} ج.م)`
+    `تم رفع دفعة مديونية جديدة لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo}، تم تحديث ${updatedCount} طلب (بإجمالي ${totalDebtAmount.toLocaleString()} ج.م)${rejectedDebtList.length > 0 ? `، وتم رفض ${rejectedDebtList.length} صف لأن المديونية فيها أكبر من أو تساوي قيمة الاشتراك` : ''}`
   );
 
   res.json({
@@ -3570,6 +3600,8 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     notFoundCount: notFoundList.length,
     notFoundList,
     updatedMembersList,
+    rejectedDebtCount: rejectedDebtList.length,
+    rejectedDebtList,
     requests: db.requests
   });
 });

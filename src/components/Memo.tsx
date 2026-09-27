@@ -213,6 +213,7 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
         body: JSON.stringify({
           financeMemoSentDate: newFinanceDate || null,
           financeMemoSentExceptionNote: newFinanceDate ? (newFinanceExceptionNote.trim() || null) : null,
+          financeMemoFormType: newFinanceDate ? activeForm : null,
         }),
       });
       const data = await res.json();
@@ -236,7 +237,7 @@ export default function Memo({ requests = [], request: initialRequest, user, onR
       const res = await fetch(`/api/requests/${activeRequest.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null }),
+        body: JSON.stringify({ financeMemoSentDate: null, financeMemoSentExceptionNote: null, financeMemoFormType: null }),
       });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error || 'فشل إلغاء التحديد');

@@ -115,6 +115,10 @@ export interface CancellationRequest {
   // overall Cancelled/Revoked/Pending lifecycle) so it can be toggled
   // freely without affecting cancellation status logic.
   financeMemoSentDate?: string | null;
+  // Which memo form was active when the memo was marked as sent to Finance
+  // -- lets exports (e.g. "ساركي") flag "فرق عضوية" sends distinctly in the
+  // "طريقة الدفع" column.
+  financeMemoFormType?: 'companies' | 'international' | 'normal' | 'diff' | null;
   checkReadyForPickup?: boolean; // Set once a matching row appears in "شيكات جاهزة للاستلام"
   financeMemoSentExceptionNote?: string; // سبب الاستثناء لو اتبعتت المذكرة قبل اعتماد اللجنة
   approvalSentToFirstManager?: boolean;

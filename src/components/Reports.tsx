@@ -180,7 +180,13 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         if (backendData.notFoundCount > 0) {
           msg += ` تنبيه: ${backendData.notFoundCount} رقم عضوية غير مسجل بالمنظومة.`;
         }
-        setUploadMsg({ type: 'success', text: msg });
+        if (backendData.rejectedDebtCount > 0) {
+          const names = (backendData.rejectedDebtList || [])
+            .map((r: any) => `${r.membershipNumber} (مديونية ${Number(r.attemptedDebt).toLocaleString()} مقابل اشتراك ${Number(r.subscriptionValue).toLocaleString()})`)
+            .join('، ');
+          msg += ` تنبيه هام: تم رفض ${backendData.rejectedDebtCount} صف لأن المديونية فيها أكبر من أو تساوي قيمة الاشتراك: ${names}.`;
+        }
+        setUploadMsg({ type: backendData.rejectedDebtCount > 0 ? 'error' : 'success', text: msg });
         fetchBatches();
       } catch (err: any) {
         setUploadMsg({ type: 'error', text: err.message || 'حدث خطأ أثناء رفع الشيت' });
@@ -203,18 +209,20 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         throw new Error(data.error || 'فشل تجهيز ملف التنزيل');
       }
 
+      const todayStr = new Date().toISOString().split('T')[0];
       const dataToExport = data.rows.map((r: any, idx: number) => ({
         'م': idx + 1,
-        'رقم العضوية': r.membershipNumber || '',
+        'طريقة الدفع': r.paymentMethod || '',
         'الاسم': r.memberName || '',
         'الرقم القومى': r.nationalId || '',
+        'رقم العضوية': r.membershipNumber || '',
         'رقم العميل': r.externalId || '',
+        'تاريخ الاشتراك': r.subscriptionDate || '',
+        'مديونية البنوك/الشركات': r.debtAmount || 0,
+        'تاريخ الطلب': r.requestDate || '',
+        'تاريخ اليوم': todayStr,
         'قيمة العضوية': r.subscriptionValue || 0,
         'قيمة التحويلة': r.transferValue || 0,
-        'تاريخ الاشتراك': r.subscriptionDate || '',
-        'تاريخ الطلب': r.requestDate || '',
-        'مديونية البنوك/الشركات': r.debtAmount || 0,
-        'طريقة الدفع': r.paymentMethod || '',
       }));
 
       const worksheet = XLSX.utils.json_to_sheet(dataToExport);
@@ -252,7 +260,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
       'م': idx + 1,
       'الاسم': r.memberName || '',
       'رقم العضوية': r.membershipNumber || '',
-      'طريقة الدفع': r.paymentMethod || '',
+      'طريقة الدفع': r.financeMemoFormType === 'diff' ? `${r.paymentMethod || ''} (فرق عضوية)` : (r.paymentMethod || ''),
     }));
 
     const worksheet = XLSX.utils.json_to_sheet(dataToExport);
