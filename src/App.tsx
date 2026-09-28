@@ -1140,7 +1140,13 @@ export default function App() {
             requestDate: String(r['تاريخ الطلب'] || r['Request Date'] || '2026-06-01').trim(),
             type: r['تصنيف فترة الاشتراك'] ? String(r['تصنيف فترة الاشتراك']).trim() : undefined,
             membershipType: String(r['نوع العضوية'] || r['Membership Type'] || 'Regular').trim(),
-            club: String(r['نادي الفرع'] || r['النادي'] || r['النادى'] || r['Club'] || 'Sheraton').trim(),
+            club: (
+              String(r['نادي الفرع'] || '').trim() ||
+              String(r['النادي'] || '').trim() ||
+              String(r['النادى'] || '').trim() ||
+              String(r['Club'] || '').trim() ||
+              ''
+            ),
             paymentMethod: String(r['طريقة الدفع'] || r['Payment Method'] || 'نقدا').trim(),
             accountNumber: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || r['Account Number'] || '').trim(),
             accountNumberABK: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || '').trim(),
@@ -1185,6 +1191,12 @@ export default function App() {
           return;
         }
 
+        // Rows where no club value was found in the sheet at all -- surfaced
+        // to the admin right after import so a missing/blank club cell gets
+        // caught immediately, instead of being discovered later one
+        // membership at a time.
+        const missingClubRows = mappedRequests.filter(r => !r.club || !r.club.trim());
+
         // Upload mapped requests to bulk importer
         const res = await fetch('/api/requests/import', {
           method: 'POST',
@@ -1197,7 +1209,15 @@ export default function App() {
 
         const importRes = await res.json();
         if (res.ok) {
-          alert(`تهانينا! تم استيراد ودمج ${importRes.importedCount} سجل بنجاح لقاعدة بيانات التسويات، وتخطي ${importRes.skippedCount} سجلات متكررة أو غير مكتملة!`);
+          let msg = `تهانينا! تم استيراد ودمج ${importRes.importedCount} سجل بنجاح لقاعدة بيانات التسويات، وتخطي ${importRes.skippedCount} سجلات متكررة أو غير مكتملة!`;
+          if (missingClubRows.length > 0) {
+            const list = missingClubRows
+              .slice(0, 20)
+              .map(r => `- ${r.membershipNumber} (${r.memberName})`)
+              .join('\n');
+            msg += `\n\n⚠️ تنبيه: ${missingClubRows.length} عضوية اتسجلت بدون اسم نادي (الحقل فاضي) ولازم تتراجع وتتصلح يدويًا:\n${list}${missingClubRows.length > 20 ? `\n...و${missingClubRows.length - 20} عضوية تانية` : ''}`;
+          }
+          alert(msg);
           fetchAllData();
         } else {
           alert(importRes.error || 'حدث خطأ أثناء استيراد البيانات');

@@ -13,6 +13,9 @@ import FirstManagerPDFModal from './FirstManagerPDFModal';
 import UploadDocumentModal from './UploadDocumentModal';
 import DocumentViewerModal from './DocumentViewerModal';
 
+// Special value for the club filter meaning "requests whose club is blank".
+const EMPTY_CLUB_FILTER_VALUE = '__EMPTY_CLUB__';
+
 interface RequestsListProps {
   requests: any[];
   user: any;
@@ -319,7 +322,11 @@ export default function RequestsList({
       if (!matchesSearch) return false;
 
       // Select Dropdowns (Multi-Select)
-      if (selectedClubs.length > 0 && !selectedClubs.includes(r.club)) return false;
+      if (selectedClubs.length > 0) {
+        const wantsEmpty = selectedClubs.includes(EMPTY_CLUB_FILTER_VALUE);
+        const isEmptyClub = !r.club || !String(r.club).trim();
+        if (!(wantsEmpty && isEmptyClub) && !selectedClubs.includes(r.club)) return false;
+      }
       if (selectedStatuses.length > 0 && !selectedStatuses.includes(r.status)) return false;
       if (selectedPayments.length > 0 && !selectedPayments.includes(r.paymentMethod)) return false;
       if (selectedCommittees.length > 0 && !selectedCommittees.includes(r.committeeNo)) return false;
@@ -466,7 +473,7 @@ export default function RequestsList({
           <div>
             <label className="block text-xs text-slate-400 mb-1">الفرع / النادي</label>
             <MultiSelect
-              options={dropdowns.clubs}
+              options={[{ label: '(بدون نادي / فاضي)', value: EMPTY_CLUB_FILTER_VALUE }, ...dropdowns.clubs]}
               selected={selectedClubs}
               onChange={setSelectedClubs}
               placeholder="كل الفروع"
