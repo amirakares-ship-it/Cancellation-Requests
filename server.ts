@@ -4038,7 +4038,10 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       const sendReq = c.requestId != null ? getLatestSendChecksRequest(c.requestId, checkType) : null;
       return {
         id: c.id,
-        name: c.name,
+        // Bank-check sheets only carry the client number, so fall back to
+        // the linked request's member name when no name was uploaded.
+        name: c.name || linkedRequest?.memberName || "",
+        receivedDate: c.receivedDate || null,
         checkDueDate: c.checkDueDate,
         checkAmount: c.checkAmount,
         bank: c.bank,
@@ -4059,11 +4062,22 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       };
     });
 
-    const visibleRows = user.role === "admin"
+    let visibleRows = user.role === "admin"
       ? rows
       : rows.filter((c) => c.club && isSameClub(c.club, user.club));
 
-    const readyCount = visibleRows.filter((c) => ["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || "")).length;
+    // "شيك المقدم": once the linked request reaches a final status
+    // (Cancelled / Deletion / Revoked) the check has already been handed
+    // over, so it drops off the page automatically. The badge count is
+    // simply "checks still on the page", so it goes down as they leave.
+    if (checkType === "advance") {
+      visibleRows = visibleRows.filter((c) => !["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || ""));
+    }
+
+    // Bank checks leave the count when the admin marks them as received.
+    const readyCount = checkType === "advance"
+      ? visibleRows.length
+      : visibleRows.filter((c) => !c.receivedDate).length;
 
     res.json({ rows: visibleRows, readyCount });
   });
@@ -4092,9 +4106,10 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
 
       const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-      const entry = {
-        id: existingIndex >= 0 ? db[dbKey][existingIndex].id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: row.name || "",
+      const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
+      const entry: any = {
+        id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: row.name || existingEntry?.name || "",
         checkDueDate: row.checkDueDate || "",
         checkAmount: Number(row.checkAmount) || 0,
         bank: row.bank || "",
@@ -4103,6 +4118,8 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
         uploadedAt: new Date().toISOString(),
         uploadedBy: user.name || user.username,
       };
+      // Re-uploading must never wipe a "received" mark the admin already set
+      if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
 
       if (existingIndex >= 0) {
         db[dbKey][existingIndex] = entry;
@@ -4134,6 +4151,81 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
 
     res.json({ success: true, addedCount, updatedCount, linkedCount });
   });
+
+  // Add a single check manually (client number only, no sheet needed).
+  app.post(`/api/${routePrefix}/manual`, requireAuth, async (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== "admin") {
+      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية إضافة شيكات يدويًا" });
+    }
+    const externalId = String(req.body?.externalId || "").trim();
+    if (!externalId) {
+      return res.status(400).json({ error: "رقم العميل مطلوب" });
+    }
+    if (!Array.isArray(db[dbKey])) db[dbKey] = [];
+
+    const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
+    const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
+    const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
+
+    const entry: any = {
+      id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      name: req.body?.name ? String(req.body.name).trim() : (existingEntry?.name || linkedRequest?.memberName || ""),
+      checkDueDate: req.body?.checkDueDate ? String(req.body.checkDueDate).trim() : (existingEntry?.checkDueDate || ""),
+      checkAmount: req.body?.checkAmount != null ? (Number(req.body.checkAmount) || 0) : (existingEntry?.checkAmount || 0),
+      bank: req.body?.bank ? String(req.body.bank).trim() : (existingEntry?.bank || ""),
+      externalId,
+      requestId: linkedRequest ? linkedRequest.id : null,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: user.name || user.username,
+    };
+    if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
+
+    if (existingIndex >= 0) {
+      db[dbKey][existingIndex] = entry;
+    } else {
+      db[dbKey].push(entry);
+    }
+    if (linkedRequest && checkType === "advance") {
+      linkedRequest.checkReadyForPickup = true;
+    }
+
+    await saveDb();
+    logAudit(user.username, user.name, user.role, "إضافة شيك يدويًا", `رقم عميل ${externalId}`);
+    res.json({ success: true, entry });
+  });
+
+  if (checkType === "bank") {
+    // Admin marks a bank check as received (with a date), or undoes it.
+    // Purely informational -- never touches the request's status.
+    app.put(`/api/${routePrefix}/:id/received`, requireAuth, async (req, res) => {
+      const user = (req as any).user;
+      if (user.role !== "admin") {
+        return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تسجيل استلام الشيك" });
+      }
+      const entry = (db[dbKey] || []).find((c: any) => c.id === req.params.id);
+      if (!entry) {
+        return res.status(404).json({ error: "الصف غير موجود" });
+      }
+      const { receivedDate } = req.body;
+      if (receivedDate === null || receivedDate === undefined || receivedDate === "") {
+        delete entry.receivedDate;
+      } else if (typeof receivedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(receivedDate)) {
+        entry.receivedDate = receivedDate;
+      } else {
+        return res.status(400).json({ error: "تاريخ الاستلام غير صالح" });
+      }
+      await saveDb();
+      logAudit(
+        user.username,
+        user.name,
+        user.role,
+        entry.receivedDate ? "تسجيل استلام شيك بنكي" : "إلغاء تسجيل استلام شيك بنكي",
+        `رقم عميل ${entry.externalId}${entry.receivedDate ? ` - تاريخ الاستلام ${entry.receivedDate}` : ""}`
+      );
+      res.json({ success: true, receivedDate: entry.receivedDate || null });
+    });
+  }
 
   app.delete(`/api/${routePrefix}/:id`, requireAuth, async (req, res) => {
     const user = (req as any).user;
