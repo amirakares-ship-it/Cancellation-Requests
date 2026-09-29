@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Upload, RefreshCw, Search, Trash2, AlertCircle, CheckCircle2, Send, Clock, X } from 'lucide-react';
+import { Upload, RefreshCw, Search, Trash2, AlertCircle, CheckCircle2, Send, Clock, X, Plus, PackageCheck } from 'lucide-react';
 import { User } from '../types';
 import { formatDateCustom, translateStatus, parseReadyChecksWorkbook } from '../utils';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -33,6 +33,22 @@ interface CheckRow {
   sendCheckRequestId: string | null;
   sendCheckStatus: 'pending' | 'accepted' | 'rejected' | null;
   sendCheckRejectionReason: string | null;
+  receivedDate: string | null;
+}
+
+function StatusBadge({ status }: { status: string | null }) {
+  if (!status) return <span className="text-slate-300">غير مربوط</span>;
+  const cls =
+    status === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
+    status === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
+    status === 'Deletion' ? 'bg-purple-100 text-purple-800 border-purple-200' :
+    status === 'Rejected' ? 'bg-rose-100 text-rose-700 border-rose-200' :
+    'bg-slate-100 text-slate-600 border-slate-200';
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${cls}`}>
+      {status === 'Rejected' ? 'Rejected' : translateStatus(status)}
+    </span>
+  );
 }
 
 export default function ChecksTypeList({ user, authToken, checkType, onDataChanged }: ChecksTypeListProps) {
@@ -50,8 +66,12 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
   const [selectedCommitteeYear, setSelectedCommitteeYear] = useState('all');
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [reasonPopoverRow, setReasonPopoverRow] = useState<CheckRow | null>(null);
+  const [manualExternalId, setManualExternalId] = useState('');
+  const [isAddingManual, setIsAddingManual] = useState(false);
+  const [receivingId, setReceivingId] = useState<string | null>(null);
 
   const isAdmin = user.role === 'admin';
+  const isSimplifiedClubView = !isAdmin && checkType === 'bank';
 
   const fetchRows = async () => {
     setIsLoading(true);
@@ -160,6 +180,55 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
     }
   };
 
+  const handleAddManual = async () => {
+    const externalId = manualExternalId.trim();
+    if (!externalId) return;
+    setIsAddingManual(true);
+    setMessage(null);
+    try {
+      const res = await fetch(`/api/${routePrefix}/manual`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ externalId }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشلت الإضافة');
+      setManualExternalId('');
+      setMessage({ type: 'success', text: `تمت إضافة رقم العميل ${externalId} بنجاح.` });
+      await fetchRows();
+      if (onDataChanged) onDataChanged();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || 'حدث خطأ أثناء الإضافة' });
+    } finally {
+      setIsAddingManual(false);
+    }
+  };
+
+  const handleToggleReceived = async (row: CheckRow) => {
+    setReceivingId(row.id);
+    try {
+      const nextDate = row.receivedDate ? null : new Date().toISOString().split('T')[0];
+      const res = await fetch(`/api/${routePrefix}/${row.id}/received`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({ receivedDate: nextDate }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'فشل تسجيل الاستلام');
+      setRows((prev) => prev.map((r) => (r.id === row.id ? { ...r, receivedDate: data.receivedDate } : r)));
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء تسجيل الاستلام');
+    } finally {
+      setReceivingId(null);
+    }
+  };
+
   const clubOptions = useMemo(() => {
     const set = new Set<string>();
     rows.forEach((r) => { if (r.club) set.add(r.club); });
@@ -236,15 +305,48 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         )}
 
         {isAdmin && (
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-            <span className="font-bold text-slate-700 block mb-2">أعمدة شيت {label} المطلوب رفعها:</span>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center font-mono text-xxs font-bold">
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. الاسم</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">2. تاريخ استحقاق الشيك</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. مبلغ الشيك</div>
-              <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. البنك</div>
-              <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">5. رقم العميل *</div>
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs space-y-3">
+            <div>
+              <span className="font-bold text-slate-700 block mb-2">أعمدة شيت {label} المطلوب رفعها:</span>
+              {checkType === 'bank' ? (
+                <div className="grid grid-cols-1 max-w-xs gap-2 text-center font-mono text-xxs font-bold">
+                  <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">1. رقم العميل *</div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center font-mono text-xxs font-bold">
+                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. الاسم</div>
+                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">2. تاريخ استحقاق الشيك</div>
+                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. مبلغ الشيك</div>
+                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. البنك</div>
+                  <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">5. رقم العميل *</div>
+                </div>
+              )}
             </div>
+
+            {checkType === 'bank' && (
+              <div className="pt-3 border-t border-slate-200">
+                <span className="font-bold text-slate-700 block mb-2">أو إضافة رقم عميل واحد يدويًا (بدون شيت):</span>
+                <div className="flex items-center gap-2 max-w-sm">
+                  <input
+                    type="text"
+                    value={manualExternalId}
+                    onChange={(e) => setManualExternalId(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleAddManual(); }}
+                    placeholder="رقم العميل..."
+                    className="flex-1 bg-white border border-slate-200 rounded-lg p-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddManual}
+                    disabled={isAddingManual || !manualExternalId.trim()}
+                    className="flex items-center gap-1 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold cursor-pointer shrink-0"
+                  >
+                    {isAddingManual ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                    إضافة
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -301,100 +403,173 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         ) : (
           <TableScrollWrapper>
             <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0">
-                <tr>
-                  <th className="py-2.5 px-3 text-center">م</th>
-                  <th className="py-2.5 px-3 text-right">الاسم</th>
-                  <th className="py-2.5 px-3 text-center">تاريخ استحقاق الشيك</th>
-                  <th className="py-2.5 px-3 text-center">مبلغ الشيك</th>
-                  <th className="py-2.5 px-3 text-center">البنك</th>
-                  <th className="py-2.5 px-3 text-center">رقم العميل</th>
-                  <th className="py-2.5 px-3 text-center">رقم اللجنة</th>
-                  <th className="py-2.5 px-3 text-center">رقم العضوية</th>
-                  <th className="py-2.5 px-3 text-center">طريقة الدفع</th>
-                  <th className="py-2.5 px-3 text-center">رقم الموبايل</th>
-                  <th className="py-2.5 px-3 text-center">حالة الطلب</th>
-                  <th className="py-2.5 px-3 text-center">إرسال شيكات</th>
-                  {isAdmin && <th className="py-2.5 px-3 text-center">حذف</th>}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRows.map((r, idx) => (
-                  <tr key={r.id} className="hover:bg-slate-50/50">
-                    <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
-                    <td className="py-2.5 px-3 font-bold">{r.name}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.checkDueDate ? formatDateCustom(r.checkDueDate) : '—'}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.checkAmount?.toLocaleString('en-US') || 0}</td>
-                    <td className="py-2.5 px-3 text-center">{r.bank || '—'}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.externalId}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.committeeNo ? `${r.committeeNo}${r.committeeYear ? ` / ${r.committeeYear}` : ''}` : '—'}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.membershipNumber || '—'}</td>
-                    <td className="py-2.5 px-3 text-center">{r.paymentMethod || '—'}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{r.mobileNumber || '—'}</td>
-                    <td className="py-2.5 px-3 text-center">
-                      {r.requestStatus ? (
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-                          r.requestStatus === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
-                          r.requestStatus === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
-                          r.requestStatus === 'Deletion' ? 'bg-purple-100 text-purple-800 border-purple-200' :
-                          r.requestStatus === 'Rejected' ? 'bg-rose-100 text-rose-700 border-rose-200' :
-                          'bg-slate-100 text-slate-600 border-slate-200'
-                        }`}>
-                          {r.requestStatus === 'Rejected' ? 'Rejected' : translateStatus(r.requestStatus)}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300">غير مربوط</span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-center">
-                      {!r.requestId ? (
-                        <span className="text-slate-300">—</span>
-                      ) : r.sendCheckStatus === 'accepted' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          <CheckCircle2 className="w-3 h-3" />
-                          تم الإرسال
-                        </span>
-                      ) : r.sendCheckStatus === 'pending' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
-                          <Clock className="w-3 h-3" />
-                          بانتظار قرار الأدمن
-                        </span>
-                      ) : r.sendCheckStatus === 'rejected' ? (
-                        <button
-                          type="button"
-                          onClick={() => setReasonPopoverRow(r)}
-                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 cursor-pointer hover:bg-rose-100"
-                        >
-                          <AlertCircle className="w-3 h-3" />
-                          تم رفض إرسال الشيكات
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleSendChecks(r)}
-                          disabled={sendingId === r.id}
-                          className="inline-flex items-center justify-center p-1.5 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-700 border border-sky-200 rounded-lg transition-all cursor-pointer"
-                          title="إرسال شيكات"
-                        >
-                          {sendingId === r.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
-                        </button>
-                      )}
-                    </td>
-                    {isAdmin && (
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          type="button"
-                          onClick={() => handleDelete(r)}
-                          disabled={deletingId === r.id}
-                          className="inline-flex items-center justify-center p-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-lg transition-all cursor-pointer"
-                        >
-                          {deletingId === r.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
+              {isSimplifiedClubView ? (
+                <>
+                  <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0">
+                    <tr>
+                      <th className="py-2.5 px-3 text-center">م</th>
+                      <th className="py-2.5 px-3 text-right">الاسم</th>
+                      <th className="py-2.5 px-3 text-center">رقم العميل</th>
+                      <th className="py-2.5 px-3 text-center">رقم اللجنة</th>
+                      <th className="py-2.5 px-3 text-center">رقم العضوية</th>
+                      <th className="py-2.5 px-3 text-center">طريقة الدفع</th>
+                      <th className="py-2.5 px-3 text-center">رقم الموبايل</th>
+                      <th className="py-2.5 px-3 text-center">حالة الطلب</th>
+                      <th className="py-2.5 px-3 text-center">إرسال شيكات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredRows.map((r, idx) => (
+                      <tr key={r.id} className="hover:bg-slate-50/50">
+                        <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-bold">{r.name}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.externalId}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.committeeNo ? `${r.committeeNo}${r.committeeYear ? ` / ${r.committeeYear}` : ''}` : '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.membershipNumber || '—'}</td>
+                        <td className="py-2.5 px-3 text-center">{r.paymentMethod || '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.mobileNumber || '—'}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <StatusBadge status={r.requestStatus} />
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {!r.requestId ? (
+                            <span className="text-slate-300">—</span>
+                          ) : r.sendCheckStatus === 'accepted' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3" />
+                              تم الإرسال
+                            </span>
+                          ) : r.sendCheckStatus === 'pending' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              <Clock className="w-3 h-3" />
+                              بانتظار قرار الأدمن
+                            </span>
+                          ) : r.sendCheckStatus === 'rejected' ? (
+                            <button
+                              type="button"
+                              onClick={() => setReasonPopoverRow(r)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 cursor-pointer hover:bg-rose-100"
+                            >
+                              <AlertCircle className="w-3 h-3" />
+                              تم رفض إرسال الشيكات
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleSendChecks(r)}
+                              disabled={sendingId === r.id}
+                              className="inline-flex items-center justify-center p-1.5 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-700 border border-sky-200 rounded-lg transition-all cursor-pointer"
+                              title="إرسال شيكات"
+                            >
+                              {sendingId === r.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              ) : (
+                <>
+                  <thead className="bg-slate-50 text-slate-500 font-bold sticky top-0">
+                    <tr>
+                      <th className="py-2.5 px-3 text-center">م</th>
+                      <th className="py-2.5 px-3 text-right">الاسم</th>
+                      <th className="py-2.5 px-3 text-center">تاريخ استحقاق الشيك</th>
+                      <th className="py-2.5 px-3 text-center">مبلغ الشيك</th>
+                      <th className="py-2.5 px-3 text-center">البنك</th>
+                      <th className="py-2.5 px-3 text-center">رقم العميل</th>
+                      <th className="py-2.5 px-3 text-center">رقم اللجنة</th>
+                      <th className="py-2.5 px-3 text-center">رقم العضوية</th>
+                      <th className="py-2.5 px-3 text-center">طريقة الدفع</th>
+                      <th className="py-2.5 px-3 text-center">رقم الموبايل</th>
+                      <th className="py-2.5 px-3 text-center">حالة الطلب</th>
+                      <th className="py-2.5 px-3 text-center">إرسال شيكات</th>
+                      {checkType === 'bank' && isAdmin && <th className="py-2.5 px-3 text-center">الاستلام</th>}
+                      {isAdmin && <th className="py-2.5 px-3 text-center">حذف</th>}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredRows.map((r, idx) => (
+                      <tr key={r.id} className="hover:bg-slate-50/50">
+                        <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-bold">{r.name}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.checkDueDate ? formatDateCustom(r.checkDueDate) : '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.checkAmount?.toLocaleString('en-US') || 0}</td>
+                        <td className="py-2.5 px-3 text-center">{r.bank || '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.externalId}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.committeeNo ? `${r.committeeNo}${r.committeeYear ? ` / ${r.committeeYear}` : ''}` : '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.membershipNumber || '—'}</td>
+                        <td className="py-2.5 px-3 text-center">{r.paymentMethod || '—'}</td>
+                        <td className="py-2.5 px-3 text-center font-mono">{r.mobileNumber || '—'}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <StatusBadge status={r.requestStatus} />
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          {!r.requestId ? (
+                            <span className="text-slate-300">—</span>
+                          ) : r.sendCheckStatus === 'accepted' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3" />
+                              تم الإرسال
+                            </span>
+                          ) : r.sendCheckStatus === 'pending' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              <Clock className="w-3 h-3" />
+                              بانتظار قرار الأدمن
+                            </span>
+                          ) : r.sendCheckStatus === 'rejected' ? (
+                            <button
+                              type="button"
+                              onClick={() => setReasonPopoverRow(r)}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 cursor-pointer hover:bg-rose-100"
+                            >
+                              <AlertCircle className="w-3 h-3" />
+                              تم رفض إرسال الشيكات
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleSendChecks(r)}
+                              disabled={sendingId === r.id}
+                              className="inline-flex items-center justify-center p-1.5 bg-sky-50 hover:bg-sky-100 disabled:opacity-50 text-sky-700 border border-sky-200 rounded-lg transition-all cursor-pointer"
+                              title="إرسال شيكات"
+                            >
+                              {sendingId === r.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                            </button>
+                          )}
+                        </td>
+                        {checkType === 'bank' && isAdmin && (
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleReceived(r)}
+                              disabled={receivingId === r.id}
+                              className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50 ${r.receivedDate ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
+                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغطي للتراجع` : 'تسجيل استلام الشيك'}
+                            >
+                              {receivingId === r.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
+                              {r.receivedDate ? formatDateCustom(r.receivedDate) : 'تم الاستلام؟'}
+                            </button>
+                          </td>
+                        )}
+                        {isAdmin && (
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleDelete(r)}
+                              disabled={deletingId === r.id}
+                              className="inline-flex items-center justify-center p-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 rounded-lg transition-all cursor-pointer"
+                            >
+                              {deletingId === r.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </>
+              )}
             </table>
           </TableScrollWrapper>
         )}
