@@ -1072,8 +1072,13 @@ export default function App() {
           }
 
           // 2. ايصال المقدم (Advance Receipt)
+          const receiptCol = hasCol('ايصال المقدم', 'إيصال المقدم', 'استلام ايصال المقدم', 'استلام إيصال المقدم', 'أصل الإيصال', 'حالة أصل الإيصال', 'Advance Receipt', 'receiptReceived');
           const rawReceipt = r['ايصال المقدم'] ?? r['إيصال المقدم'] ?? r['استلام ايصال المقدم'] ?? r['استلام إيصال المقدم'] ?? r['أصل الإيصال'] ?? r['حالة أصل الإيصال'] ?? r['Advance Receipt'] ?? r['receiptReceived'];
-          let receiptReceivedVal = false;
+          // Not just "column missing -> blank cell" but "column missing
+          // anywhere in this sheet at all": leaves this field untouched on
+          // an update instead of silently resetting it to false, same as
+          // the other partial-update-safe fields above.
+          let receiptReceivedVal: boolean | undefined = receiptCol ? false : undefined;
           if (rawReceipt !== undefined && rawReceipt !== null && rawReceipt !== '') {
             if (typeof rawReceipt === 'boolean') {
               receiptReceivedVal = rawReceipt;
@@ -1088,8 +1093,9 @@ export default function App() {
           }
 
           // 3. المراجعة (Reviewed)
+          const reviewedCol = hasCol('المراجعة', 'تم المراجعة', 'حالة المراجعة', 'مراجعة', 'مُراجع', 'مراجع', 'Reviewed', 'Is Reviewed', 'isReviewed', 'reviewed');
           const rawReviewed = r['المراجعة'] ?? r['تم المراجعة'] ?? r['حالة المراجعة'] ?? r['مراجعة'] ?? r['مُراجع'] ?? r['مراجع'] ?? r['Reviewed'] ?? r['Is Reviewed'] ?? r['isReviewed'] ?? r['reviewed'];
-          let reviewedVal = false;
+          let reviewedVal: boolean | undefined = reviewedCol ? false : undefined;
           if (rawReviewed !== undefined && rawReviewed !== null && rawReviewed !== '') {
             if (typeof rawReviewed === 'boolean') {
               reviewedVal = rawReviewed;
@@ -1104,8 +1110,9 @@ export default function App() {
           }
 
           // 4. تم الارسال (approvalSentToFirstManager)
+          const approvalSentCol = hasCol('تم الارسال', 'تم الإرسال', 'إرسال للمدير الأول', 'ارسال للمدير الاول', 'الارسال للمدير الاول', 'تم تحويله للمدير', 'تم التحويل للمدير الأول', 'approvalSentToFirstManager', 'Approval Sent');
           const rawSent = r['تم الارسال'] ?? r['تم الإرسال'] ?? r['إرسال للمدير الأول'] ?? r['ارسال للمدير الاول'] ?? r['الارسال للمدير الاول'] ?? r['تم تحويله للمدير'] ?? r['تم التحويل للمدير الأول'] ?? r['approvalSentToFirstManager'] ?? r['Approval Sent'];
-          let approvalSentVal = false;
+          let approvalSentVal: boolean | undefined = approvalSentCol ? false : undefined;
           if (rawSent !== undefined && rawSent !== null && rawSent !== '') {
             if (typeof rawSent === 'boolean') {
               approvalSentVal = rawSent;
