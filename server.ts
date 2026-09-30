@@ -24,7 +24,7 @@ app.get("/api/health", async (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// CORS and Preflight handler for Vercel / External Clients
+// CORS and Preflight handler for Vercel / External Clientsa
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -3847,6 +3847,28 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
     const existingActive = existingWithSameNum.find((r) => r.status !== "Rejected" && r.result !== "Rejected");
 
     if (existingActive) {
+      // Sync every core "data" field from the re-uploaded row onto the
+      // existing record -- this used to only touch a handful of workflow
+      // flags below, which meant re-importing a corrected sheet (e.g. to
+      // fill in the club or payment method for an already-existing
+      // membership number) silently did nothing for those fields, leaving
+      // stale/blank data in place.
+      const dataFields = [
+        'club', 'paymentMethod', 'membershipType', 'nationalId', 'externalId',
+        'mobileNumber', 'subscriptionDate', 'requestDate', 'loanUnderName',
+        'documents', 'cancellationReason', 'cancellationReasonDetail',
+        'salesPerson', 'subscriptionValue', 'transferValue', 'cashAmount',
+        'visaAmount', 'checksPaid', 'checksUnpaid', 'annualRenewalDue',
+        'debtABKCompanies', 'refundAmount', 'committeeNo', 'committeeYear',
+        'approvalDate', 'clubNote', 'currency', 'exceptions', 'exceptionType',
+        'type'
+      ];
+      dataFields.forEach((field) => {
+        if (row[field] !== undefined && row[field] !== '') {
+          existingActive[field] = row[field];
+        }
+      });
+
       // Update existing record if import contains updated flags/comments
       if (row.firstManagerComments) {
         existingActive.firstManagerComments = row.firstManagerComments;
@@ -3881,6 +3903,20 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
 
       const recalculated = calculateRequestFields(existingActive, db.formulas);
       Object.assign(existingActive, recalculated);
+
+      // If the committee already accepted a request whose subscription
+      // duration is long (>3 months / >1 month), that can only have
+      // happened after the First Manager's own approval -- a prerequisite
+      // step for those requests to ever reach the committee. Historical
+      // imports usually don't carry a separate "First Manager decision"
+      // column, so infer it here instead of leaving the request stuck
+      // showing "قيد المراجعة" / "في انتظار الموافقة المبدئية".
+      if (existingActive.result === "Accepted" && (existingActive.type2 === "Over 3 months" || existingActive.type2 === "Over 1 month")) {
+        existingActive.reviewed = true;
+        existingActive.approvalSentToFirstManager = true;
+        existingActive.firstManagerApproved = true;
+      }
+
       updatedCount++;
       return;
     }
@@ -3908,7 +3944,36 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       approvalSentToFirstManager: row.approvalSentToFirstManager === undefined ? false : row.approvalSentToFirstManager,
       subscriptionDate: row.subscriptionDate || "2026-01-01",
       requestDate: row.requestDate || "2026-06-01",
+      // These used to always come pre-filled with a default from the
+      // frontend; now that a genuinely missing column is sent as
+      // undefined (so updates to an existing record don't get clobbered),
+      // a brand-new record still needs a sensible fallback here.
+      club: row.club || "Sheraton",
+      paymentMethod: row.paymentMethod || "نقدا",
+      membershipType: row.membershipType || "Regular",
+      documents: row.documents || "مكتمل",
+      cancellationReason: row.cancellationReason || "اسباب شخصية",
+      salesPerson: row.salesPerson || "مسؤول الفرع",
+      currency: row.currency || "جم",
+      subscriptionValue: row.subscriptionValue ?? 0,
+      transferValue: row.transferValue ?? 0,
+      cashAmount: row.cashAmount ?? 0,
+      visaAmount: row.visaAmount ?? 0,
+      checksPaid: row.checksPaid ?? 0,
+      checksUnpaid: row.checksUnpaid ?? 0,
+      annualRenewalDue: row.annualRenewalDue ?? 0,
+      debtABKCompanies: row.debtABKCompanies ?? 0,
+      committeeYear: row.committeeYear || "",
     });
+
+    // Same inference as the update path above: an "Accepted" committee
+    // result for a long-duration request implies the First Manager
+    // already approved it.
+    if (processed.result === "Accepted" && (processed.type2 === "Over 3 months" || processed.type2 === "Over 1 month")) {
+      processed.reviewed = true;
+      processed.approvalSentToFirstManager = true;
+      processed.firstManagerApproved = true;
+    }
 
     db.requests.push(processed);
     importedCount++;
@@ -4038,10 +4103,7 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       const sendReq = c.requestId != null ? getLatestSendChecksRequest(c.requestId, checkType) : null;
       return {
         id: c.id,
-        // Bank-check sheets only carry the client number, so fall back to
-        // the linked request's member name when no name was uploaded.
-        name: c.name || linkedRequest?.memberName || "",
-        receivedDate: c.receivedDate || null,
+        name: c.name,
         checkDueDate: c.checkDueDate,
         checkAmount: c.checkAmount,
         bank: c.bank,
@@ -4062,22 +4124,11 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       };
     });
 
-    let visibleRows = user.role === "admin"
+    const visibleRows = user.role === "admin"
       ? rows
       : rows.filter((c) => c.club && isSameClub(c.club, user.club));
 
-    // "شيك المقدم": once the linked request reaches a final status
-    // (Cancelled / Deletion / Revoked) the check has already been handed
-    // over, so it drops off the page automatically. The badge count is
-    // simply "checks still on the page", so it goes down as they leave.
-    if (checkType === "advance") {
-      visibleRows = visibleRows.filter((c) => !["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || ""));
-    }
-
-    // Bank checks leave the count when the admin marks them as received.
-    const readyCount = checkType === "advance"
-      ? visibleRows.length
-      : visibleRows.filter((c) => !c.receivedDate).length;
+    const readyCount = visibleRows.filter((c) => ["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || "")).length;
 
     res.json({ rows: visibleRows, readyCount });
   });
@@ -4106,10 +4157,9 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
 
       const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-      const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
-      const entry: any = {
-        id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: row.name || existingEntry?.name || "",
+      const entry = {
+        id: existingIndex >= 0 ? db[dbKey][existingIndex].id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: row.name || "",
         checkDueDate: row.checkDueDate || "",
         checkAmount: Number(row.checkAmount) || 0,
         bank: row.bank || "",
@@ -4118,8 +4168,6 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
         uploadedAt: new Date().toISOString(),
         uploadedBy: user.name || user.username,
       };
-      // Re-uploading must never wipe a "received" mark the admin already set
-      if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
 
       if (existingIndex >= 0) {
         db[dbKey][existingIndex] = entry;
@@ -4151,81 +4199,6 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
 
     res.json({ success: true, addedCount, updatedCount, linkedCount });
   });
-
-  // Add a single check manually (client number only, no sheet needed).
-  app.post(`/api/${routePrefix}/manual`, requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية إضافة شيكات يدويًا" });
-    }
-    const externalId = String(req.body?.externalId || "").trim();
-    if (!externalId) {
-      return res.status(400).json({ error: "رقم العميل مطلوب" });
-    }
-    if (!Array.isArray(db[dbKey])) db[dbKey] = [];
-
-    const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
-    const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-    const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
-
-    const entry: any = {
-      id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name: req.body?.name ? String(req.body.name).trim() : (existingEntry?.name || linkedRequest?.memberName || ""),
-      checkDueDate: req.body?.checkDueDate ? String(req.body.checkDueDate).trim() : (existingEntry?.checkDueDate || ""),
-      checkAmount: req.body?.checkAmount != null ? (Number(req.body.checkAmount) || 0) : (existingEntry?.checkAmount || 0),
-      bank: req.body?.bank ? String(req.body.bank).trim() : (existingEntry?.bank || ""),
-      externalId,
-      requestId: linkedRequest ? linkedRequest.id : null,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: user.name || user.username,
-    };
-    if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
-
-    if (existingIndex >= 0) {
-      db[dbKey][existingIndex] = entry;
-    } else {
-      db[dbKey].push(entry);
-    }
-    if (linkedRequest && checkType === "advance") {
-      linkedRequest.checkReadyForPickup = true;
-    }
-
-    await saveDb();
-    logAudit(user.username, user.name, user.role, "إضافة شيك يدويًا", `رقم عميل ${externalId}`);
-    res.json({ success: true, entry });
-  });
-
-  if (checkType === "bank") {
-    // Admin marks a bank check as received (with a date), or undoes it.
-    // Purely informational -- never touches the request's status.
-    app.put(`/api/${routePrefix}/:id/received`, requireAuth, async (req, res) => {
-      const user = (req as any).user;
-      if (user.role !== "admin") {
-        return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تسجيل استلام الشيك" });
-      }
-      const entry = (db[dbKey] || []).find((c: any) => c.id === req.params.id);
-      if (!entry) {
-        return res.status(404).json({ error: "الصف غير موجود" });
-      }
-      const { receivedDate } = req.body;
-      if (receivedDate === null || receivedDate === undefined || receivedDate === "") {
-        delete entry.receivedDate;
-      } else if (typeof receivedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(receivedDate)) {
-        entry.receivedDate = receivedDate;
-      } else {
-        return res.status(400).json({ error: "تاريخ الاستلام غير صالح" });
-      }
-      await saveDb();
-      logAudit(
-        user.username,
-        user.name,
-        user.role,
-        entry.receivedDate ? "تسجيل استلام شيك بنكي" : "إلغاء تسجيل استلام شيك بنكي",
-        `رقم عميل ${entry.externalId}${entry.receivedDate ? ` - تاريخ الاستلام ${entry.receivedDate}` : ""}`
-      );
-      res.json({ success: true, receivedDate: entry.receivedDate || null });
-    });
-  }
 
   app.delete(`/api/${routePrefix}/:id`, requireAuth, async (req, res) => {
     const user = (req as any).user;
