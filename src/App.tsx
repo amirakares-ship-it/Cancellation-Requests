@@ -1030,6 +1030,16 @@ export default function App() {
         
         const rows: any[] = XLSX.utils.sheet_to_json(sheet);
         
+        // Which columns actually exist anywhere in this sheet (by header
+        // name) -- lets us tell "column not in this sheet at all" (leave
+        // the field untouched on update) apart from "column exists but
+        // this cell is blank" (fall back to the usual default, same as
+        // before). Without this, uploading a partial sheet (e.g. only up
+        // to "نادي الفرع") would silently overwrite every other field on
+        // an existing record with these defaults.
+        const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
+        const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
+
         // Map excel columns to database fields
         const mappedRequests = rows.map(r => {
           // Result mapping
@@ -1136,41 +1146,79 @@ export default function App() {
             loanUnderName: String(r['القرض بإسم'] || r['القرض باسم'] || r['Loan Under Name'] || mName || '').trim(),
             nationalId: String(r['الرقم القومي'] || r['الرقم القومى'] || r['National ID'] || '').trim(),
             externalId: String(r['رقم العميل'] || r['External Id'] || '').trim(),
-            subscriptionDate: String(r['تاريخ الاشتراك'] || r['Subscription Date'] || '2026-01-01').trim(),
-            requestDate: String(r['تاريخ الطلب'] || r['Request Date'] || '2026-06-01').trim(),
+            subscriptionDate: hasCol('تاريخ الاشتراك', 'Subscription Date')
+              ? String(r['تاريخ الاشتراك'] || r['Subscription Date'] || '2026-01-01').trim()
+              : undefined,
+            requestDate: hasCol('تاريخ الطلب', 'Request Date')
+              ? String(r['تاريخ الطلب'] || r['Request Date'] || '2026-06-01').trim()
+              : undefined,
             type: r['تصنيف فترة الاشتراك'] ? String(r['تصنيف فترة الاشتراك']).trim() : undefined,
-            membershipType: String(r['نوع العضوية'] || r['Membership Type'] || 'Regular').trim(),
-            club: (
-              String(r['نادي الفرع'] || '').trim() ||
-              String(r['النادي'] || '').trim() ||
-              String(r['النادى'] || '').trim() ||
-              String(r['Club'] || '').trim() ||
-              ''
-            ),
-            paymentMethod: String(r['طريقة الدفع'] || r['Payment Method'] || 'نقدا').trim(),
+            membershipType: hasCol('نوع العضوية', 'Membership Type')
+              ? String(r['نوع العضوية'] || r['Membership Type'] || 'Regular').trim()
+              : undefined,
+            // Note: intentionally no 'Sheraton' (or any) fallback when the
+            // column exists but the specific cell is blank -- club stays
+            // genuinely blank in that case so it surfaces in the
+            // missing-club report below, rather than masking the gap.
+            club: hasCol('نادي الفرع', 'النادي', 'النادى', 'Club')
+              ? (
+                  String(r['نادي الفرع'] || '').trim() ||
+                  String(r['النادي'] || '').trim() ||
+                  String(r['النادى'] || '').trim() ||
+                  String(r['Club'] || '').trim() ||
+                  ''
+                )
+              : undefined,
+            paymentMethod: hasCol('طريقة الدفع', 'Payment Method')
+              ? String(r['طريقة الدفع'] || r['Payment Method'] || 'نقدا').trim()
+              : undefined,
             accountNumber: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || r['Account Number'] || '').trim(),
             accountNumberABK: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || '').trim(),
-            documents: String(r['المستندات'] || r['Documents'] || 'مكتمل').trim(),
-            cancellationReason: String(r['سبب الإلغاء'] || r['سبب الالغاء'] || r['سبب طلب الالغاء'] || r['Cancellation Reason'] || 'اسباب شخصية').trim(),
+            documents: hasCol('المستندات', 'Documents')
+              ? String(r['المستندات'] || r['Documents'] || 'مكتمل').trim()
+              : undefined,
+            cancellationReason: hasCol('سبب الإلغاء', 'سبب الالغاء', 'سبب طلب الالغاء', 'Cancellation Reason')
+              ? String(r['سبب الإلغاء'] || r['سبب الالغاء'] || r['سبب طلب الالغاء'] || r['Cancellation Reason'] || 'اسباب شخصية').trim()
+              : undefined,
             cancellationReasonDetail: String(r['السبب بالتفصيل'] || r['السبب التفصيلي'] || r['Detailed Reason'] || 'بدون أسباب تفصيلية').trim(),
             firstManagerComments: String(r['ملاحظات المدير الأول'] || r['تعليق المدير الأول'] || '').trim() || undefined,
             firstManagerApproved: fmApprovedVal,
-            salesPerson: String(r['اسم البائع'] || r['مسؤول المبيعات'] || r['Sales Person'] || 'مسؤول الفرع').trim(),
-            subscriptionValue: parseSmartNumber(r['إجمالي قيمة العضوية'] || r['قيمة الاشتراك'] || r['قيمة العضوية'] || r['إجمالي الاشتراك'] || r['Subscription Value']),
-            transferValue: parseSmartNumber(r['قيمة التحويلة (قرض)'] || r['قيمة التحويلة'] || r['Transfer Value']),
-            cashAmount: parseSmartNumber(r['مقدم نقدي'] || r['المبلغ نقداً'] || r['نقدا'] || r['نقداً'] || r['Cash Amount']),
-            visaAmount: parseSmartNumber(r['مقدم فيزا'] || r['المبلغ فيزا'] || r['فيزا'] || r['Visa Amount']),
-            checksPaid: parseSmartNumber(r['الشيكات المسددة'] || r['شيكات مسددة'] || r['Checks Paid']),
-            checksUnpaid: parseSmartNumber(r['الشيكات غير مسددة'] || r['الشيكات الغير مسددة'] || r['شيكات غير مسددة'] || r['Checks Unpaid']),
-            annualRenewalDue: parseSmartNumber(r['التجديد السنوي المستحق'] || r['التجديد المستحق']),
-            debtABKCompanies: parseSmartNumber(r['مديونية البنوك/الشركات'] || r['مديونية البنك / الشركات'] || r['مديونية ABK+Companies'] || r['مديونية'] || r['debtABKCompanies']),
+            salesPerson: hasCol('اسم البائع', 'مسؤول المبيعات', 'Sales Person')
+              ? String(r['اسم البائع'] || r['مسؤول المبيعات'] || r['Sales Person'] || 'مسؤول الفرع').trim()
+              : undefined,
+            subscriptionValue: hasCol('إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value')
+              ? parseSmartNumber(r['إجمالي قيمة العضوية'] || r['قيمة الاشتراك'] || r['قيمة العضوية'] || r['إجمالي الاشتراك'] || r['Subscription Value'])
+              : undefined,
+            transferValue: hasCol('قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value')
+              ? parseSmartNumber(r['قيمة التحويلة (قرض)'] || r['قيمة التحويلة'] || r['Transfer Value'])
+              : undefined,
+            cashAmount: hasCol('مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount')
+              ? parseSmartNumber(r['مقدم نقدي'] || r['المبلغ نقداً'] || r['نقدا'] || r['نقداً'] || r['Cash Amount'])
+              : undefined,
+            visaAmount: hasCol('مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount')
+              ? parseSmartNumber(r['مقدم فيزا'] || r['المبلغ فيزا'] || r['فيزا'] || r['Visa Amount'])
+              : undefined,
+            checksPaid: hasCol('الشيكات المسددة', 'شيكات مسددة', 'Checks Paid')
+              ? parseSmartNumber(r['الشيكات المسددة'] || r['شيكات مسددة'] || r['Checks Paid'])
+              : undefined,
+            checksUnpaid: hasCol('الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid')
+              ? parseSmartNumber(r['الشيكات غير مسددة'] || r['الشيكات الغير مسددة'] || r['شيكات غير مسددة'] || r['Checks Unpaid'])
+              : undefined,
+            annualRenewalDue: hasCol('التجديد السنوي المستحق', 'التجديد المستحق')
+              ? parseSmartNumber(r['التجديد السنوي المستحق'] || r['التجديد المستحق'])
+              : undefined,
+            debtABKCompanies: hasCol('مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies')
+              ? parseSmartNumber(r['مديونية البنوك/الشركات'] || r['مديونية البنك / الشركات'] || r['مديونية ABK+Companies'] || r['مديونية'] || r['debtABKCompanies'])
+              : undefined,
             refundAmount: r['مبلغ الاسترداد الكلي'] !== undefined || r['مبلغ الاسترداد'] !== undefined || r['صافي الاسترداد'] !== undefined || r['المبلغ المسترد'] !== undefined || r['القيمة المستردة'] !== undefined || r['Refund Amount'] !== undefined
               ? parseSmartNumber(r['مبلغ الاسترداد الكلي'] || r['مبلغ الاسترداد'] || r['صافي الاسترداد'] || r['المبلغ المسترد'] || r['القيمة المستردة'] || r['Refund Amount'])
               : undefined,
             result: resultVal,
             status: statusVal,
             committeeNo: String(r['رقم اللجنة'] || '').trim(),
-            committeeYear: formatCommitteeYear(r['سنة اللجنة'] || r['تاريخ موافقة اللجنة'] || ''),
+            committeeYear: hasCol('سنة اللجنة', 'تاريخ موافقة اللجنة')
+              ? formatCommitteeYear(r['سنة اللجنة'] || r['تاريخ موافقة اللجنة'] || '')
+              : undefined,
             approvalDate: parsedApprovalDate,
             statusDate: rawStatusDateFormatted || ((resultVal === 'Rejected' || statusVal === 'Rejected' || statusVal === 'Cancelled') ? (parsedApprovalDate || formatDateCustom(r['تاريخ الطلب']) || new Date().toISOString().split('T')[0]) : ''),
             receiptReceived: receiptReceivedVal,
@@ -1180,7 +1228,9 @@ export default function App() {
             clubNote: String(r['ملاحظات الفرع'] || '').trim(),
             adminNote: String(r['ملاحظات الادمن'] || r['ملاحظات الأدمن'] || rejReasonStr || '').trim(),
             mobileNumber: String(r['رقم الموبايل'] || '').trim(),
-            currency: String(r['العملة'] || r['Currency'] || 'جم').trim(),
+            currency: hasCol('العملة', 'Currency')
+              ? String(r['العملة'] || r['Currency'] || 'جم').trim()
+              : undefined,
             exceptions: String(r['الاستثناء'] || '').trim(),
             exceptionType: String(r['نوع الاستثناء'] || '').trim(),
           };
@@ -1191,11 +1241,15 @@ export default function App() {
           return;
         }
 
-        // Rows where no club value was found in the sheet at all -- surfaced
-        // to the admin right after import so a missing/blank club cell gets
-        // caught immediately, instead of being discovered later one
-        // membership at a time.
-        const missingClubRows = mappedRequests.filter(r => !r.club || !r.club.trim());
+        // Rows where the sheet DOES have a club column but a specific cell
+        // came out blank -- surfaced to the admin right after import so it
+        // gets caught immediately. If the sheet has no club column at all
+        // (a partial/targeted update sheet), club is legitimately
+        // `undefined` for every row and this check is skipped entirely --
+        // that's not a data gap, it's just a sheet that isn't touching club.
+        const missingClubRows = hasCol('نادي الفرع', 'النادي', 'النادى', 'Club')
+          ? mappedRequests.filter(r => !r.club || !r.club.trim())
+          : [];
 
         // Upload mapped requests to bulk importer
         const res = await fetch('/api/requests/import', {
