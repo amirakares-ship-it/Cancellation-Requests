@@ -24,7 +24,7 @@ app.get("/api/health", async (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// CORS and Preflight handler for Vercel / External Clients
+// CORS and Preflight handler for Vercel / External Clientsa
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -3906,6 +3906,20 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
 
       const recalculated = calculateRequestFields(existingActive, db.formulas);
       Object.assign(existingActive, recalculated);
+
+      // If the committee already accepted a request whose subscription
+      // duration is long (>3 months / >1 month), that can only have
+      // happened after the First Manager's own approval -- a prerequisite
+      // step for those requests to ever reach the committee. Historical
+      // imports usually don't carry a separate "First Manager decision"
+      // column, so infer it here instead of leaving the request stuck
+      // showing "قيد المراجعة" / "في انتظار الموافقة المبدئية".
+      if (existingActive.result === "Accepted" && (existingActive.type2 === "Over 3 months" || existingActive.type2 === "Over 1 month")) {
+        existingActive.reviewed = true;
+        existingActive.approvalSentToFirstManager = true;
+        existingActive.firstManagerApproved = true;
+      }
+
       updatedCount++;
       return;
     }
@@ -3933,7 +3947,36 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       approvalSentToFirstManager: row.approvalSentToFirstManager === undefined ? false : row.approvalSentToFirstManager,
       subscriptionDate: row.subscriptionDate || "2026-01-01",
       requestDate: row.requestDate || "2026-06-01",
+      // These used to always come pre-filled with a default from the
+      // frontend; now that a genuinely missing column is sent as
+      // undefined (so updates to an existing record don't get clobbered),
+      // a brand-new record still needs a sensible fallback here.
+      club: row.club || "Sheraton",
+      paymentMethod: row.paymentMethod || "نقدا",
+      membershipType: row.membershipType || "Regular",
+      documents: row.documents || "مكتمل",
+      cancellationReason: row.cancellationReason || "اسباب شخصية",
+      salesPerson: row.salesPerson || "مسؤول الفرع",
+      currency: row.currency || "جم",
+      subscriptionValue: row.subscriptionValue ?? 0,
+      transferValue: row.transferValue ?? 0,
+      cashAmount: row.cashAmount ?? 0,
+      visaAmount: row.visaAmount ?? 0,
+      checksPaid: row.checksPaid ?? 0,
+      checksUnpaid: row.checksUnpaid ?? 0,
+      annualRenewalDue: row.annualRenewalDue ?? 0,
+      debtABKCompanies: row.debtABKCompanies ?? 0,
+      committeeYear: row.committeeYear || "",
     });
+
+    // Same inference as the update path above: an "Accepted" committee
+    // result for a long-duration request implies the First Manager
+    // already approved it.
+    if (processed.result === "Accepted" && (processed.type2 === "Over 3 months" || processed.type2 === "Over 1 month")) {
+      processed.reviewed = true;
+      processed.approvalSentToFirstManager = true;
+      processed.firstManagerApproved = true;
+    }
 
     db.requests.push(processed);
     importedCount++;
