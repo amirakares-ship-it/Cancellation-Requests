@@ -1060,15 +1060,6 @@ export default function App() {
         
         const rows: any[] = XLSX.utils.sheet_to_json(sheet);
 
-        // Which columns actually exist anywhere in this sheet (by header
-        // name) -- lets us tell "column not in this sheet at all" (leave
-        // the field untouched on update) apart from "column exists but
-        // this cell is blank" (fall back to the usual default, same as
-        // before). Without this, uploading a partial sheet (e.g. only up
-        // to "نادي الفرع") would silently overwrite every other field on
-        // an existing record with these defaults.
-        const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
-        const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
         
         // Which columns actually exist anywhere in this sheet (by header
         // name) -- lets us tell "column not in this sheet at all" (leave
