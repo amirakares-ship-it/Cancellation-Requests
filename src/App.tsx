@@ -142,7 +142,7 @@ export default function App() {
   const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const mainContentRef = useRef<HTMLDivElement>(null);
   const { activeRef: activeTableScrollRef } = useScrollBarContext();
-  const [readyChecksCount, setReadyChecksCount] = useState(0);
+  const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -263,13 +263,22 @@ export default function App() {
         });
       }
 
-      // Ready checks notification count
-      try {
-        const resReadyChecks = await fetch('/api/ready-checks', { headers });
-        const dataReadyChecks = await safeJson(resReadyChecks);
-        if (dataReadyChecks) setReadyChecksCount(dataReadyChecks.readyCount || 0);
-      } catch (e) {
-        console.error('Failed to load ready checks count', e);
+      // "الشيكات" sidebar badge: total pending check-related actions
+      // waiting on the admin -- "إرسال شيكات" (advance + bank) requests AND
+      // "استفسار شيكات" inquiries combined, since both now live as tabs
+      // inside the same "الشيكات" page. (Admin only -- the endpoint itself
+      // is admin-gated.)
+      if (currentUser?.role === 'admin') {
+        try {
+          const resSendChecks = await fetch('/api/send-checks-requests', { headers });
+          const dataSendChecks = await safeJson(resSendChecks);
+          if (dataSendChecks) {
+            const pending = (dataSendChecks.items || []).filter((i: any) => i.status === 'pending').length;
+            setSendChecksPendingCount(pending);
+          }
+        } catch (e) {
+          console.error('Failed to load send-checks pending count', e);
+        }
       }
 
       // Dropdowns
@@ -760,7 +769,7 @@ export default function App() {
     }
   };
 
-  const handleFirstManagerDecision = async (reqId: number, approve: boolean, comments: string) => {
+  const handleFirstManagerDecision = async (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => {
     setIsSubmittingFirstManagerModal(true);
     try {
       const res = await fetch(`/api/requests/${reqId}/first-manager-action`, {
@@ -769,7 +778,7 @@ export default function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ approve, comments })
+        body: JSON.stringify({ approve, comments, rejectionDate })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -1545,9 +1554,9 @@ export default function App() {
             {!isSidebarCollapsed && <span>أرشيف</span>}
           </button>
 
-          {/* 4.6 شيكات جاهزة للاستلام */}
+          {/* 4.6 الشيكات (شيك المقدم / الشيكات البنكية / استفسار شيكات) */}
           <button type="button" onClick={() => setActiveTab('ready_checks')}
-                        title="شيكات جاهزة للاستلام"
+                        title="الشيكات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'ready_checks' 
                 ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
@@ -1556,11 +1565,11 @@ export default function App() {
           >
             <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <CreditCard className={`w-4 h-4 shrink-0 ${activeTab === 'ready_checks' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
-              {!isSidebarCollapsed && <span>شيكات جاهزة للاستلام</span>}
+              {!isSidebarCollapsed && <span>الشيكات</span>}
             </div>
-            {readyChecksCount > 0 && (
-              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="شيكات جاهزة للاستلام (طلبات ملغاة/متراجع عنها/محذوفة)">
-                {readyChecksCount}
+            {currentUser.role === 'admin' && sendChecksPendingCount > 0 && (
+              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات إرسال شيكات واستفسار شيكات بانتظار القرار">
+                {sendChecksPendingCount}
               </span>
             )}
           </button>
@@ -1967,7 +1976,7 @@ export default function App() {
         {activeTab === 'ready_checks' && (
           <ReadyChecks
             user={currentUser}
-            authToken={authToken}
+            authToken={authToken || ''}
             onDataChanged={fetchAllData}
           />
         )}

@@ -147,7 +147,7 @@ export interface CancellationRequest {
 export interface SendChecksRequest {
   id: string;
   requestId: number;
-  checkType: 'advance' | 'bank';
+  checkType: 'advance' | 'bank' | 'inquiry';
   status: 'pending' | 'accepted' | 'rejected';
   requestedBy: string;
   requestedByName: string;
