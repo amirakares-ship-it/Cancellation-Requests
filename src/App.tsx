@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useScrollBarContext } from './contexts/ScrollBarContext';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { 
   Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
   FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
   ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
-  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal, CreditCard
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal, CreditCard, Send
 } from 'lucide-react';
 
 // Subcomponents
@@ -27,6 +26,7 @@ import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
 import Reports from './components/Reports';
 import AttachmentsArchive from './components/AttachmentsArchive';
 import ReadyChecks from './components/ReadyChecks';
+import SendChecksHub from './components/SendChecksHub';
 import { ConfirmModal } from './components/ConfirmModal';
 import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
 import SettlementStatementModal from './components/SettlementStatementModal';
@@ -37,44 +37,9 @@ import SendToFirstManagerModal from './components/SendToFirstManagerModal';
 import { CustomField } from './types';
 import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason } from './utils';
 
-type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports';
-
-// Every tab gets a real URL so it can be opened in a new browser tab,
-// bookmarked, or shared as a link (via normal right-click "Open in new
-// tab" on the sidebar links) instead of only being reachable through
-// in-app clicks.
-const TAB_ROUTES: Record<TabKey, string> = {
-  dashboard: '/',
-  requests: '/requests',
-  first_manager_hub: '/first-manager',
-  first_manager_decided: '/first-manager/decided',
-  first_manager_pending: '/first-manager/pending',
-  print: '/print',
-  memo: '/memo',
-  emails: '/emails',
-  reconcile: '/reconcile',
-  settings: '/settings',
-  receipts: '/receipts',
-  cancellation_status: '/cancellation-status',
-  formulas: '/formulas',
-  dropdowns_lists: '/dropdowns',
-  committees: '/committees',
-  attachments: '/archive',
-  ready_checks: '/ready-checks',
-  reports: '/reports',
-};
-
-const PATH_TO_TAB: Record<string, TabKey> = Object.fromEntries(
-  (Object.keys(TAB_ROUTES) as TabKey[]).map((tab) => [TAB_ROUTES[tab], tab])
-);
-
-function tabFromPath(pathname: string): TabKey {
-  return PATH_TO_TAB[pathname] || 'dashboard';
-}
+type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'send_checks_hub' | 'reports';
 
 export default function App() {
-  const navigate = useNavigate();
-  const location = useLocation();
 
   // Authentication state
   const [authToken, setAuthToken] = useState<string | null>(localStorage.getItem('wd_token'));
@@ -142,14 +107,7 @@ export default function App() {
   });
 
   // UI Control states
-  // Which tab is active is derived from the URL itself (so every tab has
-  // a real, shareable, new-tab-openable link) rather than being separate
-  // React state; setActiveTab is kept as a thin wrapper so every existing
-  // call site elsewhere in this file keeps working unchanged.
-  const activeTab: TabKey = tabFromPath(location.pathname);
-  const setActiveTab = (tab: TabKey) => {
-    navigate(TAB_ROUTES[tab]);
-  };
+  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -186,6 +144,7 @@ export default function App() {
   const mainContentRef = useRef<HTMLDivElement>(null);
   const { activeRef: activeTableScrollRef } = useScrollBarContext();
   const [readyChecksCount, setReadyChecksCount] = useState(0);
+  const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
@@ -313,6 +272,23 @@ export default function App() {
         if (dataReadyChecks) setReadyChecksCount(dataReadyChecks.readyCount || 0);
       } catch (e) {
         console.error('Failed to load ready checks count', e);
+      }
+
+      // "إرسال شيكات" pending decisions count (admin only -- the endpoint
+      // itself is admin-gated). Counts only "advance"/"bank" send requests
+      // -- "inquiry" ones are reviewed from the checks page's own tab, not
+      // this hub, so they're excluded here to keep the badge meaningful.
+      if (currentUser?.role === 'admin') {
+        try {
+          const resSendChecks = await fetch('/api/send-checks-requests', { headers });
+          const dataSendChecks = await safeJson(resSendChecks);
+          if (dataSendChecks) {
+            const pending = (dataSendChecks.items || []).filter((i: any) => i.status === 'pending' && i.checkType !== 'inquiry').length;
+            setSendChecksPendingCount(pending);
+          }
+        } catch (e) {
+          console.error('Failed to load send-checks pending count', e);
+        }
       }
 
       // Dropdowns
@@ -803,7 +779,7 @@ export default function App() {
     }
   };
 
-  const handleFirstManagerDecision = async (reqId: number, approve: boolean, comments: string) => {
+  const handleFirstManagerDecision = async (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => {
     setIsSubmittingFirstManagerModal(true);
     try {
       const res = await fetch(`/api/requests/${reqId}/first-manager-action`, {
@@ -812,7 +788,7 @@ export default function App() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${authToken}`
         },
-        body: JSON.stringify({ approve, comments })
+        body: JSON.stringify({ approve, comments, rejectionDate })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -1060,15 +1036,6 @@ export default function App() {
         
         const rows: any[] = XLSX.utils.sheet_to_json(sheet);
 
-        // Which columns actually exist anywhere in this sheet (by header
-        // name) -- lets us tell "column not in this sheet at all" (leave
-        // the field untouched on update) apart from "column exists but
-        // this cell is blank" (fall back to the usual default, same as
-        // before). Without this, uploading a partial sheet (e.g. only up
-        // to "نادي الفرع") would silently overwrite every other field on
-        // an existing record with these defaults.
-        const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
-        const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
         
         // Which columns actually exist anywhere in this sheet (by header
         // name) -- lets us tell "column not in this sheet at all" (leave
@@ -1469,8 +1436,8 @@ export default function App() {
         <nav className="flex-1 p-3 space-y-1 text-right overflow-y-auto custom-scrollbar">
           
           {/* 1. لوحة المراقبة والإحصائيات */}
-          <Link to={TAB_ROUTES.dashboard}
-            onClick={() => setRequestViewMode('list')}
+          <button type="button"
+            onClick={() => { setRequestViewMode('list'); setActiveTab('dashboard'); }}
             title="لوحة المراقبة والإحصائيات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'dashboard' 
@@ -1480,11 +1447,11 @@ export default function App() {
           >
             <TrendingUp className={`w-4 h-4 shrink-0 ${activeTab === 'dashboard' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
             {!isSidebarCollapsed && <span>لوحة المراقبة والإحصائيات</span>}
-          </Link>
+          </button>
 
           {/* 2. متابعة طلبات الإلغاء (متاح لجميع المستخدمين بما في ذلك المدير الأول للاطلاع على كافة الطلبات لجميع الأندية) */}
-          <Link to={TAB_ROUTES.requests}
-            onClick={() => setRequestViewMode('list')}
+          <button type="button"
+            onClick={() => { setRequestViewMode('list'); setActiveTab('requests'); }}
             title="متابعة طلبات الإلغاء"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'requests' && requestViewMode !== 'create' 
@@ -1505,12 +1472,12 @@ export default function App() {
                 {requests.length}
               </span>
             )}
-          </Link>
+          </button>
 
           {/* 3. طلبات تم اعتمادها (خاص بالمدير الأول: سجل الطلبات التي اتخذ فيها قرار قبول أو رفض) */}
           {currentUser.role === 'first_manager' && (
-            <Link to={TAB_ROUTES.first_manager_decided}
-              onClick={() => setRequestViewMode('list')}
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_decided'); }}
               title="طلبات تم اعتمادها"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'first_manager_decided' 
@@ -1529,13 +1496,13 @@ export default function App() {
                   {firstManagerDecidedCount}
                 </span>
               )}
-            </Link>
+            </button>
           )}
 
           {/* 4. مراجعة واتخاذ قرار (خاص بالمدير الأول: الطلبات المحالة وفي انتظار اتخاذ القرار) */}
           {currentUser.role === 'first_manager' && (
-            <Link to={TAB_ROUTES.first_manager_pending}
-              onClick={() => setRequestViewMode('list')}
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_pending'); }}
               title="مراجعة واتخاذ قرار"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'first_manager_pending' 
@@ -1552,12 +1519,12 @@ export default function App() {
                   {firstManagerPendingCount}
                 </span>
               )}
-            </Link>
+            </button>
           )}
 
           {/* طلب إلغاء جديد (متاح لجميع المستخدمين والمدير الأول) */}
-          <Link to={TAB_ROUTES.requests}
-            onClick={() => setRequestViewMode('create')}
+          <button type="button"
+            onClick={() => { setRequestViewMode('create'); setActiveTab('requests'); }}
             title="تسجيل طلب إلغاء جديد"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'requests' && requestViewMode === 'create' 
@@ -1567,11 +1534,11 @@ export default function App() {
           >
             <CheckCircle className={`w-4 h-4 shrink-0 ${activeTab === 'requests' && requestViewMode === 'create' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
             {!isSidebarCollapsed && <span>تسجيل طلب إلغاء جديد</span>}
-          </Link>
+          </button>
 
           {/* 4. إيصال المقدم */}
           {currentUser.role !== 'first_manager' && currentUser.username !== 'manager1' && (
-            <Link to={TAB_ROUTES.receipts}
+            <button type="button" onClick={() => setActiveTab('receipts')}
                             title="إيصال المقدم"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'receipts' 
@@ -1581,11 +1548,11 @@ export default function App() {
             >
               <Receipt className={`w-4 h-4 shrink-0 ${activeTab === 'receipts' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>إيصال المقدم</span>}
-            </Link>
+            </button>
           )}
 
           {/* 4.5 أرشيف المستندات والمرفقات */}
-          <Link to={TAB_ROUTES.attachments}
+          <button type="button" onClick={() => setActiveTab('attachments')}
                         title="أرشيف المستندات والمرفقات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'attachments' 
@@ -1595,11 +1562,11 @@ export default function App() {
           >
             <Paperclip className={`w-4 h-4 shrink-0 ${activeTab === 'attachments' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
             {!isSidebarCollapsed && <span>أرشيف</span>}
-          </Link>
+          </button>
 
-          {/* 4.6 شيكات جاهزة للاستلام */}
-          <Link to={TAB_ROUTES.ready_checks}
-                        title="شيكات جاهزة للاستلام"
+          {/* 4.6 الشيكات (شيك المقدم / الشيكات البنكية / استفسار شيكات) */}
+          <button type="button" onClick={() => setActiveTab('ready_checks')}
+                        title="الشيكات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'ready_checks' 
                 ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
@@ -1608,18 +1575,40 @@ export default function App() {
           >
             <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
               <CreditCard className={`w-4 h-4 shrink-0 ${activeTab === 'ready_checks' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
-              {!isSidebarCollapsed && <span>شيكات جاهزة للاستلام</span>}
+              {!isSidebarCollapsed && <span>الشيكات</span>}
             </div>
             {readyChecksCount > 0 && (
-              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="شيكات جاهزة للاستلام (طلبات ملغاة/متراجع عنها/محذوفة)">
+              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="شيك المقدم الجاهز للاستلام (طلبات ملغاة/متراجع عنها/محذوفة)">
                 {readyChecksCount}
               </span>
             )}
-          </Link>
+          </button>
+
+          {/* 4.7 إرسال شيكات (Admin only) */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('send_checks_hub')}
+                          title="إرسال شيكات"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'send_checks_hub' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <Send className={`w-4 h-4 shrink-0 ${activeTab === 'send_checks_hub' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>إرسال شيكات</span>}
+              </div>
+              {sendChecksPendingCount > 0 && (
+                <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات إرسال شيكات بانتظار القرار">
+                  {sendChecksPendingCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* 5. مديونية الشركات */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.reconcile}
+            <button type="button" onClick={() => setActiveTab('reconcile')}
                             title="مديونية الشركات"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'reconcile' 
@@ -1629,12 +1618,12 @@ export default function App() {
             >
               <FileSpreadsheet className={`w-4 h-4 shrink-0 ${activeTab === 'reconcile' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>مديونية الشركات</span>}
-            </Link>
+            </button>
           )}
 
           {/* 5.5 التقارير Reports */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.reports}
+            <button type="button" onClick={() => setActiveTab('reports')}
                             title="التقارير"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'reports'
@@ -1644,12 +1633,12 @@ export default function App() {
             >
               <BarChart3 className={`w-4 h-4 shrink-0 ${activeTab === 'reports' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>التقارير</span>}
-            </Link>
+            </button>
           )}
 
           {/* 6. طباعة المذكرة Memo */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.memo}
+            <button type="button" onClick={() => setActiveTab('memo')}
                             title="طباعة المذكرة (Memo)"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'memo' 
@@ -1659,12 +1648,12 @@ export default function App() {
             >
               <Printer className={`w-4 h-4 shrink-0 ${activeTab === 'memo' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>طباعة المذكرة (Memo)</span>}
-            </Link>
+            </button>
           )}
 
           {/* 7. تحديث وتحديد حالة الإلغاء */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.cancellation_status}
+            <button type="button" onClick={() => setActiveTab('cancellation_status')}
                             title="تحديث وتحديد حالة الإلغاء"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'cancellation_status' 
@@ -1674,13 +1663,13 @@ export default function App() {
             >
               <FileCheck2 className={`w-4 h-4 shrink-0 ${activeTab === 'cancellation_status' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>تحديث وتحديد حالة الإلغاء</span>}
-            </Link>
+            </button>
           )}
 
           {/* 8. متابعة مهام واعتمادات (Admin view) */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.first_manager_hub}
-              onClick={() => setRequestViewMode('list')}
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_hub'); }}
               title="متابعة مهام واعتمادات"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'first_manager_hub' 
@@ -1697,7 +1686,7 @@ export default function App() {
                   {firstManagerPendingCount}
                 </span>
               )}
-            </Link>
+            </button>
           )}
 
           {/* Divider for System Administration & Configurations */}
@@ -1714,7 +1703,7 @@ export default function App() {
 
           {/* 9. المعادلات والقواعد الحسابية */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.formulas}
+            <button type="button" onClick={() => setActiveTab('formulas')}
                             title="المعادلات والقواعد الحسابية"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'formulas' 
@@ -1724,12 +1713,12 @@ export default function App() {
             >
               <Calculator className={`w-4 h-4 shrink-0 ${activeTab === 'formulas' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>المعادلات والقواعد الحسابية</span>}
-            </Link>
+            </button>
           )}
 
           {/* 10. قوائم الاختيار (Dropdown lists) */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.dropdowns_lists}
+            <button type="button" onClick={() => setActiveTab('dropdowns_lists')}
                             title="Dropdown lists (قوائم الاختيار)"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'dropdowns_lists' 
@@ -1739,12 +1728,12 @@ export default function App() {
             >
               <ListFilter className={`w-4 h-4 shrink-0 ${activeTab === 'dropdowns_lists' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>Dropdown lists (قوائم الاختيار)</span>}
-            </Link>
+            </button>
           )}
 
           {/* 11. مركز البريد والرسائل */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.emails}
+            <button type="button" onClick={() => setActiveTab('emails')}
                             title="مركز البريد والرسائل"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'emails' 
@@ -1754,12 +1743,12 @@ export default function App() {
             >
               <Mail className={`w-4 h-4 shrink-0 ${activeTab === 'emails' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>مركز البريد والرسائل</span>}
-            </Link>
+            </button>
           )}
 
           {/* 12. الإعدادات والنسخ الفني */}
           {currentUser.role === 'admin' && (
-            <Link to={TAB_ROUTES.settings}
+            <button type="button" onClick={() => setActiveTab('settings')}
                             title="الإعدادات والنسخ الفني"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
                 activeTab === 'settings' 
@@ -1769,7 +1758,7 @@ export default function App() {
             >
               <Settings className={`w-4 h-4 shrink-0 ${activeTab === 'settings' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
               {!isSidebarCollapsed && <span>الإعدادات والنسخ الفني</span>}
-            </Link>
+            </button>
           )}
         </nav>
         
@@ -2019,7 +2008,16 @@ export default function App() {
         {activeTab === 'ready_checks' && (
           <ReadyChecks
             user={currentUser}
-            authToken={authToken}
+            authToken={authToken || ''}
+            onDataChanged={fetchAllData}
+          />
+        )}
+
+        {/* Tab: Send Checks review hub (Admin only) */}
+        {activeTab === 'send_checks_hub' && currentUser.role === 'admin' && (
+          <SendChecksHub
+            user={currentUser}
+            authToken={authToken || ''}
             onDataChanged={fetchAllData}
           />
         )}
