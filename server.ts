@@ -24,7 +24,7 @@ app.get("/api/health", async (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// CORS and Preflight handler for Vercel / External Clientsa
+// CORS and Preflight handler for Vercel / External Clients
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
@@ -519,6 +519,9 @@ const DEFAULT_DB = {
   sendChecksRecipients: {
     advance: { name: "رامز", email: "Ramez.Anis@wadidegla.com" },
     bank: { name: "ناجى", email: "nagy.mamdouh@wadidegla.com" },
+    // "استفسار شيكات": follow-up inquiry about check collection status.
+    // Same person as bank checks by default, but editable independently.
+    inquiry: { name: "ناجى", email: "nagy.mamdouh@wadidegla.com" },
   },
 };
 
@@ -628,6 +631,7 @@ async function loadDb() {
     else {
       if (!db.sendChecksRecipients.advance) db.sendChecksRecipients.advance = DEFAULT_DB.sendChecksRecipients.advance;
       if (!db.sendChecksRecipients.bank) db.sendChecksRecipients.bank = DEFAULT_DB.sendChecksRecipients.bank;
+      if (!db.sendChecksRecipients.inquiry) db.sendChecksRecipients.inquiry = DEFAULT_DB.sendChecksRecipients.inquiry;
     }
     if (!db.labelNames) {
       db.labelNames = DEFAULT_DB.labelNames;
@@ -2534,6 +2538,38 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   }
 
   db.requests[reqIndex] = updatedRequest;
+
+  // "استفسار شيكات": when the club/admin ticks "تم الاستلام" (the original
+  // paper receipt was brought in) for a cheque-paying, committee-approved
+  // (Accepted) request, that's the signal to follow up with Finance about
+  // actually collecting those cheques -- auto-raise an inquiry for the
+  // admin to review, same accept/reject flow as "إرسال شيكات". Only fires
+  // on the false->true transition (not on every unrelated save), and never
+  // duplicates a pending inquiry already raised for this request.
+  if (
+    req.body.receiptReceived === true &&
+    !existingRequest.receiptReceived &&
+    updatedRequest.paymentMethod === "شيكات" &&
+    updatedRequest.result === "Accepted"
+  ) {
+    if (!Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
+    const alreadyPending = db.sendChecksRequests.some(
+      (s: any) => String(s.requestId) === String(updatedRequest.id) && s.checkType === "inquiry" && s.status === "pending"
+    );
+    if (!alreadyPending) {
+      db.sendChecksRequests.push({
+        id: `sc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        requestId: updatedRequest.id,
+        checkType: "inquiry",
+        status: "pending",
+        requestedBy: user.username,
+        requestedByName: user.name || user.username,
+        requestedByRole: user.role,
+        requestedAt: new Date().toISOString(),
+      });
+    }
+  }
+
   await saveDb();
 
   // Audit and notification triggers
@@ -3340,7 +3376,7 @@ app.post("/api/smtp-settings/send-test", requireAuth, async (req, res) => {
       from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
       to: String(to).trim(),
       subject: "رسالة اختبار -- منظومة إلغاء العضويات وادي دجلة",
-      html: `<p>ده اختبار للتأكد إن إعدادات البريد شغالة صح.</p><p>لو وصلتك الرسالة دي، يبقى الإعدادات سليمة والنظام جاهز يبعت إيميلات فعلية.</p><p style="color:#888;font-size:12px">تم الإرسال في: ${new Date().toISOString()}</p>`,
+      html: `<div dir="rtl" style="text-align:right"><p>ده اختبار للتأكد إن إعدادات البريد شغالة صح.</p><p>لو وصلتك الرسالة دي، يبقى الإعدادات سليمة والنظام جاهز يبعت إيميلات فعلية.</p><p style="color:#888;font-size:12px">تم الإرسال في: ${new Date().toISOString()}</p></div>`,
     });
     logAudit(user.username, user.name, user.role, "إرسال بريد اختباري", `تم إرسال بريد اختباري إلى ${to}`);
     res.json({ success: true, messageId: info?.messageId || null });
@@ -3906,20 +3942,6 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
 
       const recalculated = calculateRequestFields(existingActive, db.formulas);
       Object.assign(existingActive, recalculated);
-
-      // If the committee already accepted a request whose subscription
-      // duration is long (>3 months / >1 month), that can only have
-      // happened after the First Manager's own approval -- a prerequisite
-      // step for those requests to ever reach the committee. Historical
-      // imports usually don't carry a separate "First Manager decision"
-      // column, so infer it here instead of leaving the request stuck
-      // showing "قيد المراجعة" / "في انتظار الموافقة المبدئية".
-      if (existingActive.result === "Accepted" && (existingActive.type2 === "Over 3 months" || existingActive.type2 === "Over 1 month")) {
-        existingActive.reviewed = true;
-        existingActive.approvalSentToFirstManager = true;
-        existingActive.firstManagerApproved = true;
-      }
-
       updatedCount++;
       return;
     }
@@ -3947,36 +3969,7 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       approvalSentToFirstManager: row.approvalSentToFirstManager === undefined ? false : row.approvalSentToFirstManager,
       subscriptionDate: row.subscriptionDate || "2026-01-01",
       requestDate: row.requestDate || "2026-06-01",
-      // These used to always come pre-filled with a default from the
-      // frontend; now that a genuinely missing column is sent as
-      // undefined (so updates to an existing record don't get clobbered),
-      // a brand-new record still needs a sensible fallback here.
-      club: row.club || "Sheraton",
-      paymentMethod: row.paymentMethod || "نقدا",
-      membershipType: row.membershipType || "Regular",
-      documents: row.documents || "مكتمل",
-      cancellationReason: row.cancellationReason || "اسباب شخصية",
-      salesPerson: row.salesPerson || "مسؤول الفرع",
-      currency: row.currency || "جم",
-      subscriptionValue: row.subscriptionValue ?? 0,
-      transferValue: row.transferValue ?? 0,
-      cashAmount: row.cashAmount ?? 0,
-      visaAmount: row.visaAmount ?? 0,
-      checksPaid: row.checksPaid ?? 0,
-      checksUnpaid: row.checksUnpaid ?? 0,
-      annualRenewalDue: row.annualRenewalDue ?? 0,
-      debtABKCompanies: row.debtABKCompanies ?? 0,
-      committeeYear: row.committeeYear || "",
     });
-
-    // Same inference as the update path above: an "Accepted" committee
-    // result for a long-duration request implies the First Manager
-    // already approved it.
-    if (processed.result === "Accepted" && (processed.type2 === "Over 3 months" || processed.type2 === "Over 1 month")) {
-      processed.reviewed = true;
-      processed.approvalSentToFirstManager = true;
-      processed.firstManagerApproved = true;
-    }
 
     db.requests.push(processed);
     importedCount++;
@@ -4337,7 +4330,7 @@ app.put("/api/send-checks-recipients", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل بيانات مستلمي إيميلات إرسال الشيكات" });
   }
   const { checkType, name, email } = req.body;
-  if (checkType !== "advance" && checkType !== "bank") {
+  if (checkType !== "advance" && checkType !== "bank" && checkType !== "inquiry") {
     return res.status(400).json({ error: "نوع الشيك غير صالح" });
   }
   if (!name || !String(name).trim() || !email || !String(email).trim()) {
@@ -4371,7 +4364,7 @@ app.get("/api/send-checks-requests", requireAuth, async (req, res) => {
 app.post("/api/send-checks-requests", requireAuth, async (req, res) => {
   const user = (req as any).user;
   const { requestId, checkType } = req.body;
-  if (checkType !== "advance" && checkType !== "bank") {
+  if (checkType !== "advance" && checkType !== "bank" && checkType !== "inquiry") {
     return res.status(400).json({ error: "نوع الشيك غير صالح" });
   }
   const linkedRequest = db.requests.find((r) => String(r.id) === String(requestId));
@@ -4438,7 +4431,7 @@ app.post("/api/send-checks-requests/:id/decision", requireAuth, async (req, res)
   }
 
   // Approve -- send the actual email to the configured recipient for this check type
-  const recipient = db.sendChecksRecipients?.[entry.checkType as "advance" | "bank"];
+  const recipient = db.sendChecksRecipients?.[entry.checkType as "advance" | "bank" | "inquiry"];
   if (!recipient?.email) {
     return res.status(422).json({ error: "لا يوجد إيميل مستلم مضبوط لهذا النوع من الشيكات -- من فضلك اضبطيه أولًا." });
   }
@@ -4453,11 +4446,10 @@ app.post("/api/send-checks-requests/:id/decision", requireAuth, async (req, res)
   const club = linkedRequest?.club || "—";
   const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
 
-  const html = `
-    <div style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9">
-      <p>ا/ ${recipient.name}</p>
-      <p>تحيه طيبه وبعد،</p>
-      <p>برجاء إرسال شيكات العضو الموضح بياناته أدناه:</p>
+  // Both templates share the same 3-row data table; only the greeting,
+  // request line, and whether the club line appears differ. All of this
+  // mail is Arabic, so it's rendered right-to-left throughout.
+  const dataTable = `
       <table style="border-collapse:collapse;margin:12px 0">
         <tr>
           <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">اسم العضو</td>
@@ -4471,17 +4463,38 @@ app.post("/api/send-checks-requests/:id/decision", requireAuth, async (req, res)
           <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">رقم العميل</td>
           <td style="border:1px solid #ccc;padding:8px 14px">${externalId}</td>
         </tr>
-      </table>
+      </table>`;
+
+  const html = entry.checkType === "inquiry"
+    ? `
+    <div dir="rtl" style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9;text-align:right">
+      <p>الساده الافاضل</p>
+      <p>تحيه طيبه وبعد،</p>
+      <p>برجاء الافاده بخصوص تحصيل الشيكات الخاصه بالعضو / ${memberName}</p>
+      ${dataTable}
+      <p>مع خالص الشكر،</p>
+    </div>
+  `
+    : `
+    <div dir="rtl" style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9;text-align:right">
+      <p>ا/ ${recipient.name}</p>
+      <p>تحيه طيبه وبعد،</p>
+      <p>برجاء إرسال شيكات العضو الموضح بياناته أدناه:</p>
+      ${dataTable}
       <p>الى نادى ${club}</p>
       <p>ولكم منا جزيل الشكر،</p>
     </div>
   `;
 
+  const subject = entry.checkType === "inquiry"
+    ? `استفسار شيكات - عضوية رقم ${membershipNumber}`
+    : `ارسال شيكات - عضوية رقم ${membershipNumber}`;
+
   try {
     await transporter.sendMail({
       from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
       to: recipient.email,
-      subject: `ارسال شيكات - عضوية رقم ${membershipNumber}`,
+      subject,
       html,
     });
   } catch (err: any) {
