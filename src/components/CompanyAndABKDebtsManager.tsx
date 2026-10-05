@@ -4,7 +4,7 @@ import {
   Calculator, DollarSign, Info, Save, RefreshCw, ChevronDown, Check, ArrowRight, ShieldAlert, FileText, AlertCircle, X, CheckSquare, Square, Pin
 } from 'lucide-react';
 import { CancellationRequest, User, Dropdowns } from '../types';
-import { translateStatus, isCompanyPaymentMethod, isSameClub, isInternationalRequest } from '../utils';
+import { translateStatus, isCompanyPaymentMethod, isSameClub, isInternationalRequest, formatCommitteeYear } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import TableScrollWrapper from './TableScrollWrapper';
 import * as XLSX from 'xlsx';
@@ -42,6 +42,8 @@ export default function CompanyAndABKDebtsManager({
   const [clubFilter, setClubFilter] = useState('');
   const [paymentMethodFilter, setPaymentMethodFilter] = useState('ABK');
   const [debtStatusFilter, setDebtStatusFilter] = useState(''); // 'all', 'entered', 'pending'
+  const [committeeFilter, setCommitteeFilter] = useState('');
+  const [committeeYearFilter, setCommitteeYearFilter] = useState('');
   const { visible: filtersVisible, pinned: filtersPinned, toggleVisible: toggleFiltersVisible, togglePinned: toggleFiltersPinned } = useFilterVisibility('company-abk-debts', user?.username);
 
   // Row selection checkboxes (One or All)
@@ -72,6 +74,22 @@ export default function CompanyAndABKDebtsManager({
 
   // Detail Modal for Breakdown
   const [detailTarget, setDetailTarget] = useState<CancellationRequest | null>(null);
+
+  // Unique committee numbers / years for the filter dropdowns
+  const committeeOptions = useMemo(() => {
+    const set = new Set<string>();
+    requests.forEach(r => { if (r.committeeNo) set.add(r.committeeNo); });
+    return Array.from(set).sort();
+  }, [requests]);
+
+  const committeeYearOptions = useMemo(() => {
+    const set = new Set<string>();
+    requests.forEach(r => {
+      const yr = r.committeeYear || (r.approvalDate ? formatCommitteeYear(r.approvalDate) : '');
+      if (yr) set.add(formatCommitteeYear(yr));
+    });
+    return Array.from(set).sort().reverse();
+  }, [requests]);
 
   // Filter requests that are relevant for ABK or Company debts
   const eligibleRequests = useMemo(() => {
@@ -104,6 +122,15 @@ export default function CompanyAndABKDebtsManager({
         return false;
       }
 
+      // Filter by Committee Number / Year
+      if (committeeFilter && r.committeeNo !== committeeFilter) {
+        return false;
+      }
+      if (committeeYearFilter) {
+        const yr = formatCommitteeYear(r.committeeYear || r.approvalDate || r.requestDate || (r as any).createdAt);
+        if (yr !== committeeYearFilter) return false;
+      }
+
       // Filter by Debt Status
       if (debtStatusFilter === 'entered' && (!r.debtABKCompanies || r.debtABKCompanies <= 0)) {
         return false;
@@ -131,7 +158,7 @@ export default function CompanyAndABKDebtsManager({
 
       return true;
     });
-  }, [requests, user, paymentMethodFilter, clubFilter, debtStatusFilter, searchTerms, searchInput]);
+  }, [requests, user, paymentMethodFilter, clubFilter, committeeFilter, committeeYearFilter, debtStatusFilter, searchTerms, searchInput]);
 
   // Checkbox Selection logic (One or All)
   const isAllSelected = eligibleRequests.length > 0 && eligibleRequests.every(r => selectedIds.includes(r.id));
@@ -248,7 +275,7 @@ export default function CompanyAndABKDebtsManager({
             }`}
           >
             <FileSpreadsheet className="h-4 w-4" />
-            <span>استيراد مديونيات الشركات (شيت إكسل)</span>
+            <span>Import طلبات الغاء سابقة</span>
           </button>
         </div>
       </div>
@@ -284,7 +311,7 @@ export default function CompanyAndABKDebtsManager({
             </div>
 
             {filtersVisible && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-3 text-xs">
               {/* Multi-Select Search (Membership No, Name, National ID, Loan Name) */}
               <div className="col-span-1 sm:col-span-2 lg:col-span-2 space-y-1.5">
                 <div className="flex items-center justify-between">
@@ -392,6 +419,36 @@ export default function CompanyAndABKDebtsManager({
                 </select>
               </div>
 
+              {/* Committee Number Filter */}
+              <div>
+                <label className="block text-slate-500 font-bold mb-1">رقم اللجنة</label>
+                <select
+                  value={committeeFilter}
+                  onChange={(e) => setCommitteeFilter(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 font-medium cursor-pointer"
+                >
+                  <option value="">كل أرقام اللجان</option>
+                  {committeeOptions.map(c => (
+                    <option key={c} value={c}>لجنة {c}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Committee Year Filter */}
+              <div>
+                <label className="block text-slate-500 font-bold mb-1">سنة اللجنة</label>
+                <select
+                  value={committeeYearFilter}
+                  onChange={(e) => setCommitteeYearFilter(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 font-medium cursor-pointer"
+                >
+                  <option value="">كل سنوات اللجان</option>
+                  {committeeYearOptions.map(y => (
+                    <option key={y} value={y}>سنة {y}</option>
+                  ))}
+                </select>
+              </div>
+
               {/* Debt Entry Status */}
               <div>
                 <label className="block text-slate-500 font-bold mb-1">حالة إدخال المديونية</label>
@@ -474,6 +531,7 @@ export default function CompanyAndABKDebtsManager({
                     <th className="p-3">رقم العضوية</th>
                     <th className="p-3">اسم العضو / القرض باسم</th>
                     <th className="p-3">النادي وطريقة الدفع</th>
+                    <th className="p-3 text-center whitespace-nowrap">رقم اللجنة</th>
                     <th className="p-3 text-center">قيمة القرض/التحويل</th>
                     <th className="p-3 text-center">تفاصيل ومبلغ الخصم</th>
                     <th className="p-3 text-center">مبلغ الاسترداد</th>
@@ -485,7 +543,7 @@ export default function CompanyAndABKDebtsManager({
                 <tbody className="divide-y divide-slate-100">
                   {eligibleRequests.length === 0 ? (
                     <tr>
-                      <td colSpan={10} className="text-center py-12 text-slate-400 font-bold">
+                      <td colSpan={11} className="text-center py-12 text-slate-400 font-bold">
                         لا توجد عضويات تطابق معايير البحث المحددة.
                       </td>
                     </tr>
@@ -549,6 +607,16 @@ export default function CompanyAndABKDebtsManager({
                             <span className="inline-block px-2 py-0.5 bg-amber-100 text-amber-900 rounded font-bold text-xxs mt-0.5">
                               {r.paymentMethod}
                             </span>
+                          </td>
+                          <td className="p-3 text-center whitespace-nowrap">
+                            {r.committeeNo ? (
+                              <div className="leading-tight">
+                                <div className="font-bold text-slate-700">لجنة رقم {r.committeeNo}</div>
+                                <div className="text-[10px] text-slate-400 font-normal">({formatCommitteeYear(r.committeeYear || r.approvalDate || r.requestDate)})</div>
+                              </div>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
                           </td>
                           <td className="p-3 text-center font-mono font-bold text-slate-800">
                             {(isABK ? subVal : transferVal).toLocaleString()} {r.currency || 'ج.م'}
