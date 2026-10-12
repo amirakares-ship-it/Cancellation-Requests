@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { FileSpreadsheet, Upload, Download, RefreshCw, CheckCircle2, AlertCircle, History, Trash2, Landmark, FileCheck } from 'lucide-react';
 import { CancellationRequest, Dropdowns, Committee, User } from '../types';
-import { parseDebtWorkbook } from '../utils';
+import { parseDebtWorkbook, isCompanyPaymentMethod, formatDateCustom } from '../utils';
 
 interface ReportsProps {
   requests: CancellationRequest[];
@@ -97,13 +97,29 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
   }, []);
 
   // Committees list sorted newest-first for the dropdown (matches how
-  // they're numbered/opened elsewhere in the app).
+  // they're numbered/opened elsewhere in the app). Sorting by number alone
+  // (ignoring year) scattered same-numbered committees from different
+  // years all over the list, which looked like duplicate entries and made
+  // it easy to pick the wrong one -- sort by year first, then number
+  // within each year, and group visually by year below.
   const sortedCommittees = [...(committees || [])].sort((a, b) => {
+    const ya = parseInt(a.year, 10);
+    const yb = parseInt(b.year, 10);
+    if (!isNaN(ya) && !isNaN(yb) && ya !== yb) return yb - ya;
     const na = parseInt(a.number, 10);
     const nb = parseInt(b.number, 10);
     if (!isNaN(na) && !isNaN(nb)) return nb - na;
     return 0;
   });
+
+  // Grouped by year, in the same newest-first order, so the dropdown can
+  // render a labeled <optgroup> per year instead of one long flat list.
+  const committeesByYear = sortedCommittees.reduce((acc: Record<string, Committee[]>, c) => {
+    const y = c.year || 'بدون سنة';
+    if (!acc[y]) acc[y] = [];
+    acc[y].push(c);
+    return acc;
+  }, {});
 
   const handleDownloadTemplate = () => {
     const nonCompany = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
@@ -209,7 +225,10 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         throw new Error(data.error || 'فشل تجهيز ملف التنزيل');
       }
 
-      const todayStr = new Date().toISOString().split('T')[0];
+      // Match the same DD-MMM-YYYY format that تاريخ الاشتراك/تاريخ الطلب
+      // are already stored in, instead of raw ISO -- otherwise today's
+      // date looked visibly different from the other two date columns.
+      const todayStr = formatDateCustom(new Date());
       const dataToExport = data.rows.map((r: any, idx: number) => ({
         'م': idx + 1,
         'طريقة الدفع': r.paymentMethod || '',
@@ -430,14 +449,14 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">الشركة / طريقة الدفع <span className="text-rose-500">*</span></label>
+            <label className="block text-xs font-bold text-slate-700 mb-1.5">الشركة <span className="text-rose-500">*</span></label>
             <select
               value={selectedPaymentMethod}
               onChange={(e) => setSelectedPaymentMethod(e.target.value)}
               className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
             >
-              <option value="">-- اختاري الشركة/طريقة الدفع --</option>
-              {(dropdowns?.paymentMethods || []).map((pm) => (
+              <option value="">-- اختاري الشركة --</option>
+              {(dropdowns?.paymentMethods || []).filter(isCompanyPaymentMethod).map((pm) => (
                 <option key={pm} value={pm}>{pm}</option>
               ))}
             </select>
@@ -451,10 +470,14 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
               className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
             >
               <option value="">-- اختاري رقم اللجنة --</option>
-              {sortedCommittees.map((c) => (
-                <option key={c.id} value={c.number}>
-                  لجنة {c.number} ({c.year}) {c.status === 'open' ? '- مفتوحة' : '- معتمدة'}
-                </option>
+              {Object.entries(committeesByYear).map(([year, yearCommittees]) => (
+                <optgroup key={year} label={`سنة ${year}`}>
+                  {yearCommittees.map((c) => (
+                    <option key={c.id} value={c.number}>
+                      لجنة {c.number} {c.status === 'open' ? '- مفتوحة' : '- معتمدة'}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
           </div>
