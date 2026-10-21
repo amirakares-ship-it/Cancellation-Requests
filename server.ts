@@ -748,12 +748,12 @@ async function saveDb() {
 ensureDbLoaded();
 
 // Helper to log audit actions safely
-async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number) {
+async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number, changes?: { field: string; label: string; from: string; to: string }[]) {
   try {
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
       db.auditLogs = [];
     }
-    const newLog = {
+    const newLog: any = {
       id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
       username,
       name,
@@ -763,11 +763,40 @@ async function logAudit(username: string, name: string, role: string, action: st
       timestamp: new Date().toISOString(),
       requestId
     };
+    if (changes && changes.length > 0) {
+      newLog.changes = changes;
+    }
     db.auditLogs.unshift(newLog);
     await saveDb();
   } catch (err) {
     console.warn("Could not write audit log:", err);
   }
+}
+
+// Fields that never belong in a user-facing change-history table.
+const DIFF_IGNORE_FIELDS = new Set(["id"]);
+
+// Field-by-field diff between a request before/after an edit, using the
+// Arabic label names configured in the system (db.labelNames).
+function buildRequestDiff(before: any, after: any): { field: string; label: string; from: string; to: string }[] {
+  const changes: { field: string; label: string; from: string; to: string }[] = [];
+  const allKeys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of allKeys) {
+    if (DIFF_IGNORE_FIELDS.has(key)) continue;
+    const oldVal = before ? before[key] : undefined;
+    const newVal = after ? after[key] : undefined;
+    const normOld = oldVal === undefined || oldVal === null ? "" : (typeof oldVal === "object" ? JSON.stringify(oldVal) : String(oldVal));
+    const normNew = newVal === undefined || newVal === null ? "" : (typeof newVal === "object" ? JSON.stringify(newVal) : String(newVal));
+    if (normOld !== normNew) {
+      changes.push({
+        field: key,
+        label: (db.labelNames && (db.labelNames as any)[key]) || key,
+        from: normOld === "" ? "—" : normOld,
+        to: normNew === "" ? "—" : normNew,
+      });
+    }
+  }
+  return changes;
 }
 
 // Builds a live nodemailer transporter from the saved SMTP settings, or
@@ -851,6 +880,178 @@ app.use(async (req, res, next) => {
   res.on("finish", releaseLock);
   res.on("close", releaseLock);
 
+  next();
+});
+
+// --- Automatic per-request change tracking (every endpoint, incl. bulk) ---
+// Wraps every mutating /api call: takes a light snapshot of all requests
+// right before the handler runs, and right before the response is sent
+// compares it against the new state. Any request that was created or had a
+// field changed gets a history entry (field-by-field "from -> to") that
+// shows up in that request's log popup -- no matter which endpoint made the
+// change (single edit, bulk upload, status change, committee cascade...),
+// including endpoints added in the future. If the handler already logged
+// the change itself, the diff is attached to that entry instead of adding
+// a duplicate one.
+const TRACK_SKIP_PATHS = [/^\/api\/auth\//, /^\/api\/backup\/restore/];
+const TRACK_LONG_STR = 300;
+const TRACK_MAX_CHANGES_PER_ENTRY = 60;
+
+function trackReplacer(_k: string, v: any) {
+  if (typeof v === "string" && v.length > TRACK_LONG_STR) {
+    return `«محتوى طويل:${v.length}|${v.slice(0, 24)}|${v.slice(-24)}»`;
+  }
+  return v;
+}
+
+function snapshotRequestsLight(): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const r of (db.requests || [])) {
+    m.set(String(r.id), JSON.stringify(r, trackReplacer));
+  }
+  return m;
+}
+
+function trackDisplayValue(key: string, v: any): string {
+  if (v === undefined || v === null || v === "") return "—";
+  if (key === "attachments" && Array.isArray(v)) {
+    return v.length === 0 ? "—" : v.map((a: any) => a?.fileName || a?.id || "مرفق").join("، ");
+  }
+  if (typeof v === "string") return v.startsWith("«محتوى طويل") ? "[ملف / محتوى طويل]" : v;
+  if (typeof v === "object") {
+    const str = JSON.stringify(v);
+    return str.length > 200 ? str.slice(0, 200) + "…" : str;
+  }
+  return String(v);
+}
+
+function diffLightSnapshots(beforeStr: string, afterStr: string) {
+  const before = JSON.parse(beforeStr);
+  const after = JSON.parse(afterStr);
+  const out: { field: string; label: string; from: string; to: string }[] = [];
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  for (const key of keys) {
+    if (key === "id") continue;
+    const a = before[key];
+    const b = after[key];
+    if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null)) continue;
+    if ((a === undefined || a === null || a === "") && (b === undefined || b === null || b === "")) continue;
+    out.push({
+      field: key,
+      label: (db.labelNames && (db.labelNames as any)[key]) || (key === "attachments" ? "المرفقات" : key),
+      from: trackDisplayValue(key, a),
+      to: trackDisplayValue(key, b),
+    });
+  }
+  return out;
+}
+
+function trackActionLabel(method: string, path: string): string {
+  if (path.includes("/bulk-review")) return "تحديث حالة المراجعة (جماعي)";
+  if (path.includes("/bulk-cancellation-status")) return "تحديث حالة الإلغاء (جماعي)";
+  if (path.includes("/bulk-finance-sent")) return "تحديث إرسال الإدارة المالية (جماعي)";
+  if (path.includes("/reconcile-system-status")) return "مطابقة حالة النظام (رفع شيت)";
+  if (path.includes("/import-company-debts") || path.includes("/debt-import-batches")) return "تحديث مديونيات (رفع شيت)";
+  if (path.endsWith("/api/requests/import")) return "استيراد مجمع للطلبات";
+  if (path.includes("/attachments")) return "تعديل المرفقات";
+  if (path.includes("/status-date")) return "تعديل تاريخ الحالة";
+  if (path.includes("first-manager")) return "إجراء المدير الأول";
+  if (path.includes("sector-manager")) return "إجراء رئيس القطاع";
+  if (path.includes("/committees")) return "تعديل لجنة (أثر على الطلب)";
+  if (path.includes("/formulas")) return "تعديل معادلات الحساب (أثر على الطلب)";
+  if (path.includes("/cancellation-settlements")) return "تعديل كشف تسوية";
+  if (path.includes("/send-checks")) return "إجراء على الشيكات";
+  if (method === "POST" && path === "/api/requests") return "إنشاء طلب إلغاء";
+  return "تعديل على الطلب";
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || TRACK_SKIP_PATHS.some((re) => re.test(req.path))) {
+    return next();
+  }
+  let before: Map<string, string>;
+  try {
+    before = snapshotRequestsLight();
+  } catch (e) {
+    return next();
+  }
+  const startTs = Date.now();
+  let finalized = false;
+
+  const finalize = async () => {
+    if (finalized) return;
+    finalized = true;
+    try {
+      if (res.statusCode >= 400) return;
+      const user = (req as any).user;
+      if (!user) return;
+      if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = [];
+
+      // Entries this very request's handler already wrote (newest first).
+      const windowEntries: any[] = [];
+      for (let i = 0; i < db.auditLogs.length; i++) {
+        const l: any = db.auditLogs[i];
+        const t = Date.parse(l.timestamp);
+        if (!isNaN(t) && t < startTs - 5) break;
+        if (l.requestId !== undefined && l.requestId !== null && l.username === user.username) windowEntries.push(l);
+      }
+
+      const label = trackActionLabel(req.method, req.path);
+      let added = 0;
+      let touched = 0;
+      for (const r of (db.requests || [])) {
+        const id = String(r.id);
+        const afterStr = JSON.stringify(r, trackReplacer);
+        const beforeStr = before.get(id);
+        if (beforeStr === afterStr) continue;
+        const existing = windowEntries.find((l) => String(l.requestId) === id);
+
+        if (beforeStr === undefined) {
+          // Brand-new request created by this call.
+          if (existing) continue;
+          db.auditLogs.unshift({
+            id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+            username: user.username, name: user.name, role: user.role,
+            action: "إنشاء طلب إلغاء",
+            details: `تم إنشاء الطلب للمشترك ${r.memberName || ""} رقم العضوية ${r.membershipNumber || ""} (${label})`,
+            timestamp: new Date().toISOString(),
+            requestId: r.id,
+          });
+          added++;
+          continue;
+        }
+
+        const changes = diffLightSnapshots(beforeStr, afterStr).slice(0, TRACK_MAX_CHANGES_PER_ENTRY);
+        if (changes.length === 0) continue;
+        if (existing) {
+          // Handler logged this action itself: just attach the diff table.
+          if (!existing.changes || existing.changes.length === 0) {
+            existing.changes = changes;
+            touched++;
+          }
+          continue;
+        }
+        db.auditLogs.unshift({
+          id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+          username: user.username, name: user.name, role: user.role,
+          action: label,
+          details: `${label} -- المشترك ${r.memberName || ""} رقم العضوية ${r.membershipNumber || ""}`,
+          timestamp: new Date().toISOString(),
+          requestId: r.id,
+          changes,
+        });
+        added++;
+      }
+      if (added > 0 || touched > 0) await saveDb();
+    } catch (e) {
+      console.warn("Request change tracking failed (ignored):", e);
+    }
+  };
+
+  const origJson = res.json.bind(res);
+  const origSend = res.send.bind(res);
+  (res as any).json = (body?: any) => { finalize().finally(() => origJson(body)); return res; };
+  (res as any).send = (body?: any) => { finalize().finally(() => origSend(body)); return res; };
   next();
 });
 
@@ -2584,7 +2785,8 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
     auditMsg = `[تنبيه دولي] قام مسؤول العضويات الدولية بتعديل طلب المشترك ${updatedRequest.memberName} رقم العضوية ${updatedRequest.membershipNumber}`;
   }
 
-  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId);
+  const fieldChanges = buildRequestDiff(existingRequest, updatedRequest);
+  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId, fieldChanges);
   res.json({ success: true, request: updatedRequest });
 });
 
@@ -2671,14 +2873,15 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
   let updatedCount = 0;
   const strIds = ids.map((id) => String(id));
 
-  // Company payment methods for "مخالصة الإلغاءات" -- same definition
-  // already used for the company/bank debt-sheet workflow in Reports.tsx,
-  // kept consistent here.
+  // Company payment methods for "مخالصة الإلغاءات". ABK is a bank, not a
+  // company, so it is intentionally EXCLUDED here (it still uses the
+  // company/bank debt-sheet workflow in Reports.tsx, which is separate).
   const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
   const isCompanySettlementMethod = (method: any) => {
     const m = String(method || "").trim();
     if (!m) return false;
-    return m === "ABK" || m === "المشرق" || !nonCompanyMethods.includes(m);
+    if (m === "ABK") return false;
+    return m === "المشرق" || !nonCompanyMethods.includes(m);
   };
   // Grouped by company/payment-method name -- one settlement batch gets
   // created per company involved in this bulk action.
@@ -3416,7 +3619,27 @@ app.post("/api/requests/reconcile-system-status", requireAuth, async (req, res) 
 // both the original "/api/requests/import-company-debts" endpoint and the
 // newer tagged-batch "/api/debt-import-batches" endpoint below, so both
 // stay in sync and never diverge.
-function applyCompanyDebtsImport(rows: any[]) {
+function applyCompanyDebtsImport(rows: any[], actor?: { username: string; name: string; role: string }, sourceLabel?: string) {
+  // Writes one history entry straight into db.auditLogs (no per-entry DB
+  // save -- the caller already saves once after the whole import) so each
+  // affected request shows this upload in its own change-history popup.
+  const pushRequestLog = (requestId: number, action: string, details: string, changes?: { field: string; label: string; from: string; to: string }[]) => {
+    if (!actor) return;
+    if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = [];
+    const entry: any = {
+      id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+      username: actor.username,
+      name: actor.name,
+      role: actor.role,
+      action,
+      details,
+      timestamp: new Date().toISOString(),
+      requestId,
+    };
+    if (changes && changes.length > 0) entry.changes = changes;
+    db.auditLogs.unshift(entry);
+  };
+
   let updatedCount = 0;
   let nonZeroDebtCount = 0;
   let zeroDebtCount = 0;
@@ -3461,6 +3684,11 @@ function applyCompanyDebtsImport(rows: any[]) {
             subscriptionValue: request.subscriptionValue,
             attemptedDebt: newDebt,
           });
+          pushRequestLog(
+            request.id,
+            "رفض مديونية من شيت",
+            `${sourceLabel || "رفع شيت مديونيات"}: تم رفض مديونية ${newDebt.toLocaleString()} لأنها أكبر من أو تساوي قيمة الاشتراك (${Number(request.subscriptionValue).toLocaleString()})`
+          );
           return; // skip this request only -- rest of the batch continues
         }
 
@@ -3471,6 +3699,7 @@ function applyCompanyDebtsImport(rows: any[]) {
           zeroDebtCount++;
         }
 
+        const requestBefore = { ...request };
         const prevDebt = request.debtABKCompanies || 0;
         request.debtABKCompanies = newDebt;
 
@@ -3496,6 +3725,13 @@ function applyCompanyDebtsImport(rows: any[]) {
 
         const recalculated = calculateRequestFields(request, db.formulas);
         Object.assign(request, recalculated);
+
+        pushRequestLog(
+          request.id,
+          "تحديث المديونية عبر شيت",
+          `${sourceLabel || "رفع شيت مديونيات"}: مديونية البنوك/الشركات من ${Number(prevDebt).toLocaleString()} إلى ${Number(newDebt).toLocaleString()}`,
+          buildRequestDiff(requestBefore, request)
+        );
 
         updatedCount++;
         updatedMembersList.push({
@@ -3529,7 +3765,7 @@ app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => 
     return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
   }
 
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows);
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows, { username: user.username, name: user.name, role: user.role }, "رفع شيت مديونيات الشركات والبنوك");
 
   await saveDb();
   logAudit(
@@ -3577,7 +3813,7 @@ app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "يرجى اختيار رقم اللجنة قبل الرفع" });
   }
 
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows);
+  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows, { username: user.username, name: user.name, role: user.role }, `رفع دفعة مديونية لشركة "${String(paymentMethod).trim()}" - لجنة ${String(committeeNo).trim()}`);
 
   // Map membership number -> the debt value it had right BEFORE this
   // batch was applied, so an accidental/wrong upload can be reverted
@@ -4073,6 +4309,14 @@ app.get("/api/logs/audit", requireAuth, async (req, res) => {
     return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
   }
   res.json(db.auditLogs);
+});
+
+// Per-request change history -- open to every authenticated user, scoped
+// to the one request id asked for (never leaks unrelated admin actions).
+app.get("/api/requests/:id/logs", requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const logs = (db.auditLogs || []).filter((l: any) => l.requestId !== undefined && l.requestId !== null && String(l.requestId) === String(id));
+  res.json(logs);
 });
 
 // ----- "الشيكات" (شيك المقدم / الشيكات البنكية) -----
