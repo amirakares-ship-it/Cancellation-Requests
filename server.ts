@@ -2873,15 +2873,15 @@ app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res)
   let updatedCount = 0;
   const strIds = ids.map((id) => String(id));
 
-  // Company payment methods for "مخالصة الإلغاءات". ABK is a bank, not a
-  // company, so it is intentionally EXCLUDED here (it still uses the
-  // company/bank debt-sheet workflow in Reports.tsx, which is separate).
+  // Company payment methods for "مخالصة الإلغاءات" -- companies ONLY.
+  // Banks (ABK, المشرق, QNB...) and every non-company method are
+  // intentionally EXCLUDED here (they still use the company/bank debt-sheet
+  // workflow in Reports.tsx, which is separate).
   const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
   const isCompanySettlementMethod = (method: any) => {
     const m = String(method || "").trim();
     if (!m) return false;
-    if (m === "ABK") return false;
-    return m === "المشرق" || !nonCompanyMethods.includes(m);
+    return !nonCompanyMethods.includes(m);
   };
   // Grouped by company/payment-method name -- one settlement batch gets
   // created per company involved in this bulk action.
