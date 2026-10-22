@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   ShieldCheck, Clock, Layers, CheckCircle2, XCircle, Database, Search, 
   Download, FileText, Printer, AlertTriangle, RotateCcw, CheckSquare, 
-  Square, Sparkles, Filter, Eye, UserCheck, Check, FileCheck, Pin
+  Square, Sparkles, Filter, Eye, UserCheck, Check, FileCheck, Pin, FilterX
 } from 'lucide-react';
 import { CancellationRequest } from '../types';
 import { formatCommitteeWithYear, formatCommitteeYear, containsSearchQuery, isInternationalRequest, isSameClub } from '../utils';
@@ -637,10 +637,10 @@ export default function FirstManagerHub({
             <button
               type="button"
               onClick={resetAllFilters}
-              className="text-xs text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+              className="text-xs text-rose-600 hover:text-rose-700 font-bold flex items-center gap-1 cursor-pointer transition-colors font-sans tracking-tight"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>إعادة ضبط الفلاتر</span>
+              <FilterX className="w-3.5 h-3.5" />
+              <span>Clear Filters</span>
             </button>
           )}
         </div>
