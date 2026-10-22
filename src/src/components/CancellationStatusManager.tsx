@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { 
-  FileCheck2, Search, CheckSquare, Calendar, RefreshCw, Filter, AlertCircle, CheckCircle2, RotateCcw, Tag, FileText, Edit3, Pin
+  FileCheck2, Search, CheckSquare, Calendar, RefreshCw, Filter, AlertCircle, CheckCircle2, RotateCcw, Tag, FileText, Edit3, Pin, FilterX
 } from 'lucide-react';
 import { CancellationRequest, User, Dropdowns } from '../types';
 import { translateStatus, formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, toInputDateStr, isSameClub, isInternationalRequest } from '../utils';
@@ -510,15 +510,28 @@ export default function CancellationStatusManager({
           <button
             type="button"
             onClick={handleResetFilters}
-            className="text-xxs font-bold text-amber-600 hover:text-amber-700 hover:underline cursor-pointer"
+            className="text-xxs font-bold text-amber-600 hover:text-amber-700 hover:underline cursor-pointer flex items-center gap-1 font-sans tracking-tight"
           >
-            إعادة ضبط الفلاتر
+            <FilterX className="w-3.5 h-3.5" />
+            <span>Clear Filters</span>
           </button>
         </div>
 
         {filtersVisible && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-          {/* 1. Member Name */}
+          {/* 1. Membership Number */}
+          <div>
+            <label className="block text-slate-500 font-bold mb-1">رقم العضوية</label>
+            <input
+              type="text"
+              value={membershipNumberSearch}
+              onChange={(e) => setMembershipNumberSearch(e.target.value)}
+              placeholder="مثال: 102030..."
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono font-bold"
+            />
+          </div>
+
+          {/* 2. Member Name */}
           <div>
             <label className="block text-slate-500 font-bold mb-1">اسم العضو</label>
             <div className="relative">
@@ -532,7 +545,7 @@ export default function CancellationStatusManager({
             </div>
           </div>
 
-          {/* 2. Loan Under Name */}
+          {/* 3. Loan Under Name */}
           <div>
             <label className="block text-slate-500 font-bold mb-1">القرض بإسم</label>
             <input
@@ -541,18 +554,6 @@ export default function CancellationStatusManager({
               onChange={(e) => setLoanUnderNameSearch(e.target.value)}
               placeholder="اسم صاحب القرض / الشركة..."
               className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 font-medium"
-            />
-          </div>
-
-          {/* 3. Membership Number */}
-          <div>
-            <label className="block text-slate-500 font-bold mb-1">رقم العضوية</label>
-            <input
-              type="text"
-              value={membershipNumberSearch}
-              onChange={(e) => setMembershipNumberSearch(e.target.value)}
-              placeholder="مثال: 102030..."
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-right focus:outline-none focus:ring-2 focus:ring-amber-400 font-mono font-bold"
             />
           </div>
 
@@ -689,39 +690,42 @@ export default function CancellationStatusManager({
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-          {/* Status Dropdown */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              تحديد حالة الإلغاء الجديدة (Cancellation Status):
-            </label>
-            <select
-              value={targetStatus}
-              onChange={(e) => setTargetStatus(e.target.value as any)}
-              className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer shadow-xs"
-            >
-              {(dropdowns?.cancellationStatuses || ["Pending", "Cancelled", "Revoked", "Deletion"]).map((st) => (
-                <option key={st} value={st}>{st}</option>
-              ))}
-            </select>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          {/* Right side: حالة الإلغاء */}
+          <div className="bg-white/70 border border-amber-200/70 rounded-2xl p-4 space-y-3">
+            <h4 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4 text-amber-500" />
+              <span>حالة الإلغاء</span>
+            </h4>
 
-          {/* Status Date Input */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1.5">
-              تاريخ حالة الإلغاء (إجباري):
-            </label>
-            <input
-              type="date"
-              disabled={targetStatus === 'Pending'}
-              value={targetStatus === 'Pending' ? '' : targetStatusDate}
-              onChange={(e) => setTargetStatusDate(e.target.value)}
-              className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-50 shadow-xs"
-            />
-          </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                تحديد حالة الإلغاء الجديدة (Cancellation Status):
+              </label>
+              <select
+                value={targetStatus}
+                onChange={(e) => setTargetStatus(e.target.value as any)}
+                className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer shadow-xs"
+              >
+                {(dropdowns?.cancellationStatuses || ["Pending", "Cancelled", "Revoked", "Deletion"]).map((st) => (
+                  <option key={st} value={st}>{st}</option>
+                ))}
+              </select>
+            </div>
 
-          {/* Apply Button */}
-          <div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                تاريخ حالة الإلغاء (إجباري):
+              </label>
+              <input
+                type="date"
+                disabled={targetStatus === 'Pending'}
+                value={targetStatus === 'Pending' ? '' : targetStatusDate}
+                onChange={(e) => setTargetStatusDate(e.target.value)}
+                className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400 disabled:opacity-50 shadow-xs"
+              />
+            </div>
+
             <button
               type="button"
               onClick={handleApplyBulkStatus}
@@ -740,30 +744,28 @@ export default function CancellationStatusManager({
                 </>
               )}
             </button>
-          </div>
-        </div>
 
-        {/* Feedback Message */}
-        {feedbackMsg && (
-          <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
-            feedbackMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
-          }`}>
-            {feedbackMsg.type === 'success' ? (
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
-            ) : (
-              <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+            {feedbackMsg && (
+              <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                feedbackMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}>
+                {feedbackMsg.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                ) : (
+                  <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
+                )}
+                <span>{feedbackMsg.text}</span>
+              </div>
             )}
-            <span>{feedbackMsg.text}</span>
           </div>
-        )}
 
-        {/* Bulk "تم الإرسال للإدارة المالية" action -- same selectedIds as above */}
-        <div className="pt-4 border-t border-slate-100 space-y-3">
-          <h4 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
-            <CheckSquare className="h-4 w-4 text-emerald-500" />
-            <span>تحديد "تم الإرسال للإدارة المالية" (Check جماعي)</span>
-          </h4>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+          {/* Left side: الإرسال للإدارة المالية */}
+          <div className="bg-white/70 border border-emerald-200/70 rounded-2xl p-4 space-y-3">
+            <h4 className="text-xs font-black text-slate-700 flex items-center gap-1.5">
+              <CheckSquare className="h-4 w-4 text-emerald-500" />
+              <span>الإرسال للإدارة المالية</span>
+            </h4>
+
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1.5">
                 تاريخ الإرسال:
@@ -775,40 +777,39 @@ export default function CancellationStatusManager({
                 className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
               />
             </div>
-            <div className="md:col-span-2">
-              <button
-                type="button"
-                onClick={handleApplyBulkFinanceSent}
-                disabled={isSubmittingFinance || selectedIds.length === 0}
-                className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-              >
-                {isSubmittingFinance ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>جاري التحديث...</span>
-                  </>
-                ) : (
-                  <>
-                    <CheckSquare className="h-4 w-4" />
-                    <span>تحديد {selectedIds.length} عضوية كـ"تم الإرسال للإدارة المالية"</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
 
-          {financeFeedbackMsg && (
-            <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
-              financeFeedbackMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
-            }`}>
-              {financeFeedbackMsg.type === 'success' ? (
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+            <button
+              type="button"
+              onClick={handleApplyBulkFinanceSent}
+              disabled={isSubmittingFinance || selectedIds.length === 0}
+              className="w-full py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white font-black text-xs rounded-xl shadow-md transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isSubmittingFinance ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  <span>جاري التحديث...</span>
+                </>
               ) : (
+                <>
+                  <CheckSquare className="h-4 w-4" />
+                  <span>تحديد {selectedIds.length} عضوية كـ"تم الإرسال للإدارة المالية"</span>
+                </>
+              )}
+            </button>
+
+            {financeFeedbackMsg && (
+              <div className={`p-3 rounded-xl text-xs font-bold flex items-center gap-2 ${
+                financeFeedbackMsg.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
+              }`}>
+                {financeFeedbackMsg.type === 'success' ? (
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                ) : (
                 <AlertCircle className="h-4 w-4 text-rose-600 shrink-0" />
               )}
               <span>{financeFeedbackMsg.text}</span>
             </div>
           )}
+          </div>
         </div>
       </div>
 
