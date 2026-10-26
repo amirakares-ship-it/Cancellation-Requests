@@ -145,6 +145,16 @@ export default function App() {
   const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
+  // Lightweight confirmation toast: a single slot (a newer message replaces
+  // the current one, which also keeps bulk actions from stacking dozens of
+  // popups) that dismisses itself -- unlike alert(), nothing to click "OK" on.
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showToast = (text: string) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(text);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2500);
+  };
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
   const [firstManagerPdfModalRequest, setFirstManagerPdfModalRequest] = useState<any | null>(null);
   const [sendToFirstManagerTarget, setSendToFirstManagerTarget] = useState<any | null>(null);
@@ -784,7 +794,7 @@ export default function App() {
       if (!res.ok || data.error) {
         throw new Error(data.error || 'تعذر حفظ قرار المدير المالي الأول');
       }
-      alert(approve ? 'تم اعتماد الطلب بنجاح وتحويله لرئيس قطاع المالية!' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
+      showToast(approve ? 'تم اعتماد الطلب بنجاح' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
       await fetchAllData();
       setSelectedRequest(null);
       setFirstManagerModalRequest(null);
@@ -2247,6 +2257,18 @@ export default function App() {
               إغلاق
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Confirmation toast (auto-dismisses) */}
+      {toast && (
+        <div
+          role="status"
+          dir="rtl"
+          className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] bg-neutral-900 text-white text-sm font-bold px-5 py-3 rounded-xl shadow-xl border border-amber-400/40 flex items-center gap-2"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toast}</span>
         </div>
       )}
 
