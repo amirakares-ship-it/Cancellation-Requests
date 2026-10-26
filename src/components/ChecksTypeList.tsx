@@ -38,7 +38,7 @@ interface CheckRow {
 }
 
 function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-slate-300">غير مربوط</span>;
+  if (!status) return <span className="text-slate-300">Not found</span>;
   const cls =
     status === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
     status === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
@@ -106,7 +106,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         const parsedRows = parseReadyChecksWorkbook(data);
 
         if (parsedRows.length === 0) {
-          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكدي من وجود عمود "رقم العميل" على الأقل.' });
+          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكد من وجود عمود "رقم العميل" على الأقل.' });
           return;
         }
 
@@ -277,7 +277,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         'رقم العضوية': r.membershipNumber || '',
         'طريقة الدفع': r.paymentMethod || '',
         'رقم الموبايل': r.mobileNumber || '',
-        'حالة الطلب': r.requestStatus ? translateStatus(r.requestStatus) : 'غير مربوط',
+        'حالة الطلب': r.requestStatus ? translateStatus(r.requestStatus) : 'Not found',
       };
       if (checkType === 'advance') {
         base['تاريخ استحقاق الشيك'] = r.checkDueDate ? formatDateCustom(r.checkDueDate) : '';
@@ -565,7 +565,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     {filteredRows.map((r, idx) => (
                       <tr key={r.id} className="hover:bg-slate-50/50">
                         <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-bold">{r.name || <span className="text-slate-300 font-normal">غير مربوط</span>}</td>
+                        <td className="py-2.5 px-3 font-bold">{r.name || <span className="text-slate-300 font-normal">Not found</span>}</td>
                         <td className="py-2.5 px-3 text-center">{r.club || '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkDueDate ? formatDateCustom(r.checkDueDate) : '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkAmount?.toLocaleString('en-US') || 0}</td>
@@ -619,7 +619,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                               onClick={() => handleToggleReceived(r)}
                               disabled={receivingId === r.id}
                               className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50 ${r.receivedDate ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
-                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغطي للتراجع` : 'تسجيل استلام الشيك'}
+                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغط للتراجع` : 'تسجيل استلام ال'}
                             >
                               {receivingId === r.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
                               {r.receivedDate ? formatDateCustom(r.receivedDate) : 'تم الاستلام؟'}
