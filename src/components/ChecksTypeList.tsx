@@ -338,10 +338,10 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
               onClick={handleDownloadData}
               disabled={filteredRows.length === 0}
               className="flex items-center gap-1.5 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl border border-sky-200 transition-all shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              title="تنزيل البيانات الظاهرة في الجدول كملف Excel"
+              title="Download data الظاهرة في الجدول كملف Excel"
             >
               <Download className="h-4 w-4" />
-              <span>تنزيل البيانات (Excel)</span>
+              <span>Download data (Excel)</span>
             </button>
             {isAdmin && (
               <button
@@ -351,7 +351,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                 title="تحميل شيت فاضي بالأعمدة المطلوبة للرفع"
               >
                 <FileSpreadsheet className="h-4 w-4" />
-                <span>تحميل القالب (Template)</span>
+                <span>Download (Template)</span>
               </button>
             )}
             {isAdmin && (
