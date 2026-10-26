@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Upload, RefreshCw, Search, Trash2, AlertCircle, CheckCircle2, Send, Clock, X, Plus, PackageCheck } from 'lucide-react';
+import { Upload, Download, FileSpreadsheet, RefreshCw, Search, Trash2, AlertCircle, CheckCircle2, Send, Clock, X, Plus, PackageCheck } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { User } from '../types';
 import { formatDateCustom, translateStatus, parseReadyChecksWorkbook } from '../utils';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -37,7 +38,7 @@ interface CheckRow {
 }
 
 function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-slate-300">غير مربوط</span>;
+  if (!status) return <span className="text-slate-300">Not found</span>;
   const cls =
     status === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
     status === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
@@ -105,7 +106,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         const parsedRows = parseReadyChecksWorkbook(data);
 
         if (parsedRows.length === 0) {
-          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكدي من وجود عمود "رقم العميل" على الأقل.' });
+          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكد من وجود عمود "رقم العميل" على الأقل.' });
           return;
         }
 
@@ -247,6 +248,53 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
     return Array.from(set).sort();
   }, [rows]);
 
+  // Empty upload template with exactly the columns the upload expects
+  // (the member's name and club are NOT in it -- they are pulled from the
+  // linked request by رقم العميل).
+  const handleDownloadTemplate = () => {
+    const headers = checkType === 'advance'
+      ? ['تاريخ استحقاق الشيك', 'مبلغ الشيك', 'البنك', 'رقم العميل']
+      : ['رقم العميل'];
+    const worksheet = XLSX.utils.aoa_to_sheet([headers]);
+    worksheet['!cols'] = headers.map(() => ({ wch: 22 }));
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'قالب');
+    XLSX.writeFile(workbook, `قالب-${label}.xlsx`);
+  };
+
+  // Exports exactly what is currently shown in the table (after the search
+  // and club/committee filters), including the name and club pulled from
+  // the linked request.
+  const handleDownloadData = () => {
+    const data = filteredRows.map((r, idx) => {
+      const base: Record<string, any> = {
+        'م': idx + 1,
+        'الاسم': r.name || '',
+        'النادي': r.club || '',
+        'رقم العميل': r.externalId || '',
+        'رقم اللجنة': r.committeeNo || '',
+        'سنة اللجنة': r.committeeYear || '',
+        'رقم العضوية': r.membershipNumber || '',
+        'طريقة الدفع': r.paymentMethod || '',
+        'رقم الموبايل': r.mobileNumber || '',
+        'حالة الطلب': r.requestStatus ? translateStatus(r.requestStatus) : 'Not found',
+      };
+      if (checkType === 'advance') {
+        base['تاريخ استحقاق الشيك'] = r.checkDueDate ? formatDateCustom(r.checkDueDate) : '';
+        base['مبلغ الشيك'] = r.checkAmount || 0;
+        base['البنك'] = r.bank || '';
+      } else {
+        base['تاريخ الاستلام'] = r.receivedDate ? formatDateCustom(r.receivedDate) : '';
+      }
+      return base;
+    });
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, label);
+    const today = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(workbook, `${label}-${today}.xlsx`);
+  };
+
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter((r) => {
@@ -285,6 +333,27 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
             >
               <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
+            <button
+              type="button"
+              onClick={handleDownloadData}
+              disabled={filteredRows.length === 0}
+              className="flex items-center gap-1.5 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl border border-sky-200 transition-all shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              title="Download data الظاهرة في الجدول كملف Excel"
+            >
+              <Download className="h-4 w-4" />
+              <span>Download data (Excel)</span>
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={handleDownloadTemplate}
+                className="flex items-center gap-1.5 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl border border-slate-200 transition-all shrink-0 cursor-pointer"
+                title="تحميل شيت فاضي بالأعمدة المطلوبة للرفع"
+              >
+                <FileSpreadsheet className="h-4 w-4" />
+                <span>Download (Template)</span>
+              </button>
+            )}
             {isAdmin && (
               <label className={`flex items-center gap-1.5 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs rounded-xl border border-emerald-200 transition-all shrink-0 cursor-pointer shadow-sm ${isUploading ? 'opacity-60 pointer-events-none' : ''}`}>
                 <Upload className="h-4 w-4" />
@@ -313,13 +382,15 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                   <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">1. رقم العميل *</div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-center font-mono text-xxs font-bold">
-                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. الاسم</div>
-                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">2. تاريخ استحقاق الشيك</div>
-                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. مبلغ الشيك</div>
-                  <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">4. البنك</div>
-                  <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">5. رقم العميل *</div>
-                </div>
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-center font-mono text-xxs font-bold">
+                    <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">1. تاريخ استحقاق الشيك</div>
+                    <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">2. مبلغ الشيك</div>
+                    <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. البنك</div>
+                    <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">4. رقم العميل *</div>
+                  </div>
+                  <p className="text-xxs text-slate-500 mt-2">الاسم والنادي بيتجابوا تلقائيًا من الطلب عن طريق رقم العميل، فمش محتاجين يتكتبوا في الشيت.</p>
+                </>
               )}
             </div>
 
@@ -475,6 +546,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     <tr>
                       <th className="py-2.5 px-3 text-center">م</th>
                       <th className="py-2.5 px-3 text-right">الاسم</th>
+                      <th className="py-2.5 px-3 text-center">النادي</th>
                       <th className="py-2.5 px-3 text-center">تاريخ استحقاق الشيك</th>
                       <th className="py-2.5 px-3 text-center">مبلغ الشيك</th>
                       <th className="py-2.5 px-3 text-center">البنك</th>
@@ -493,7 +565,8 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     {filteredRows.map((r, idx) => (
                       <tr key={r.id} className="hover:bg-slate-50/50">
                         <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-bold">{r.name}</td>
+                        <td className="py-2.5 px-3 font-bold">{r.name || <span className="text-slate-300 font-normal">Not found</span>}</td>
+                        <td className="py-2.5 px-3 text-center">{r.club || '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkDueDate ? formatDateCustom(r.checkDueDate) : '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkAmount?.toLocaleString('en-US') || 0}</td>
                         <td className="py-2.5 px-3 text-center">{r.bank || '—'}</td>
@@ -546,7 +619,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                               onClick={() => handleToggleReceived(r)}
                               disabled={receivingId === r.id}
                               className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50 ${r.receivedDate ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
-                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغطي للتراجع` : 'تسجيل استلام الشيك'}
+                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغط للتراجع` : 'تسجيل استلام ال'}
                             >
                               {receivingId === r.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
                               {r.receivedDate ? formatDateCustom(r.receivedDate) : 'تم الاستلام؟'}
