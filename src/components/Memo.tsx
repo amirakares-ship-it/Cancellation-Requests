@@ -1984,6 +1984,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             }
             .logo { height: 68px; }
             .logo-block { margin-bottom: 2px !important; padding-top: 0 !important; }
+            /* Memo logo a bit smaller than the shared 'md' size (85px). */
+            .logo-block #wadi-degla-official-logo img { height: 72px !important; }
 
             .title-box-row {
               display: flex;
@@ -2384,12 +2386,17 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                    against this (asking for a full page PLUS 15mm more,
                    which can't fit on one sheet). */
                 position: fixed !important;
-                top: 0 !important;
+                /* Equal blank space above and below the border: with the 5mm
+                   @page margin, the page area is 287mm tall. The box used to
+                   start at the very top (5mm gap) and end 283mm lower
+                   (9mm gap). Starting it 4mm lower and making it 4mm shorter
+                   gives 9mm above AND 9mm below, with the same page fit. */
+                top: 4mm !important;
                 left: 50% !important;
                 right: auto !important;
                 transform: translateX(-50%) !important;
                 height: auto !important;
-                min-height: 283mm !important;
+                min-height: 279mm !important;
                 display: flex !important;
                 flex-direction: column !important;
                 border: 3px solid #000 !important;
