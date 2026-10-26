@@ -646,10 +646,10 @@ export default function FirstManagerHub({
         </div>
 
         {filtersVisible && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-x-3 gap-y-3.5">
           {/* Quick Search */}
-          <div className="relative">
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">البحث السريع (الاسم / العضوية / السبب)</label>
+          <div className="relative col-span-2 md:col-span-3 lg:col-span-2">
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">البحث السريع (الاسم / العضوية / السبب)</label>
             <div className="relative">
               <input
                 type="text"
@@ -664,7 +664,7 @@ export default function FirstManagerHub({
 
           {/* Subscription Duration Filter */}
           <div>
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">مدة الاشتراك</label>
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">مدة الاشتراك</label>
             <MultiSelect
               options={subscriptionTypeOptions}
               selected={selectedSubscriptionTypes}
@@ -675,7 +675,7 @@ export default function FirstManagerHub({
 
           {/* Club Filter */}
           <div>
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">الفرع / النادي</label>
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">الفرع / النادي</label>
             <MultiSelect
               options={dropdowns.clubs || []}
               selected={selectedClubs}
@@ -686,7 +686,7 @@ export default function FirstManagerHub({
 
           {/* Payment Method Filter */}
           <div>
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">طريقة السداد</label>
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">طريقة السداد</label>
             <MultiSelect
               options={dropdowns.paymentMethods || []}
               selected={selectedPayments}
@@ -697,7 +697,7 @@ export default function FirstManagerHub({
 
           {/* Committee No Filter */}
           <div>
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">رقم اللجنة</label>
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">رقم اللجنة</label>
             <MultiSelect
               options={committeeOptions.map(comm => ({ label: `لجنة ${comm}`, value: comm }))}
               selected={selectedCommittees}
@@ -708,7 +708,7 @@ export default function FirstManagerHub({
 
           {/* Committee Year Filter */}
           <div>
-            <label className="block text-xxs text-slate-500 mb-1 font-bold">سنة اللجنة</label>
+            <label className="block text-[11px] leading-tight text-slate-500 mb-1 font-semibold">سنة اللجنة</label>
             <MultiSelect
               options={committeeYearOptions.map(yr => ({ label: `سنة ${yr}`, value: yr }))}
               selected={selectedCommitteeYears}
@@ -718,17 +718,6 @@ export default function FirstManagerHub({
           </div>
         </div>
         )}
-      </div>
-
-      {/* Amber alert helper */}
-      <div className="bg-amber-50/80 border border-amber-200/80 p-3 rounded-xl text-xs text-amber-900 flex items-center gap-2.5">
-        <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
-        <span className="leading-relaxed">
-          {isReadOnly 
-            ? 'تنبيه: الحالات المظللة بلون دافئ هي حالات تتراوح فترة اشتراكها بين 90 و120 يوماً وتتطلب انتباهاً للمصاريف الإدارية والانتفاع.'
-            : 'تنبيه للمدير الأول: الحالات المظللة بلون دافئ هي حالات تتراوح فترة اشتراكها بين 90 و120 يوماً وتتطلب انتباهاً خاصاً للمصاريف الإدارية ومقابل الانتفاع.'
-          }
-        </span>
       </div>
 
       {/* 4. Bulk Actions Bar */}
@@ -876,6 +865,7 @@ export default function FirstManagerHub({
                 <th className="py-3 px-3 font-bold text-center text-slate-200">المدة</th>
                 <th className="py-3 px-4 font-bold text-slate-200">{labelNames.club || 'النادى'}</th>
                 <th className="py-3 px-4 font-bold text-slate-200">{labelNames.paymentMethod || 'طريقة الدفع'}</th>
+                <th className="py-3 px-3 font-bold text-center whitespace-nowrap text-slate-200">رقم اللجنة</th>
                 <th className="py-3 px-3 font-bold text-center text-slate-200">المستندات</th>
                 <th className="py-3 px-4 font-bold text-slate-200">سبب الإلغاء</th>
                 <th className="py-3 px-3 font-bold text-center text-slate-200">كشف الحساب</th>
@@ -886,7 +876,7 @@ export default function FirstManagerHub({
             <tbody className="divide-y divide-slate-100">
               {filteredRequests.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-slate-400 font-medium">
+                  <td colSpan={13} className="py-12 text-center text-slate-400 font-medium">
                     <div className="max-w-md mx-auto space-y-2">
                       <ShieldCheck className="w-9 h-9 text-slate-300 mx-auto" />
                       <p className="text-sm font-bold text-slate-600">لا توجد طلبات إلغاء تطابق خيار العرض المحدد حالياً.</p>
@@ -964,6 +954,18 @@ export default function FirstManagerHub({
                       {/* 5. Payment Method */}
                       <td className="py-3 px-4 text-slate-700 font-medium">
                         {r.paymentMethod}
+                      </td>
+
+                      {/* 5.5 Committee number, with its year underneath */}
+                      <td className="py-3 px-3 text-center whitespace-nowrap">
+                        {r.committeeNo ? (
+                          <div className="leading-tight">
+                            <div className="font-bold text-slate-800 text-xs">{r.committeeNo}</div>
+                            <div className="text-[10px] text-slate-400 font-normal">({formatCommitteeYear(r.committeeYear, r.approvalDate || r.requestDate)})</div>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300">—</span>
+                        )}
                       </td>
 
                       {/* 6. Documents */}
