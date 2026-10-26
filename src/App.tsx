@@ -1036,6 +1036,17 @@ export default function App() {
         // an existing record with these defaults.
         const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
         const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
+        // Numeric cell reader: first non-blank cell among the candidate
+        // headers (a typed 0 counts as a real value), or `undefined` when
+        // every candidate is blank -- so a blank cell leaves the existing
+        // amount alone instead of silently zeroing it.
+        const pickNum = (row: any, ...keys: string[]) => {
+          for (const k of keys) {
+            const v = row[k];
+            if (v !== undefined && v !== null && String(v).trim() !== '') return parseSmartNumber(v);
+          }
+          return undefined;
+        };
 
         // Map excel columns to database fields
         const mappedRequests = rows.map(r => {
@@ -1147,7 +1158,14 @@ export default function App() {
           return {
             membershipNumber: mNum,
             memberName: mName,
-            loanUnderName: String(r['القرض بإسم'] || r['القرض باسم'] || r['Loan Under Name'] || mName || '').trim(),
+            // Only touched when the sheet actually has a loan-name column.
+            // (It used to fall back to the member's own name, which silently
+            // overwrote the real "القرض بإسم" on every existing record when a
+            // sheet without that column was uploaded. New requests still get
+            // the member's name as the default -- applied server-side.)
+            loanUnderName: hasCol('القرض بإسم', 'القرض باسم', 'Loan Under Name')
+              ? String(r['القرض بإسم'] || r['القرض باسم'] || r['Loan Under Name'] || '').trim()
+              : undefined,
             nationalId: String(r['الرقم القومي'] || r['الرقم القومى'] || r['National ID'] || '').trim(),
             externalId: String(r['رقم العميل'] || r['External Id'] || '').trim(),
             subscriptionDate: hasCol('تاريخ الاشتراك', 'Subscription Date')
@@ -1191,28 +1209,28 @@ export default function App() {
               ? String(r['اسم البائع'] || r['مسؤول المبيعات'] || r['Sales Person'] || 'مسؤول الفرع').trim()
               : undefined,
             subscriptionValue: hasCol('إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value')
-              ? parseSmartNumber(r['إجمالي قيمة العضوية'] || r['قيمة الاشتراك'] || r['قيمة العضوية'] || r['إجمالي الاشتراك'] || r['Subscription Value'])
+              ? pickNum(r, 'إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value')
               : undefined,
             transferValue: hasCol('قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value')
-              ? parseSmartNumber(r['قيمة التحويلة (قرض)'] || r['قيمة التحويلة'] || r['Transfer Value'])
+              ? pickNum(r, 'قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value')
               : undefined,
             cashAmount: hasCol('مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount')
-              ? parseSmartNumber(r['مقدم نقدي'] || r['المبلغ نقداً'] || r['نقدا'] || r['نقداً'] || r['Cash Amount'])
+              ? pickNum(r, 'مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount')
               : undefined,
             visaAmount: hasCol('مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount')
-              ? parseSmartNumber(r['مقدم فيزا'] || r['المبلغ فيزا'] || r['فيزا'] || r['Visa Amount'])
+              ? pickNum(r, 'مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount')
               : undefined,
             checksPaid: hasCol('الشيكات المسددة', 'شيكات مسددة', 'Checks Paid')
-              ? parseSmartNumber(r['الشيكات المسددة'] || r['شيكات مسددة'] || r['Checks Paid'])
+              ? pickNum(r, 'الشيكات المسددة', 'شيكات مسددة', 'Checks Paid')
               : undefined,
             checksUnpaid: hasCol('الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid')
-              ? parseSmartNumber(r['الشيكات غير مسددة'] || r['الشيكات الغير مسددة'] || r['شيكات غير مسددة'] || r['Checks Unpaid'])
+              ? pickNum(r, 'الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid')
               : undefined,
             annualRenewalDue: hasCol('التجديد السنوي المستحق', 'التجديد المستحق')
-              ? parseSmartNumber(r['التجديد السنوي المستحق'] || r['التجديد المستحق'])
+              ? pickNum(r, 'التجديد السنوي المستحق', 'التجديد المستحق')
               : undefined,
             debtABKCompanies: hasCol('مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies')
-              ? parseSmartNumber(r['مديونية البنوك/الشركات'] || r['مديونية البنك / الشركات'] || r['مديونية ABK+Companies'] || r['مديونية'] || r['debtABKCompanies'])
+              ? pickNum(r, 'مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies')
               : undefined,
             refundAmount: r['مبلغ الاسترداد الكلي'] !== undefined || r['مبلغ الاسترداد'] !== undefined || r['صافي الاسترداد'] !== undefined || r['المبلغ المسترد'] !== undefined || r['القيمة المستردة'] !== undefined || r['Refund Amount'] !== undefined
               ? parseSmartNumber(r['مبلغ الاسترداد الكلي'] || r['مبلغ الاسترداد'] || r['صافي الاسترداد'] || r['المبلغ المسترد'] || r['القيمة المستردة'] || r['Refund Amount'])
