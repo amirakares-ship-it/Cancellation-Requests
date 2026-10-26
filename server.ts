@@ -4131,7 +4131,7 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       const dataFields = [
         'club', 'paymentMethod', 'membershipType', 'nationalId', 'externalId',
         'mobileNumber', 'subscriptionDate', 'requestDate', 'loanUnderName',
-        'documents', 'cancellationReason', 'cancellationReasonDetail',
+        'documents', 'cancellationReason',
         'salesPerson', 'subscriptionValue', 'transferValue', 'cashAmount',
         'visaAmount', 'checksPaid', 'checksUnpaid', 'annualRenewalDue',
         'debtABKCompanies', 'refundAmount', 'committeeNo', 'committeeYear',
@@ -4195,6 +4195,7 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       ...row,
       id: newId,
       memberName: mName,
+      loanUnderName: row.loanUnderName || mName,
       isReReview: isReReview ? true : row.isReReview,
       result: row.result || "Pending",
       status: row.status || "Pending",
