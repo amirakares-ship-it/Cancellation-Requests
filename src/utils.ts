@@ -1230,6 +1230,70 @@ export function getPendingSubStatus(r: {
   return '(الشيك تحت الاصدار)';
 }
 
+// ---------------------------------------------------------------------
+// Single source of truth for how a request's STATUS is shown on every page
+// (requests list, cancellation status manager, advance receipts, settlement
+// statement...). Pages must not re-implement this -- they call these two
+// helpers so the wording, secondary line, color and date never drift apart.
+// ---------------------------------------------------------------------
+export interface StatusDisplay {
+  /** The pending sub-status key from getPendingSubStatus ('' if not pending). */
+  raw: string;
+  /** Main sub-status line shown under the status badge ('' if none). */
+  main: string;
+  /** Optional secondary line under it ('' if none). */
+  secondary: string;
+  /** Tailwind classes for the main line color/weight. */
+  colorClass: string;
+}
+
+export function getStatusDisplay(r: any): StatusDisplay {
+  const raw = getPendingSubStatus(r) || '';
+  let main = raw;
+  let secondary = '';
+
+  if (raw === '(الشيك تحت الاصدار)') {
+    if (r.checkReadyForPickup) {
+      // Check is ready: "under issuance" would contradict it, so no 2nd line.
+      main = 'الشيك جاهز للاستلام';
+    } else if (r.financeMemoSentDate) {
+      main = 'تم ارسال المذكرة الى الادارة المالية';
+      // International memberships show the "sent" line alone.
+      secondary = isInternationalRequest(r) ? '' : '(الشيك تحت الاصدار)';
+    } else {
+      main = '(جارى تجهيز المذكرة)';
+    }
+  }
+
+  const colorClass =
+    raw === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
+    raw === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
+    raw === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
+    raw === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
+    raw === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
+    'text-slate-500 font-medium';
+
+  return { raw, main, secondary, colorClass };
+}
+
+/**
+ * The "تاريخ الحالة" shown next to the status, identical on every page.
+ * While the memo is being prepared / sent to finance it is the date that
+ * stage started (finance-memo sent date, else receipt-received / debt-entered
+ * date); otherwise the request's own status date (falling back to approval
+ * then request date).
+ */
+export function getStatusDateText(r: any): string {
+  if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
+    if (r.financeMemoSentDate) return formatDateCustom(r.financeMemoSentDate);
+    const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
+    if (prepDate) return formatDateCustom(prepDate);
+  }
+  return r.statusDate ? formatDateCustom(r.statusDate)
+    : (r.approvalDate ? formatDateCustom(r.approvalDate)
+    : (r.requestDate ? formatDateCustom(r.requestDate) : '—'));
+}
+
 export function evaluateCustomFormula(expression: string, vars: Record<string, number>): number {
   if (!expression || typeof expression !== 'string') return 0;
   try {
