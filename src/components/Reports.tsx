@@ -377,7 +377,6 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
           <div>
             <h3 className="text-sm font-black text-slate-800">الإدارة المالية</h3>
             <p className="text-xs text-slate-400 mt-0.5">
-              اختاري تاريخ أي يوم وحمّلي تقرير ساركي الخاص بيه، وسجل مخالصات الإلغاءات الجماعية لعضويات الشركات.
             </p>
           </div>
         </div>
@@ -420,7 +419,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
             <div>
               <h3 className="text-sm font-black text-slate-800">رفع شيت مديونية شركة/بنك</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                اختاري الشركة ورقم اللجنة أولًا، ثم ارفعي الشيت -- هيتم حفظ الدفعة دي وربطها بالشركة واللجنة اللي اخترتيها، عشان تقدري تنزّليها تاني بأعمدة إضافية من صفحة التقارير دي.
+                
               </p>
             </div>
           </div>
@@ -455,7 +454,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
               onChange={(e) => setSelectedPaymentMethod(e.target.value)}
               className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
             >
-              <option value="">-- اختاري الشركة --</option>
+              <option value="">-- اختار الشركة --</option>
               {(dropdowns?.paymentMethods || []).filter(isCompanyPaymentMethod).map((pm) => (
                 <option key={pm} value={pm}>{pm}</option>
               ))}
@@ -469,7 +468,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
               onChange={(e) => setSelectedCommitteeNo(e.target.value)}
               className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-400 shadow-xs"
             >
-              <option value="">-- اختاري رقم اللجنة --</option>
+              <option value="">-- اختار رقم اللجنة --</option>
               {Object.entries(committeesByYear).map(([year, yearCommittees]) => (
                 <optgroup key={year} label={`سنة ${year}`}>
                   {yearCommittees.map((c) => (
@@ -499,7 +498,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
             ) : (
               <>
                 <Upload className="h-4 w-4" />
-                <span>اضغطي هنا لرفع شيت المديونية (Excel)</span>
+                <span>اضغط هنا لرفع شيت المديونية (Excel)</span>
               </>
             )}
             <input
@@ -531,7 +530,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
             </div>
             <div>
               <h3 className="text-sm font-black text-slate-800">سجل دفعات المديونية المرفوعة</h3>
-              <p className="text-xs text-slate-400 mt-0.5">نزّلي أي دفعة قديمة برفعتيها قبل كده، بأعمدة إضافية (الاسم، رقم العميل، قيمة العضوية، إلخ).</p>
+              <p className="text-xs text-slate-400 mt-0.5">.</p>
             </div>
           </div>
           <button
@@ -548,7 +547,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         {isLoadingBatches ? (
           <div className="text-center py-8 text-xs text-slate-400 font-bold">جارِ تحميل السجل...</div>
         ) : batches.length === 0 ? (
-          <div className="text-center py-8 text-xs text-slate-400 font-bold">مفيش دفعات مرفوعة لسه.</div>
+          <div className="text-center py-8 text-xs text-slate-400 font-bold">لايوجد دفعات مرفوعة.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -587,7 +586,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
                         type="button"
                         onClick={() => handleDeleteBatch(b)}
                         disabled={deletingId === b.id}
-                        title="حذف الدفعة والتراجع عن تحديث المديونية (لو رفعتيها بالغلط)"
+                        title="حذف الدفعة والتراجع عن تحديث المديونية (لو تم رفعها بالغلط)"
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 disabled:opacity-50 text-rose-700 border border-rose-200 font-bold rounded-lg transition-all cursor-pointer"
                       >
                         {deletingId === b.id ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
@@ -611,7 +610,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
             <div>
               <h3 className="text-sm font-black text-slate-800">سجل مخالصة الإلغاءات</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                بتتحفظ تلقائيًا لما تحدّدي عضويات شركات دفعة واحدة (Bulk) وتغيّري حالتها لـ "ملغاة" من صفحة تحديد وتحديث حالة الإلغاء -- تقرير منفصل لكل شركة.
+                بتتحفظ تلقائيًا لما تحدّدي عضويات شركات دفعة واحدة (Bulk) وتغيّر حالتها لـ "ملغاة" من صفحة تحديد وتحديث حالة الإلغاء -- تقرير منفصل لكل شركة.
               </p>
             </div>
           </div>
@@ -629,7 +628,7 @@ const Reports: React.FC<ReportsProps> = ({ requests, dropdowns, committees, auth
         {isLoadingSettlements ? (
           <div className="text-center py-8 text-xs text-slate-400 font-bold">جارِ تحميل السجل...</div>
         ) : settlementBatches.length === 0 ? (
-          <div className="text-center py-8 text-xs text-slate-400 font-bold">مفيش مخالصات إلغاءات لسه.</div>
+          <div className="text-center py-8 text-xs text-slate-400 font-bold">لا يوجد مخالصات الغاءات.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
