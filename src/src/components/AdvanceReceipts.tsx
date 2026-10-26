@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin } from 'lucide-react';
+import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin, FilterX } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
 import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
@@ -491,9 +491,10 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                 setSelectedClubs([]);
                 setReceiptFilters([]);
               }}
-              className="text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer"
+              className="text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer font-sans tracking-tight"
             >
-              إعادة ضبط الفلاتر
+              <FilterX className="w-3.5 h-3.5" />
+              <span>Clear Filters</span>
             </button>
           )}
         </div>

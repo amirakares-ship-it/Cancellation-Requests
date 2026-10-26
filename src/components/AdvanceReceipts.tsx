@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin } from 'lucide-react';
+import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin, FilterX } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
+import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -491,9 +491,10 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                 setSelectedClubs([]);
                 setReceiptFilters([]);
               }}
-              className="text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer"
+              className="text-amber-600 hover:text-amber-700 hover:underline flex items-center gap-1 cursor-pointer font-sans tracking-tight"
             >
-              إعادة ضبط الفلاتر
+              <FilterX className="w-3.5 h-3.5" />
+              <span>Clear Filters</span>
             </button>
           )}
         </div>
@@ -573,32 +574,21 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
                       }`}>
                         {req.status === 'Rejected' ? 'Rejected' : translateStatus(req.status)}
                       </span>
-                      {getPendingSubStatus(req) && (
+                      {getStatusDisplay(req).main && (
                         <>
-                          <span className={`block text-[10px] font-bold mt-1 whitespace-nowrap ${
-                            getPendingSubStatus(req) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
-                            getPendingSubStatus(req) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
-                            getPendingSubStatus(req) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
-                            getPendingSubStatus(req) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
-                            getPendingSubStatus(req) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
-                            'text-slate-500 font-medium'
-                          }`}>
-                            {getPendingSubStatus(req)}
+                          <span className={`block text-[10px] mt-1 whitespace-nowrap ${getStatusDisplay(req).colorClass}`}>
+                            {getStatusDisplay(req).main}
                           </span>
-                          {getPendingSubStatus(req) === '(الشيك تحت الاصدار)' && (
-                            <span className="block text-[9px] font-bold text-slate-500 mt-0.5 max-w-[130px] mx-auto whitespace-normal break-words leading-tight text-center">
-                              {req.checkReadyForPickup
-                                ? '( الشيك جاهز للاستلام )'
-                                : req.financeMemoSentDate
-                                  ? '( تم ارسال المذكرة الى الادارة المالية )'
-                                  : '( جارى تجهيز المذكرة )'}
+                          {getStatusDisplay(req).secondary && (
+                            <span className="block text-[9px] font-bold text-slate-500 mt-0.5">
+                              {getStatusDisplay(req).secondary}
                             </span>
                           )}
                         </>
                       )}
                     </td>
                     <td className="py-3 px-4 text-center font-mono text-slate-600 font-bold text-[11px] whitespace-nowrap">
-                      {req.statusDate ? formatDateCustom(req.statusDate) : '—'}
+                      {getStatusDateText(req)}
                     </td>
                     <td className="py-3 px-4 text-center">
                       {req.receiptReceived ? (

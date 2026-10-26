@@ -4,7 +4,7 @@ import {
   PieChart, Pie, Cell, AreaChart, Area 
 } from 'recharts';
 import { 
-  TrendingUp, Users, CheckCircle, XCircle, Clock, Percent, ShieldAlert, Filter, ListCollapse 
+  TrendingUp, Users, CheckCircle, XCircle, Clock, Percent, ShieldAlert, Filter, ListCollapse, FilterX 
 } from 'lucide-react';
 import { translateStatus, isSameClub, isInternationalRequest, formatCommitteeYear } from '../utils';
 import MultiSelect from './MultiSelect';
@@ -187,9 +187,10 @@ export default function Dashboard({ requests, dropdowns, user, filters, setFilte
           </div>
           <button 
             onClick={handleResetFilters}
-            className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 px-3 py-1.5 rounded-lg cursor-pointer"
+            className="text-xs font-semibold text-rose-600 hover:text-rose-700 bg-rose-50 px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5 font-sans tracking-tight"
           >
-            إعادة تعيين الفلاتر
+            <FilterX className="w-3.5 h-3.5" />
+            <span>Clear Filters</span>
           </button>
         </div>
 
