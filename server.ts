@@ -773,8 +773,49 @@ async function logAudit(username: string, name: string, role: string, action: st
   }
 }
 
-// Fields that never belong in a user-facing change-history table.
-const DIFF_IGNORE_FIELDS = new Set(["id"]);
+// Fields that never belong in a user-facing change-history table: internal
+// bookkeeping, or values the system/form fills in automatically (e.g. the
+// edit form always sends isReReview/isException, and the server stamps
+// debtEnteredDate) -- showing them made a simple name edit look like it
+// changed five other things.
+const DIFF_IGNORE_FIELDS = new Set(["id", "isReReview", "isException", "debtEnteredDate"]);
+
+// Arabic names for common fields that have no entry in db.labelNames, so the
+// history table never shows raw English keys like "refundAmount".
+const FALLBACK_FIELD_LABELS: Record<string, string> = {
+  refundAmount: "مبلغ الاسترداد",
+  refundToClient: "مبلغ الرد للعميل",
+  debtABKCompanies: "مديونية البنوك/الشركات",
+  status: "الحالة",
+  statusDate: "تاريخ الحالة",
+  approvalDate: "تاريخ الاعتماد",
+  committeeNo: "رقم اللجنة",
+  committeeYear: "سنة اللجنة",
+  reviewed: "تمت المراجعة",
+  checkReadyForPickup: "الشيك جاهز للاستلام",
+  financeMemoSentDate: "تاريخ إرسال المذكرة للإدارة المالية",
+  receiptReceivedDate: "تاريخ استلام أصل الإيصال",
+  nationalId: "الرقم القومى",
+  externalId: "رقم العميل",
+  loanUnderName: "القرض بإسم",
+  cancellationReason: "سبب الإلغاء",
+  subscriptionValue: "قيمة العضوية",
+  transferValue: "قيمة التحويلة",
+  paymentMethod: "طريقة الدفع",
+  attachments: "المرفقات",
+};
+function fieldLabelFor(key: string): string {
+  return (db.labelNames && (db.labelNames as any)[key]) || FALLBACK_FIELD_LABELS[key] || key;
+}
+
+// "Nothing" in any of its stored shapes. A field going from missing to one of
+// these (e.g. undefined -> false / [] / {} / 0 / "") is NOT a real change.
+function isEmptyish(v: any): boolean {
+  if (v === undefined || v === null || v === "" || v === false || v === 0) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === "object") return Object.keys(v).length === 0;
+  return false;
+}
 
 // Field-by-field diff between a request before/after an edit, using the
 // Arabic label names configured in the system (db.labelNames).
@@ -785,12 +826,13 @@ function buildRequestDiff(before: any, after: any): { field: string; label: stri
     if (DIFF_IGNORE_FIELDS.has(key)) continue;
     const oldVal = before ? before[key] : undefined;
     const newVal = after ? after[key] : undefined;
+    if (isEmptyish(oldVal) && isEmptyish(newVal)) continue;
     const normOld = oldVal === undefined || oldVal === null ? "" : (typeof oldVal === "object" ? JSON.stringify(oldVal) : String(oldVal));
     const normNew = newVal === undefined || newVal === null ? "" : (typeof newVal === "object" ? JSON.stringify(newVal) : String(newVal));
     if (normOld !== normNew) {
       changes.push({
         field: key,
-        label: (db.labelNames && (db.labelNames as any)[key]) || key,
+        label: fieldLabelFor(key),
         from: normOld === "" ? "—" : normOld,
         to: normNew === "" ? "—" : normNew,
       });
@@ -931,14 +973,14 @@ function diffLightSnapshots(beforeStr: string, afterStr: string) {
   const out: { field: string; label: string; from: string; to: string }[] = [];
   const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
   for (const key of keys) {
-    if (key === "id") continue;
+    if (DIFF_IGNORE_FIELDS.has(key)) continue;
     const a = before[key];
     const b = after[key];
     if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null)) continue;
-    if ((a === undefined || a === null || a === "") && (b === undefined || b === null || b === "")) continue;
+    if (isEmptyish(a) && isEmptyish(b)) continue;
     out.push({
       field: key,
-      label: (db.labelNames && (db.labelNames as any)[key]) || (key === "attachments" ? "المرفقات" : key),
+      label: fieldLabelFor(key),
       from: trackDisplayValue(key, a),
       to: trackDisplayValue(key, b),
     });
@@ -4344,9 +4386,10 @@ function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkT
       const sendReq = c.requestId != null ? getLatestSendChecksRequest(c.requestId, checkType) : null;
       return {
         id: c.id,
-        // Bank-check sheets only carry the client number, so fall back to
-        // the linked request's member name when no name was uploaded.
-        name: c.name || linkedRequest?.memberName || "",
+        // The member's name comes from the linked request (matched by
+        // رقم العميل / externalId) so it is always the system's name; an
+        // uploaded name (older sheets) is only a fallback for unlinked rows.
+        name: linkedRequest?.memberName || c.name || "",
         receivedDate: c.receivedDate || null,
         checkDueDate: c.checkDueDate,
         checkAmount: c.checkAmount,
