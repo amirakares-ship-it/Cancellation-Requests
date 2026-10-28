@@ -40,7 +40,7 @@ export const createPool = (): Pool | null => {
       global._postgresPool = new Pool({
         connectionString,
         ssl: isLocalhost ? false : { rejectUnauthorized: false },
-        max: process.env.VERCEL ? 2 : 10,
+        max: process.env.VERCEL ? 3 : 10,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
       });
@@ -62,7 +62,7 @@ export const createPool = (): Pool | null => {
         database: process.env.SQL_DB_NAME || process.env.POSTGRES_DATABASE || process.env.PGDATABASE,
         port: Number(process.env.SQL_PORT || process.env.POSTGRES_PORT || 5432),
         ssl: useSsl ? { rejectUnauthorized: false } : false,
-        max: process.env.VERCEL ? 2 : 10,
+        max: process.env.VERCEL ? 3 : 10,
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
       });

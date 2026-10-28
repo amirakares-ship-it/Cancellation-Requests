@@ -533,10 +533,20 @@ let isDbLoaded = false;
 let dbLoadPromise: Promise<void> | null = null;
 
 // Load Database from disk & PostgreSQL (Neon / Cloud SQL)
-async function loadDb() {
+// opts.keepCurrentOnFailure: used when we are only REFRESHING data that was
+// already loaded safely (e.g. right after taking the write lock). If the
+// PostgreSQL read fails/times out in that case, keep serving the real data
+// we already have in memory instead of silently swapping it for the empty
+// local fallback copy -- that swap is what made all the data "disappear"
+// (and block saving) until the next successful load. Returns false when the
+// refresh could not be done, true otherwise.
+async function loadDb(opts?: { keepCurrentOnFailure?: boolean }): Promise<boolean> {
+  const prevDb = db;
+  const prevSafe = dbSourceIsSafe;
   try {
     dbSourceIsSafe = false;
     let loadedFromSql = false;
+    let sqlReadFailed = false;
     if (sqlDb && pool) {
       try {
         await ensureTablesExist(pool);
@@ -556,8 +566,16 @@ async function loadDb() {
           dbSourceIsSafe = true;
         }
       } catch (sqlErr) {
+        sqlReadFailed = true;
         console.warn("Could not query PostgreSQL on load, falling back to safe local store:", sqlErr);
       }
+    }
+
+    if (!loadedFromSql && sqlReadFailed && opts?.keepCurrentOnFailure && prevSafe) {
+      console.warn("Refresh from PostgreSQL failed -- keeping the data already in memory.");
+      db = prevDb;
+      dbSourceIsSafe = prevSafe;
+      return false;
     }
 
     if (!loadedFromSql) {
@@ -690,8 +708,10 @@ async function loadDb() {
     if (Array.isArray(db.requests)) {
       db.requests = db.requests.map((r: any) => calculateRequestFields(r, db.formulas));
     }
+    return true;
   } catch (err) {
     console.error("Error reading database, using fallback state:", err);
+    return false;
   }
 }
 
@@ -890,18 +910,60 @@ app.use(async (req, res, next) => {
 const DB_ADVISORY_LOCK_ID = 727272;
 const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
+// In-process write queue. The PostgreSQL pool is tiny on Vercel (2-3
+// connections) and every write holds one connection for the advisory lock;
+// if several writes waited on that lock at the same time they would use up
+// the whole pool and starve the very write that holds the lock (its reload
+// and save then time out -> the change is lost / the data "disappears").
+// Queueing writes here first means only ONE write per server instance is
+// ever waiting on the database lock.
+let localWriteChain: Promise<void> = Promise.resolve();
+function acquireLocalWriteSlot(): Promise<() => void> {
+  let release!: () => void;
+  const next = new Promise<void>((resolve) => { release = resolve; });
+  const prev = localWriteChain;
+  localWriteChain = prev.then(() => next);
+  return prev.then(() => release);
+}
+
 app.use(async (req, res, next) => {
   if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || !pool) {
     return next();
   }
 
+  const releaseLocal = await acquireLocalWriteSlot();
+  // Safety net: never let a stuck request block the queue forever.
+  const safetyTimer = setTimeout(releaseLocal, 60000);
+
   let lockClient: any = null;
+  const releaseLock = async () => {
+    clearTimeout(safetyTimer);
+    if (lockClient) {
+      const client = lockClient;
+      lockClient = null;
+      try {
+        await client.query("SELECT pg_advisory_unlock($1)", [DB_ADVISORY_LOCK_ID]);
+      } catch {}
+      try { client.release(); } catch {}
+    }
+    releaseLocal();
+  };
+  res.on("finish", releaseLock);
+  res.on("close", releaseLock);
+
   try {
     lockClient = await pool.connect();
     await lockClient.query("SELECT pg_advisory_lock($1)", [DB_ADVISORY_LOCK_ID]);
     // We now hold the exclusive lock: reload the true latest data before this
     // request's handler mutates anything.
-    await loadDb();
+    const refreshed = await loadDb({ keepCurrentOnFailure: true });
+    if (!refreshed) {
+      // Could not get the latest data. Mutating a possibly stale copy could
+      // overwrite someone else's newer changes, so stop here and let the
+      // user retry instead of risking lost data.
+      await releaseLock();
+      return res.status(503).json({ error: " من فضلك حاول مرة اخرى بعد ثواني (لم يتم حفظ أي تغيير)" });
+    }
   } catch (lockErr) {
     console.warn("Could not acquire database lock, proceeding without it:", lockErr);
     if (lockClient) {
@@ -909,18 +971,6 @@ app.use(async (req, res, next) => {
       lockClient = null;
     }
   }
-
-  const releaseLock = async () => {
-    if (!lockClient) return;
-    try {
-      await lockClient.query("SELECT pg_advisory_unlock($1)", [DB_ADVISORY_LOCK_ID]);
-    } catch {}
-    try { lockClient.release(); } catch {}
-    lockClient = null;
-  };
-
-  res.on("finish", releaseLock);
-  res.on("close", releaseLock);
 
   next();
 });
