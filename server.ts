@@ -962,7 +962,7 @@ app.use(async (req, res, next) => {
       // overwrite someone else's newer changes, so stop here and let the
       // user retry instead of risking lost data.
       await releaseLock();
-      return res.status(503).json({ error: "السيرفر مشغول لحظيًا ومقدرش يحدّث البيانات. من فضلك حاولي مرة تانية بعد ثواني (لم يتم حفظ أي تغيير)." });
+      return res.status(503).json({ error: " من فضلك حاول مرة اخرى بعد ثواني (لم يتم حفظ أي تغيير)" });
     }
   } catch (lockErr) {
     console.warn("Could not acquire database lock, proceeding without it:", lockErr);
