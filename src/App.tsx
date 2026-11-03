@@ -145,16 +145,6 @@ export default function App() {
   const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
   const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
   const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
-  // Lightweight confirmation toast: a single slot (a newer message replaces
-  // the current one, which also keeps bulk actions from stacking dozens of
-  // popups) that dismisses itself -- unlike alert(), nothing to click "OK" on.
-  const [toast, setToast] = useState<string | null>(null);
-  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showToast = (text: string) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast(text);
-    toastTimerRef.current = setTimeout(() => setToast(null), 2500);
-  };
   const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
   const [firstManagerPdfModalRequest, setFirstManagerPdfModalRequest] = useState<any | null>(null);
   const [sendToFirstManagerTarget, setSendToFirstManagerTarget] = useState<any | null>(null);
@@ -794,7 +784,7 @@ export default function App() {
       if (!res.ok || data.error) {
         throw new Error(data.error || 'تعذر حفظ قرار المدير المالي الأول');
       }
-      showToast(approve ? 'تم اعتماد الطلب بنجاح' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
+      alert(approve ? 'تم اعتماد الطلب بنجاح وتحويله لرئيس قطاع المالية!' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
       await fetchAllData();
       setSelectedRequest(null);
       setFirstManagerModalRequest(null);
@@ -1046,17 +1036,35 @@ export default function App() {
         // an existing record with these defaults.
         const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
         const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
-        // Numeric cell reader: first non-blank cell among the candidate
-        // headers (a typed 0 counts as a real value), or `undefined` when
-        // every candidate is blank -- so a blank cell leaves the existing
-        // amount alone instead of silently zeroing it.
-        const pickNum = (row: any, ...keys: string[]) => {
-          for (const k of keys) {
-            const v = row[k];
-            if (v !== undefined && v !== null && String(v).trim() !== '') return parseSmartNumber(v);
+
+        // Cell cleaning shared by the whole import: invisible characters
+        // (RTL marks, zero-width, non-breaking spaces) and odd spacing must
+        // not turn a blank-looking cell into a "value" (or hide a real one).
+        const INVISIBLE_CHARS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00A0]/g;
+        const cleanCell = (v: any) => String(v ?? '').replace(INVISIBLE_CHARS, ' ').replace(/\s+/g, ' ').trim();
+        // First NON-blank cell among the candidate column names ('' if none).
+        // A blank cell therefore means "no value in this sheet" -> the field is
+        // sent as `undefined` and an existing record keeps its current value.
+        const pick = (row: any, ...names: string[]) => {
+          for (const n of names) {
+            const v = cleanCell(row[n]);
+            if (v) return v;
           }
-          return undefined;
+          return '';
         };
+        const numPick = (row: any, ...names: string[]) => {
+          const v = pick(row, ...names);
+          return v === '' ? undefined : parseSmartNumber(v);
+        };
+
+        // Club column lookup: spelling variants of the header
+        // (النادي / النادى / نادي الفرع / Club / الفرع) and duplicated
+        // headers (Excel-read as "النادي_1"); first NON-blank value wins.
+        const normHeader = (h: string) =>
+          cleanCell(h).replace(/[إأآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/_\d+$/, '').toLowerCase();
+        const CLUB_HEADER_NAMES = new Set(['نادي الفرع', 'النادي', 'نادي', 'الفرع', 'فرع', 'club', 'branch']);
+        const clubHeaders = Array.from(presentHeaders).filter((h) => CLUB_HEADER_NAMES.has(normHeader(h)));
+        const hasClubCol = clubHeaders.length > 0;
 
         // Map excel columns to database fields
         const mappedRequests = rows.map(r => {
@@ -1096,8 +1104,9 @@ export default function App() {
           // anywhere in this sheet at all": leaves this field untouched on
           // an update instead of silently resetting it to false, same as
           // the other partial-update-safe fields above.
-          let receiptReceivedVal: boolean | undefined = receiptCol ? false : undefined;
-          if (rawReceipt !== undefined && rawReceipt !== null && rawReceipt !== '') {
+          let receiptReceivedVal: boolean | undefined = undefined;
+          if (rawReceipt !== undefined && rawReceipt !== null && String(rawReceipt).trim() !== '') {
+            receiptReceivedVal = false;
             if (typeof rawReceipt === 'boolean') {
               receiptReceivedVal = rawReceipt;
             } else if (typeof rawReceipt === 'number') {
@@ -1113,8 +1122,9 @@ export default function App() {
           // 3. المراجعة (Reviewed)
           const reviewedCol = hasCol('المراجعة', 'تم المراجعة', 'حالة المراجعة', 'مراجعة', 'مُراجع', 'مراجع', 'Reviewed', 'Is Reviewed', 'isReviewed', 'reviewed');
           const rawReviewed = r['المراجعة'] ?? r['تم المراجعة'] ?? r['حالة المراجعة'] ?? r['مراجعة'] ?? r['مُراجع'] ?? r['مراجع'] ?? r['Reviewed'] ?? r['Is Reviewed'] ?? r['isReviewed'] ?? r['reviewed'];
-          let reviewedVal: boolean | undefined = reviewedCol ? false : undefined;
-          if (rawReviewed !== undefined && rawReviewed !== null && rawReviewed !== '') {
+          let reviewedVal: boolean | undefined = undefined;
+          if (rawReviewed !== undefined && rawReviewed !== null && String(rawReviewed).trim() !== '') {
+            reviewedVal = false;
             if (typeof rawReviewed === 'boolean') {
               reviewedVal = rawReviewed;
             } else if (typeof rawReviewed === 'number') {
@@ -1130,8 +1140,9 @@ export default function App() {
           // 4. تم الارسال (approvalSentToFirstManager)
           const approvalSentCol = hasCol('تم الارسال', 'تم الإرسال', 'إرسال للمدير الأول', 'ارسال للمدير الاول', 'الارسال للمدير الاول', 'تم تحويله للمدير', 'تم التحويل للمدير الأول', 'approvalSentToFirstManager', 'Approval Sent');
           const rawSent = r['تم الارسال'] ?? r['تم الإرسال'] ?? r['إرسال للمدير الأول'] ?? r['ارسال للمدير الاول'] ?? r['الارسال للمدير الاول'] ?? r['تم تحويله للمدير'] ?? r['تم التحويل للمدير الأول'] ?? r['approvalSentToFirstManager'] ?? r['Approval Sent'];
-          let approvalSentVal: boolean | undefined = approvalSentCol ? false : undefined;
-          if (rawSent !== undefined && rawSent !== null && rawSent !== '') {
+          let approvalSentVal: boolean | undefined = undefined;
+          if (rawSent !== undefined && rawSent !== null && String(rawSent).trim() !== '') {
+            approvalSentVal = false;
             if (typeof rawSent === 'boolean') {
               approvalSentVal = rawSent;
             } else if (typeof rawSent === 'number') {
@@ -1168,80 +1179,42 @@ export default function App() {
           return {
             membershipNumber: mNum,
             memberName: mName,
-            // Only touched when the sheet actually has a loan-name column.
-            // (It used to fall back to the member's own name, which silently
-            // overwrote the real "القرض بإسم" on every existing record when a
-            // sheet without that column was uploaded. New requests still get
-            // the member's name as the default -- applied server-side.)
-            loanUnderName: hasCol('القرض بإسم', 'القرض باسم', 'Loan Under Name')
-              ? String(r['القرض بإسم'] || r['القرض باسم'] || r['Loan Under Name'] || '').trim()
-              : undefined,
+            // No fallback to the member name here: the server falls back to it
+            // only when CREATING a record, so updating other columns never
+            // overwrites an existing, different loan-holder name.
+            loanUnderName: pick(r, 'القرض بإسم', 'القرض باسم', 'Loan Under Name') || undefined,
             nationalId: String(r['الرقم القومي'] || r['الرقم القومى'] || r['National ID'] || '').trim(),
             externalId: String(r['رقم العميل'] || r['External Id'] || '').trim(),
-            subscriptionDate: hasCol('تاريخ الاشتراك', 'Subscription Date')
-              ? String(r['تاريخ الاشتراك'] || r['Subscription Date'] || '2026-01-01').trim()
-              : undefined,
-            requestDate: hasCol('تاريخ الطلب', 'Request Date')
-              ? String(r['تاريخ الطلب'] || r['Request Date'] || '2026-06-01').trim()
-              : undefined,
+            subscriptionDate: pick(r, 'تاريخ الاشتراك', 'Subscription Date') || undefined,
+            requestDate: pick(r, 'تاريخ الطلب', 'Request Date') || undefined,
             type: r['تصنيف فترة الاشتراك'] ? String(r['تصنيف فترة الاشتراك']).trim() : undefined,
-            membershipType: hasCol('نوع العضوية', 'Membership Type')
-              ? String(r['نوع العضوية'] || r['Membership Type'] || 'Regular').trim()
-              : undefined,
+            membershipType: pick(r, 'نوع العضوية', 'Membership Type') || undefined,
             // Note: intentionally no 'Sheraton' (or any) fallback when the
             // column exists but the specific cell is blank -- club stays
             // genuinely blank in that case so it surfaces in the
             // missing-club report below, rather than masking the gap.
-            club: hasCol('نادي الفرع', 'النادي', 'النادى', 'Club')
-              ? (
-                  String(r['نادي الفرع'] || '').trim() ||
-                  String(r['النادي'] || '').trim() ||
-                  String(r['النادى'] || '').trim() ||
-                  String(r['Club'] || '').trim() ||
-                  ''
-                )
+            club: hasClubCol
+              ? (clubHeaders.map((h) => cleanCell(r[h])).find((v) => v) || '')
               : undefined,
-            paymentMethod: hasCol('طريقة الدفع', 'Payment Method')
-              ? String(r['طريقة الدفع'] || r['Payment Method'] || 'نقدا').trim()
-              : undefined,
+            paymentMethod: pick(r, 'طريقة الدفع', 'Payment Method') || undefined,
             accountNumber: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || r['Account Number'] || '').trim(),
             accountNumberABK: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || '').trim(),
-            documents: hasCol('المستندات', 'Documents')
-              ? String(r['المستندات'] || r['Documents'] || 'مكتمل').trim()
-              : undefined,
-            cancellationReason: hasCol('سبب الإلغاء', 'سبب الالغاء', 'سبب طلب الالغاء', 'Cancellation Reason')
-              ? String(r['سبب الإلغاء'] || r['سبب الالغاء'] || r['سبب طلب الالغاء'] || r['Cancellation Reason'] || 'اسباب شخصية').trim()
-              : undefined,
+            documents: pick(r, 'المستندات', 'Documents') || undefined,
+            cancellationReason: pick(r, 'سبب الإلغاء', 'سبب الالغاء', 'سبب طلب الالغاء', 'Cancellation Reason') || undefined,
             cancellationReasonDetail: String(r['السبب بالتفصيل'] || r['السبب التفصيلي'] || r['Detailed Reason'] || 'بدون أسباب تفصيلية').trim(),
             firstManagerComments: String(r['ملاحظات المدير الأول'] || r['تعليق المدير الأول'] || '').trim() || undefined,
             firstManagerApproved: fmApprovedVal,
-            salesPerson: hasCol('اسم البائع', 'مسؤول المبيعات', 'Sales Person')
-              ? String(r['اسم البائع'] || r['مسؤول المبيعات'] || r['Sales Person'] || 'مسؤول الفرع').trim()
-              : undefined,
-            subscriptionValue: hasCol('إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value')
-              ? pickNum(r, 'إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value')
-              : undefined,
-            transferValue: hasCol('قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value')
-              ? pickNum(r, 'قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value')
-              : undefined,
-            cashAmount: hasCol('مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount')
-              ? pickNum(r, 'مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount')
-              : undefined,
-            visaAmount: hasCol('مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount')
-              ? pickNum(r, 'مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount')
-              : undefined,
-            checksPaid: hasCol('الشيكات المسددة', 'شيكات مسددة', 'Checks Paid')
-              ? pickNum(r, 'الشيكات المسددة', 'شيكات مسددة', 'Checks Paid')
-              : undefined,
-            checksUnpaid: hasCol('الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid')
-              ? pickNum(r, 'الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid')
-              : undefined,
-            annualRenewalDue: hasCol('التجديد السنوي المستحق', 'التجديد المستحق')
-              ? pickNum(r, 'التجديد السنوي المستحق', 'التجديد المستحق')
-              : undefined,
-            debtABKCompanies: hasCol('مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies')
-              ? pickNum(r, 'مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies')
-              : undefined,
+            salesPerson: pick(r, 'اسم البائع', 'مسؤول المبيعات', 'Sales Person') || undefined,
+            // Numbers: a BLANK cell = no change (undefined). To set a value to
+            // zero, write 0 explicitly in the sheet.
+            subscriptionValue: numPick(r, 'إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value'),
+            transferValue: numPick(r, 'قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value'),
+            cashAmount: numPick(r, 'مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount'),
+            visaAmount: numPick(r, 'مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount'),
+            checksPaid: numPick(r, 'الشيكات المسددة', 'شيكات مسددة', 'Checks Paid'),
+            checksUnpaid: numPick(r, 'الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid'),
+            annualRenewalDue: numPick(r, 'التجديد السنوي المستحق', 'التجديد المستحق'),
+            debtABKCompanies: numPick(r, 'مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies'),
             refundAmount: r['مبلغ الاسترداد الكلي'] !== undefined || r['مبلغ الاسترداد'] !== undefined || r['صافي الاسترداد'] !== undefined || r['المبلغ المسترد'] !== undefined || r['القيمة المستردة'] !== undefined || r['Refund Amount'] !== undefined
               ? parseSmartNumber(r['مبلغ الاسترداد الكلي'] || r['مبلغ الاسترداد'] || r['صافي الاسترداد'] || r['المبلغ المسترد'] || r['القيمة المستردة'] || r['Refund Amount'])
               : undefined,
@@ -1260,9 +1233,7 @@ export default function App() {
             clubNote: String(r['ملاحظات الفرع'] || '').trim(),
             adminNote: String(r['ملاحظات الادمن'] || r['ملاحظات الأدمن'] || rejReasonStr || '').trim(),
             mobileNumber: String(r['رقم الموبايل'] || '').trim(),
-            currency: hasCol('العملة', 'Currency')
-              ? String(r['العملة'] || r['Currency'] || 'جم').trim()
-              : undefined,
+            currency: pick(r, 'العملة', 'Currency') || undefined,
             exceptions: String(r['الاستثناء'] || '').trim(),
             exceptionType: String(r['نوع الاستثناء'] || '').trim(),
           };
@@ -1279,7 +1250,7 @@ export default function App() {
         // (a partial/targeted update sheet), club is legitimately
         // `undefined` for every row and this check is skipped entirely --
         // that's not a data gap, it's just a sheet that isn't touching club.
-        const missingClubRows = hasCol('نادي الفرع', 'النادي', 'النادى', 'Club')
+        const missingClubRows = hasClubCol
           ? mappedRequests.filter(r => !r.club || !r.club.trim())
           : [];
 
@@ -1295,7 +1266,12 @@ export default function App() {
 
         const importRes = await res.json();
         if (res.ok) {
-          alert(`تهانينا! تم استيراد ودمج ${importRes.importedCount} سجل بنجاح لقاعدة بيانات التسويات، وتخطي ${importRes.skippedCount} سجلات متكررة أو غير مكتملة!`);
+          let doneMsg = `تهانينا! تم استيراد ودمج ${importRes.importedCount} سجل بنجاح لقاعدة بيانات التسويات، وتخطي ${importRes.skippedCount} سجلات متكررة أو غير مكتملة!`;
+          if (missingClubRows.length > 0) {
+            const nums = missingClubRows.slice(0, 15).map((m: any) => m.membershipNumber).join('، ');
+            doneMsg += `\n\nتنبيه: ${missingClubRows.length} عضوية خانة النادي فيها فاضية في الشيت نفسه (مش مقروءة من الملف): ${nums}${missingClubRows.length > 15 ? ' ...' : ''}`;
+          }
+          alert(doneMsg);
           fetchAllData();
         } else {
           alert(importRes.error || 'حدث خطأ أثناء استيراد البيانات');
@@ -2257,18 +2233,6 @@ export default function App() {
               إغلاق
             </button>
           </div>
-        </div>
-      )}
-
-      {/* Confirmation toast (auto-dismisses) */}
-      {toast && (
-        <div
-          role="status"
-          dir="rtl"
-          className="fixed top-5 left-1/2 -translate-x-1/2 z-[100] bg-neutral-900 text-white text-sm font-bold px-5 py-3 rounded-xl shadow-xl border border-amber-400/40 flex items-center gap-2"
-        >
-          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-          <span>{toast}</span>
         </div>
       )}
 
