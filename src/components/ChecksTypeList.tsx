@@ -316,9 +316,9 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <p className="text-xs text-slate-400 mt-0.5">
+             <p className="text-xs text-slate-400 mt-0.5">
               {isAdmin
-                ? 
+                ? 'ارفع شيت الشيكات وهيترابط تلقائيًا بالطلبات عن طريق رقم العميل.'
                 : 'الشيكات الخاصة بنادي فرعك فقط.'}
             </p>
           </div>
