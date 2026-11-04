@@ -316,10 +316,10 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-            <p className="text-xs text-slate-400 mt-0.5">
+             <p className="text-xs text-slate-400 mt-0.5">
               {isAdmin
-                ? 'ارفعي شيت الشيكات وهيترابط تلقائيًا بالطلبات عن طريق رقم العميل.'
-                : 'الشيكات الخاصة بنادي فرعك بس.'}
+                ? 'ارفع شيت الشيكات وهيترابط تلقائيًا بالطلبات عن طريق رقم العميل.'
+                : 'الشيكات الخاصة بنادي فرعك فقط.'}
             </p>
           </div>
 
@@ -389,7 +389,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. البنك</div>
                     <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">4. رقم العميل *</div>
                   </div>
-                  <p className="text-xxs text-slate-500 mt-2">الاسم والنادي بيتجابوا تلقائيًا من الطلب عن طريق رقم العميل، فمش محتاجين يتكتبوا في الشيت.</p>
+                  <p className="text-xxs text-slate-500 mt-2">.</p>
                 </>
               )}
             </div>

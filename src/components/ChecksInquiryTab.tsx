@@ -107,7 +107,7 @@ export default function ChecksInquiryTab({ user, authToken }: ChecksInquiryTabPr
   const handleReject = async () => {
     if (!rejectingItem) return;
     if (!rejectionReason.trim()) {
-      setMessage({ type: 'error', text: 'من فضلك اكتبي سبب الرفض' });
+      setMessage({ type: 'error', text: 'برجاء كتابة سبب الرفض' });
       return;
     }
     setProcessingId(rejectingItem.id);
@@ -250,7 +250,7 @@ export default function ChecksInquiryTab({ user, authToken }: ChecksInquiryTabPr
           <h3 className="text-xs font-black text-slate-700">طلبات استفسار بانتظار القرار ({pendingItems.length})</h3>
         </div>
         {pendingItems.length === 0 ? (
-          <div className="text-center py-10 text-xs text-slate-400 font-bold">مفيش طلبات استفسار معلّقة.</div>
+          <div className="text-center py-10 text-xs text-slate-400 font-bold">لا يوجد طلبات استفسار معلّقة.</div>
         ) : (
           <TableScrollWrapper>
             <table className="w-full text-xs">
@@ -309,7 +309,7 @@ export default function ChecksInquiryTab({ user, authToken }: ChecksInquiryTabPr
           <h3 className="text-xs font-black text-slate-700">سجل القرارات ({decidedItems.length})</h3>
         </div>
         {decidedItems.length === 0 ? (
-          <div className="text-center py-10 text-xs text-slate-400 font-bold">مفيش قرارات سابقة لسه.</div>
+          <div className="text-center py-10 text-xs text-slate-400 font-bold">لا يوجد قرارات سابقة .</div>
         ) : (
           <TableScrollWrapper>
             <table className="w-full text-xs">

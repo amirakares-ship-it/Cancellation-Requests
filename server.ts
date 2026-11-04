@@ -962,7 +962,7 @@ app.use(async (req, res, next) => {
       // overwrite someone else's newer changes, so stop here and let the
       // user retry instead of risking lost data.
       await releaseLock();
-      return res.status(503).json({ error: " من فضلك حاول مرة اخرى بعد ثواني (لم يتم حفظ أي تغيير)" });
+      return res.status(503).json({ error: "السيرفر مشغول لحظيًا ومقدرش يحدّث البيانات. من فضلك حاولي مرة تانية بعد ثواني (لم يتم حفظ أي تغيير)." });
     }
   } catch (lockErr) {
     console.warn("Could not acquire database lock, proceeding without it:", lockErr);
@@ -4298,6 +4298,23 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       approvalSentToFirstManager: row.approvalSentToFirstManager === undefined ? false : row.approvalSentToFirstManager,
       subscriptionDate: row.subscriptionDate || "2026-01-01",
       requestDate: row.requestDate || "2026-06-01",
+      // Defaults apply ONLY when creating a brand-new record. The front-end
+      // now sends a blank cell as "no value" (undefined) so that updating an
+      // existing record never overwrites it with these defaults.
+      paymentMethod: row.paymentMethod || "نقدا",
+      membershipType: row.membershipType || "Regular",
+      documents: row.documents || "مكتمل",
+      cancellationReason: row.cancellationReason || "اسباب شخصية",
+      salesPerson: row.salesPerson || "مسؤول الفرع",
+      currency: row.currency || "جم",
+      subscriptionValue: row.subscriptionValue ?? 0,
+      transferValue: row.transferValue ?? 0,
+      cashAmount: row.cashAmount ?? 0,
+      visaAmount: row.visaAmount ?? 0,
+      checksPaid: row.checksPaid ?? 0,
+      checksUnpaid: row.checksUnpaid ?? 0,
+      annualRenewalDue: row.annualRenewalDue ?? 0,
+      debtABKCompanies: row.debtABKCompanies ?? 0,
     });
 
     db.requests.push(processed);
