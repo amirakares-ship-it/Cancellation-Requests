@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3, AlertCircle } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
 import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, toInputDateStr } from '../utils';
@@ -1643,6 +1644,122 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
 
   const todayStr = formatDateNumeric(new Date());
 
+  // ===== Bulk memo printing =====
+  // Pick several memberships and print their memos back to back (one A4 page
+  // each). Each selected membership is opened in the normal memo sheet one
+  // after another (so it goes through exactly the same form detection,
+  // templates, per-request overrides and calculations as printing it alone),
+  // a copy of the rendered sheet is captured, and all copies are printed
+  // together.
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkIds, setBulkIds] = useState<(number | string)[]>([]);
+  const [bulkSheets, setBulkSheets] = useState<string[]>([]);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  const [bulkMessage, setBulkMessage] = useState('');
+
+  const isBulkSelected = (id: number | string) => bulkIds.some(x => String(x) === String(id));
+  const toggleBulkId = (id: number | string) =>
+    setBulkIds(prev => (prev.some(x => String(x) === String(id)) ? prev.filter(x => String(x) !== String(id)) : [...prev, id]));
+
+  // Wait until the sheet on screen belongs to this request AND has stopped
+  // changing (template/rows are filled in by chained effects after the
+  // selection changes).
+  const waitForSheetReady = async (id: number | string) => {
+    const startedAt = Date.now();
+    let lastLen = -1;
+    let stableSince = 0;
+    while (Date.now() - startedAt < 8000) {
+      await new Promise(res => setTimeout(res, 120));
+      const el = sheetRef.current;
+      if (!el || String(el.getAttribute('data-req-id')) !== String(id)) {
+        lastLen = -1;
+        stableSince = 0;
+        continue;
+      }
+      const len = el.innerHTML.length;
+      if (len === lastLen) {
+        if (!stableSince) stableSince = Date.now();
+        if (Date.now() - stableSince >= 500) return true;
+      } else {
+        lastLen = len;
+        stableSince = 0;
+      }
+    }
+    return false;
+  };
+
+  const handleBulkPrint = async () => {
+    if (bulkIds.length === 0 || bulkProgress) return;
+    setBulkMessage('');
+    const originalId = selectedReqId;
+    const ordered = requests.filter(r => bulkIds.some(x => String(x) === String(r.id)));
+    const collected: string[] = [];
+    const failed: string[] = [];
+    if (selectedLineRef) {
+      selectedLineRef.classList.remove('selected-line');
+      setSelectedLineRef(null);
+    }
+
+    try {
+      for (let i = 0; i < ordered.length; i++) {
+        const r = ordered[i];
+        setBulkProgress({ done: i, total: ordered.length });
+        setSelectedReqId(r.id);
+        const ready = await waitForSheetReady(r.id);
+        const el = sheetRef.current;
+        if (!ready || !el) {
+          failed.push(String(r.membershipNumber));
+          continue;
+        }
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.removeAttribute('id');
+        clone.removeAttribute('data-req-id');
+        clone.removeAttribute('contenteditable');
+        clone.querySelectorAll('[contenteditable]').forEach(n => n.removeAttribute('contenteditable'));
+        clone.querySelectorAll('.selected-line').forEach(n => n.classList.remove('selected-line'));
+        clone.classList.remove('shadow-lg');
+        clone.classList.add('bulk-sheet');
+        collected.push(clone.outerHTML);
+      }
+    } finally {
+      setSelectedReqId(originalId);
+      setBulkProgress(null);
+    }
+
+    if (collected.length === 0) {
+      setBulkMessage('تعذر تجهيز أي مذكرة للطباعة. جربي تاني، أو اطبعي المذكرات واحدة واحدة.');
+      return;
+    }
+    if (failed.length > 0) {
+      setBulkMessage(`تنبيه: لم يتم تجهيز مذكرة العضويات دي (مش هتطلع في الطباعة): ${failed.join('، ')}`);
+    }
+
+    setBulkSheets(collected);
+    // Let the hidden print area mount and its images (logo) finish loading.
+    await new Promise(res => setTimeout(res, 300));
+    const root = document.getElementById('bulk-print-root');
+    if (root) {
+      const imgs = Array.from(root.querySelectorAll('img'));
+      await Promise.race([
+        Promise.all(imgs.map(img => (img.complete ? null : new Promise(res => { img.onload = img.onerror = () => res(null); })))),
+        new Promise(res => setTimeout(res, 3000)),
+      ]);
+    }
+
+    const originalTitle = document.title;
+    document.title = `مذكرات إلغاء - ${collected.length} مذكرة`;
+    const cleanup = () => {
+      document.body.classList.remove('bulk-printing');
+      setBulkSheets([]);
+      document.title = originalTitle;
+      window.removeEventListener('afterprint', cleanup);
+    };
+    window.addEventListener('afterprint', cleanup);
+    document.body.classList.add('bulk-printing');
+    window.focus();
+    window.print();
+  };
+
   const handlePrintMemo = () => {
     if (selectedLineRef) {
       selectedLineRef.classList.remove('selected-line');
@@ -1884,6 +2001,91 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             </button>
           </div>
         )}
+      </div>
+
+      {/* Bulk print: pick several memberships and print their memos back to back */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-100 shadow-sm space-y-3 no-print">
+        <button
+          type="button"
+          onClick={() => setBulkOpen(o => !o)}
+          className="flex items-center gap-2 text-sm font-black text-slate-800 cursor-pointer"
+        >
+          <Printer className="h-4 w-4 text-amber-500" />
+          <span>طباعة مذكرات بالجملة</span>
+          <span className="text-xs font-bold text-slate-400">{bulkOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {bulkOpen && (
+          <>
+            <p className="text-xs text-slate-500">
+              علّمي على العضويات اللي عايزة تطبعي مذكراتها (استخدمي مربع البحث فوق عشان تضيّقي القايمة)، وبعدين دوسي طباعة. كل مذكرة هتطلع في ورقة A4 لوحدها ورا بعض.
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setBulkIds(prev => Array.from(new Set([...prev, ...filteredRequests.map(r => r.id)])))}
+                disabled={!!bulkProgress}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40"
+              >
+                تحديد كل المعروض ({filteredRequests.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBulkIds([])}
+                disabled={!!bulkProgress || bulkIds.length === 0}
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40"
+              >
+                مسح التحديد
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkPrint}
+                disabled={!!bulkProgress || bulkIds.length === 0}
+                className="flex items-center gap-1.5 px-4 py-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-black text-xs rounded-lg shadow-sm cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Printer className="h-3.5 w-3.5" />
+                <span>طباعة المحدد ({bulkIds.length})</span>
+              </button>
+              {bulkProgress && (
+                <span className="text-xs font-bold text-amber-700">
+                  جاري تجهيز المذكرات... {bulkProgress.done + 1} من {bulkProgress.total} (متقفّلش الصفحة)
+                </span>
+              )}
+            </div>
+            {bulkMessage && <p className="text-xs font-bold text-rose-600">{bulkMessage}</p>}
+            <div className="max-h-56 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50">
+              {filteredRequests.length === 0 ? (
+                <p className="text-center text-xs text-slate-400 py-4">مفيش عضويات مطابقة للبحث.</p>
+              ) : (
+                filteredRequests.map(r => (
+                  <label key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={isBulkSelected(r.id)}
+                      onChange={() => toggleBulkId(r.id)}
+                      disabled={!!bulkProgress}
+                      className="rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                    />
+                    <span className="font-black text-slate-800">{r.membershipNumber}</span>
+                    <span className="text-slate-700">{r.memberName}</span>
+                    <span className="text-slate-400">({r.paymentMethod})</span>
+                  </label>
+                ))
+              )}
+            </div>
+          </>
+        )}
+
+        {/* Hidden on screen; shown only while printing in bulk mode (see CSS). Rendered outside #root. */}
+        {bulkSheets.length > 0 &&
+          createPortal(
+            <div id="bulk-print-root">
+              {bulkSheets.map((html, i) => (
+                <div key={i} className="bulk-sheet-wrap" dangerouslySetInnerHTML={{ __html: html }} />
+              ))}
+            </div>,
+            document.body
+          )}
       </div>
 
       {/* Top Action Bar for Memo Customization & Direct Save */}
@@ -2357,7 +2559,23 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
               outline: 2px solid #d97706 !important;
               background: #fff7ed;
             }
+            #bulk-print-root { display: none; }
             @media print {
+              /* Bulk printing: only the captured copies are printed, one per page. */
+              body.bulk-printing #root { display: none !important; }
+              body.bulk-printing #bulk-print-root { display: block !important; }
+              #bulk-print-root .bulk-sheet-wrap { break-after: page; page-break-after: always; }
+              #bulk-print-root .bulk-sheet-wrap:last-child { break-after: auto; page-break-after: auto; }
+              #bulk-print-root .sheet-companies {
+                position: relative !important;
+                top: auto !important;
+                left: auto !important;
+                right: auto !important;
+                transform: none !important;
+                margin: 4mm auto 0 !important;
+                height: auto !important;
+                min-height: 279mm !important;
+              }
               body * { visibility: hidden !important; }
               .sheet-companies, .sheet-companies *, #sheet, #sheet *,
               .settlement-print-backdrop, .settlement-print-backdrop * { visibility: visible !important; }
@@ -2879,6 +3097,7 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             className="sheet-companies shadow-lg"
             contentEditable={true}
             id="sheet"
+            data-req-id={activeRequest?.id ?? ''}
             ref={sheetRef}
             onClick={handleSheetClick}
             suppressContentEditableWarning={true}
