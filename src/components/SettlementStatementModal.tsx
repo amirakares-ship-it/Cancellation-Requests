@@ -1,7 +1,7 @@
 import React from 'react';
 import { Calculator, FileText, X, ShieldAlert, CreditCard, Landmark, Building2, CheckSquare, Printer, Info, UserCheck } from 'lucide-react';
 import { CancellationRequest } from '../types';
-import { formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, calculateSettlement, printElement, isInternationalRequest, getPendingSubStatus, translateStatus } from '../utils';
+import { formatDateCustom, formatCommitteeYear, formatCommitteeWithYear, calculateSettlement, printElement, isInternationalRequest, getPendingSubStatus, getStatusDisplay, getStatusDateText, translateStatus } from '../utils';
 
 interface SettlementStatementModalProps {
   request: CancellationRequest | null;
@@ -70,7 +70,11 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
       refundAmountDisplay = `${abkBaseRefund.toLocaleString()} ${cur}`;
     }
    } else if (isChecks) {
-    const netCheckRefund = Math.max(0, (advancePaid + checksPaid) - discountTotal);
+    // Follows the checks refund formula saved in the Formulas page (same
+    // value the memo and the requests list show), instead of a fixed rule.
+    const netCheckRefund = (typeof computed.refundAmount === 'number' && !isNaN(computed.refundAmount))
+      ? computed.refundAmount
+      : Math.max(0, (advancePaid + checksPaid) - discountTotal);
     refundAmountDisplay = `${netCheckRefund.toLocaleString()} ${cur}`;
   } else if (typeof computed.refundAmount === 'number' && !isNaN(computed.refundAmount)) {
     refundAmountDisplay = `${computed.refundAmount.toLocaleString()} ${cur}`;
@@ -94,7 +98,9 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
       refundToClientDisplay = 'في انتظار المديونية';
     }
   } else if (isChecks) {
-    const clientRefund = Math.max(0, (advancePaid + checksPaid) - discountTotal);
+    const clientRefund = (typeof computed.refundAmount === 'number' && !isNaN(computed.refundAmount))
+      ? computed.refundAmount
+      : Math.max(0, (advancePaid + checksPaid) - discountTotal);
     refundToClientDisplay = `${clientRefund.toLocaleString()} ${cur}`;
   } else if (isBank) {
     const clientRefund = Math.max(0, transferVal - discountTotal);
@@ -215,14 +221,14 @@ export default function SettlementStatementModal({ request, isOpen, onClose }: S
                 request.status === 'Deletion' ? 'text-purple-700' :
                 'text-slate-800'
               }`}>
-                {request.status === 'Rejected' ? 'Rejected' : (getPendingSubStatus(request as any) || translateStatus(request.status) || 'Pending')}
+                {request.status === 'Rejected' ? 'Rejected' : ((() => { const d = getStatusDisplay(request as any); return d.main ? (d.secondary ? `${d.main} ${d.secondary}` : d.main) : ''; })() || translateStatus(request.status) || 'Pending')}
               </span>
             </div>
 
             <div className="bg-white p-1.5 rounded-lg border border-slate-200">
               <span className="text-slate-500 font-bold block text-xxs">تاريخ الحالة:</span>
               <span className="font-mono font-bold text-slate-800 text-xs block">
-                {request.statusDate ? formatDateCustom(request.statusDate) : '—'}
+                {getStatusDateText(request as any)}
               </span>
             </div>
 
