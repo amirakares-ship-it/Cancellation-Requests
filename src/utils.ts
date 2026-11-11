@@ -346,10 +346,25 @@ export function calculateDays(subscriptionDateStr: any, requestDateStr: any): nu
   return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 }
 
+// The formulas configuration saved in the Formulas page. The server has
+// always calculated with it, but the browser used to calculate with the
+// built-in DEFAULT_FORMULAS_CONFIG, so the calculator, settlement statement
+// and memo could disagree with the amounts the server stored (and the
+// requests list shows). The app now loads the saved config once and every
+// calculation without an explicit config uses it, so there is a single
+// source of truth.
+let activeFormulasConfig: FormulasConfig = DEFAULT_FORMULAS_CONFIG;
+export function setActiveFormulasConfig(cfg: any) {
+  activeFormulasConfig = cfg && typeof cfg === 'object' ? (cfg as FormulasConfig) : DEFAULT_FORMULAS_CONFIG;
+}
+export function getActiveFormulasConfig(): FormulasConfig {
+  return activeFormulasConfig;
+}
+
 export function determineType(
   days: number, 
   subscriptionDateStr?: any, 
-  formulasConfig: FormulasConfig = DEFAULT_FORMULAS_CONFIG
+  formulasConfig: FormulasConfig = activeFormulasConfig
 ): { type: string; type2: 'Less 3 months' | 'Over 3 months' | 'Less 1 month' | 'Over 1 month' } {
   const subDate = parseAnyDate(subscriptionDateStr) || new Date();
   const cutoff = parseAnyDate(formulasConfig.cutoffDate) || new Date("2026-07-01");
@@ -820,7 +835,7 @@ export function isInternationalRequest(r: any): boolean {
   return false;
 }
 
-export function calculateAllFields(input: CalculationInput, formulasConfig: FormulasConfig = DEFAULT_FORMULAS_CONFIG) {
+export function calculateAllFields(input: CalculationInput, formulasConfig: FormulasConfig = activeFormulasConfig) {
   const cashAmount = parseNum(input.cashAmount);
   const visaAmount = parseNum(input.visaAmount);
   const transferValue = parseNum(input.transferValue);
@@ -1091,11 +1106,21 @@ export function calculateAllFields(input: CalculationInput, formulasConfig: Form
   if (isNoRefundException) {
     refundAmount = 0;
   } else {
-    // Explicit or calculated non-zero fallback
-    if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
-      refundAmount = rawRefundInput;
-    } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
-      refundAmount = Math.max(0, subscriptionValue - discountAmount);
+    // Fallback for records where the formula gave 0 -- use the explicit
+    // refund / subscription minus discount. EXCEPT for checks ("شيكات"): for
+    // checks the configured formula is the whole answer, and 0 is a real
+    // answer (e.g. checks that were never paid -> nothing to refund). It must
+    // NOT be replaced by a stale stored refund or by
+    // subscriptionValue - discountAmount -- that override is what made the
+    // memo and the requests list show an amount while the statement and the
+    // calculator correctly showed 0. Other payment methods keep the previous
+    // behaviour untouched.
+    if (input.paymentMethod !== "شيكات") {
+      if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
+        refundAmount = rawRefundInput;
+      } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
+        refundAmount = Math.max(0, subscriptionValue - discountAmount);
+      }
     }
   }
 
