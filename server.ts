@@ -2281,11 +2281,21 @@ function calculateRequestFields(reqData: any, customFormulas?: any): any {
   if (isNoRefundException) {
     refundAmount = 0;
   } else {
-    // Explicit or calculated non-zero fallback
-    if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
-      refundAmount = rawRefundInput;
-    } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
-      refundAmount = Math.max(0, subscriptionValue - discountAmount);
+    // Fallback for records where the formula gave 0 -- use the explicit
+    // refund / subscription minus discount. EXCEPT for checks ("شيكات"): for
+    // checks the configured formula is the whole answer, and 0 is a real
+    // answer (e.g. checks that were never paid -> nothing to refund). It must
+    // NOT be replaced by a stale stored refund or by
+    // subscriptionValue - discountAmount -- that override is what made the
+    // memo and the requests list show an amount while the statement and the
+    // calculator correctly showed 0. Other payment methods keep the previous
+    // behaviour untouched.
+    if (reqData.paymentMethod !== "شيكات") {
+      if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
+        refundAmount = rawRefundInput;
+      } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
+        refundAmount = Math.max(0, subscriptionValue - discountAmount);
+      }
     }
   }
 
