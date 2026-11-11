@@ -1,183 +1,74 @@
-import express from "express";
-import path from "path";
-import fs from "fs";
-import crypto from "crypto";
-import nodemailer from "nodemailer";
-import { sqlDb, pool, ensureTablesExist } from "./src/db/index.js";
-import { appData } from "./src/db/schema.js";
-import { eq } from "drizzle-orm";
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useScrollBarContext } from './contexts/ScrollBarContext';
+import * as XLSX from 'xlsx';
+import { 
+  Layers, Users, TrendingUp, CheckCircle, CheckCircle2, ShieldAlert, Mail, Settings, 
+  FileSpreadsheet, LogOut, Key, UserCheck, AlertTriangle, Printer, Eye, 
+  ChevronLeft, Upload, Download, RefreshCw, FileText, Check, ShieldCheck, XCircle, Info, Receipt, Calculator, ListFilter, Trash2, FileCheck2, User,
+  PanelRightClose, PanelRightOpen, Menu, ChevronRight, FileCheck, FileUp, Paperclip, BarChart3, ChevronsLeft, ChevronsRight, MoveHorizontal, CreditCard
+} from 'lucide-react';
 
-// Safety handlers to prevent server crashes from unhandled network errors (e.g. unreachable external DB)
-process.on("uncaughtException", (err) => {
-  console.warn("Uncaught server exception (retained):", err?.message || err);
-});
-process.on("unhandledRejection", (reason) => {
-  console.warn("Unhandled promise rejection (retained):", (reason as any)?.message || reason);
-});
+// Subcomponents
+import Login from './components/Login';
+import Dashboard from './components/Dashboard';
+import RequestsList from './components/RequestsList';
+import RequestForm from './components/RequestForm';
+import PrintHub from './components/PrintHub';
+import Memo from './components/Memo';
+import SettingsPanel from './components/SettingsPanel';
+import EmailTemplates from './components/EmailTemplates';
+import AdvanceReceipts from './components/AdvanceReceipts';
+import CommitteeManager from './components/CommitteeManager';
+import FormulasManager from './components/FormulasManager';
+import DropdownsManager from './components/DropdownsManager';
+import CancellationStatusManager from './components/CancellationStatusManager';
+import CompanyAndABKDebtsManager from './components/CompanyAndABKDebtsManager';
+import Reports from './components/Reports';
+import AttachmentsArchive from './components/AttachmentsArchive';
+import ReadyChecks from './components/ReadyChecks';
+import { ConfirmModal } from './components/ConfirmModal';
+import FirstManagerDecisionModal from './components/FirstManagerDecisionModal';
+import SettlementStatementModal from './components/SettlementStatementModal';
+import FirstManagerPDFModal from './components/FirstManagerPDFModal';
+import FirstManagerHub from './components/FirstManagerHub';
+import SendToFirstManagerModal from './components/SendToFirstManagerModal';
 
-// Initialize express app
-const app = express();
-const PORT = 3000;
+import { CustomField } from './types';
+import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig } from './utils';
 
-// Health check endpoint for ingress & container health monitoring
-app.get("/api/health", async (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
-});
+type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports';
 
-// CORS and Preflight handler for Vercel / External Clients
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept");
-  if (req.method === "OPTIONS") {
-    return res.status(200).end();
-  }
-  next();
-});
+export default function App() {
 
-// URL Normalization for Vercel Serverless rewrites
-if (process.env.VERCEL) {
-  app.use((req, res, next) => {
-    if (req.originalUrl && req.originalUrl.startsWith("/api") && !req.url.startsWith("/api")) {
-      req.url = req.originalUrl;
-    }
-    next();
+  // Authentication state
+  const [authToken, setAuthToken] = useState<string | null>(localStorage.getItem('wd_token'));
+  const [currentUser, setCurrentUser] = useState<any | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  // Core Data State
+  const [requests, setRequests] = useState<any[]>([]);
+  const [dropdowns, setDropdowns] = useState<any>({ clubs: [], membershipTypes: [], paymentMethods: [], cancellationReasons: [], committeeResults: [], cancellationStatuses: [], exceptions: [] });
+  const [dropdownLabels, setDropdownLabels] = useState<Record<string, string>>({});
+  const [committees, setCommittees] = useState<any[]>([]);
+  
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    return localStorage.getItem('sidebar_collapsed') === 'true';
   });
-}
 
-// Setup JSON parsing with high limit for signature uploads / bulk imports / document attachments
-app.use(express.json({ limit: "100mb" }));
-app.use(express.urlencoded({ limit: "100mb", extended: true }));
-
-// Database File Path
-const DB_PATH = path.join(process.cwd(), "db_store.json");
-
-// Helper to hash passwords using native crypto SHA-256
-function hashPassword(password: string): string {
-  return crypto.createHash("sha256").update(password).digest("hex");
-}
-
-const DEFAULT_HASH = hashPassword("123");
-
-// Default initial database store
-const DEFAULT_DB = {
-  users: [
-    {
-      id: "admin",
-      username: "admin",
-      name: "أدمن النظام (المركز الرئيسي)",
-      role: "admin",
-      firstLogin: false,
-      passwordChanged: true,
-      password: hashPassword("admin123"), // Secure default for admin so they don't get locked, but resets work
-    },
-    {
-      id: "sheraton_club",
-      username: "sheraton_club",
-      name: "مسؤول نادي الشيراتون",
-      role: "club",
-      club: "Sheraton",
-      firstLogin: true,
-      passwordChanged: false,
-      password: DEFAULT_HASH,
-    },
-    {
-      id: "maadi_club",
-      username: "maadi_club",
-      name: "مسؤول نادي المعادي",
-      role: "club",
-      club: "Maadi",
-      firstLogin: true,
-      passwordChanged: false,
-      password: DEFAULT_HASH,
-    },
-    {
-      id: "international_maadi",
-      username: "international_maadi",
-      name: "مسؤول العضويات الدولية (نادي المعادي)",
-      role: "international_user",
-      club: "Maadi",
-      firstLogin: true,
-      passwordChanged: false,
-      password: DEFAULT_HASH,
-      allowedPages: ["requests", "new_request", "advance_receipts", "print_hub"]
-    },
-    {
-      id: "manager1",
-      username: "manager1",
-      name: "Manager",
-      role: "first_manager",
-      firstLogin: true,
-      passwordChanged: false,
-      password: DEFAULT_HASH,
-    },
-    {
-      id: "sector_mgr",
-      username: "sector_mgr",
-      name: "رئيس قطاع الإدارة المالية",
-      role: "sector_manager",
-      firstLogin: true,
-      passwordChanged: false,
-      password: DEFAULT_HASH,
-      signatureUrl: "", // transparent signature PNG
-    }
-  ],
-  dropdowns: {
-    clubs: [
-      "Lotus", "Alex", "Tanta", "Sheraton", "Nakheel", "Mansoura", 
-      "Oct I", "Damietta", "Maadi", "Assiut", "Oct II", "Elminya"
-    ],
-    membershipTypes: ["Smart", "Regular", "International"],
-    paymentMethods: [
-      "Premium", "Aman", "نقدا", "شيكات", "Ollin", "Contact", "ABK", "عضوية دولية", "One Finance"
-    ],
-    cancellationReasons: [
-      "اسباب شخصية",
-      "مشكلة مع ادارة المبيعات",
-      "تعثر مادى",
-      "بدون اسباب",
-      "مشكلة مع شركة التمويل",
-      "مشكلة مع النشاط الرياضى",
-      "تأخر افتتاح نادى طنطا",
-      "مشكلة مع خدمة العملاء",
-      "مشكلة مع نظام النادى",
-      "شكاوى الاعضاء على مواقع التواصل الاجتماعى",
-      "تأخر افتتاح نادى الشروق",
-      "Other"
-    ],
-    committeeResults: ["Accepted", "Rejected", "Pending"],
-    cancellationStatuses: ["Pending", "Cancelled", "Revoked", "Deletion", "Rejected"],
-    exceptions: ["لا يوجد", "حالة انسانية", "جهة سيادية", "حل مشكلة", "بدون رد اى مبلغ"],
-    currencies: ["جم", "ريال سعودى", "دولار"],
-    documentTypes: [
-      "طلب الإلغاء الموقع",
-      "طلب التراجع",
-      "صورة بطاقة الرقم القومي",
-      "أصل الإيصال",
-      "مذكرة فقد",
-      "حافظة شيكات",
-      "رقم الحساب",
-      "إيصال سداد / مخالصة",
-      "إقرار وتنازل معتمد",
-      "تقرير طبي / مستندات استثناء",
-      "ملف مراجعة الإدارة المالية",
-      "شيكات / مستندات بنكية",
-      "استمارة الاشتراك الأصلية",
-      "أخرى"
-    ]
-  },
-  dropdownLabels: {
-    clubs: "نادي الفرع",
-    membershipTypes: "نوع العضوية",
-    paymentMethods: "طريقة الدفع",
-    cancellationReasons: "سبب الإلغاء",
-    committeeResults: "قرار اللجنة",
-    cancellationStatuses: "حالة الإلغاء",
-    exceptions: "الاستثناءات",
-    currencies: "العملة (Currency)",
-    documentTypes: "نوع المستند"
-  },
-  labelNames: {
+  const toggleSidebar = () => {
+    setIsSidebarCollapsed(prev => {
+      const next = !prev;
+      localStorage.setItem('sidebar_collapsed', String(next));
+      return next;
+    });
+  };
+  const openCommittee = committees.find((c: any) => c.status === 'open');
+  const activeCommitteeFormatted = openCommittee
+    ? `${String(openCommittee.number).padStart(2, '0')}-${formatCommitteeYear(openCommittee.year || openCommittee.approvalDate)}`
+    : 'لا توجد';
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [customFields, setCustomFields] = useState<CustomField[]>([]);
+  const [labelNames, setLabelNames] = useState<Record<string, string>>({
     membershipNumber: "رقم العضوية",
     memberName: "اسم العضو",
     loanUnderName: "القرض باسم",
@@ -187,6 +78,7 @@ const DEFAULT_DB = {
     requestDate: "تاريخ الطلب",
     membershipType: "نوع العضوية",
     club: "النادي",
+    committeeNo: "رقم اللجنة",
     paymentMethod: "طريقة الدفع",
     accountNumber: "رقم الحساب",
     documents: "المستندات",
@@ -195,7 +87,6 @@ const DEFAULT_DB = {
     salesPerson: "مسؤول المبيعات",
     clubNote: "ملاحظات الفرع",
     adminNote: "ملاحظات الادمن",
-    currency: "العملة",
     subscriptionValue: "إجمالي قيمة العضوية",
     transferValue: "قيمة التحويلة",
     cashAmount: "المبلغ نقداً",
@@ -210,4741 +101,2229 @@ const DEFAULT_DB = {
     discountAmount: "مبلغ الخصم",
     debtABKCompanies: "مديونية البنك / الشركات",
     refundAmount: "مبلغ الاسترداد",
-    mobileNumber: "رقم الموبايل"
-  },
-  requests: [
-    {
-      id: 1,
-      membershipNumber: "WD-10045",
-      memberName: "أحمد عبد الرحمن السعيد",
-      nationalId: "29512180102456",
-      externalId: "EXT-80231",
-      subscriptionDate: "2026-01-15",
-      requestDate: "2026-03-30",
-      days: 74,
-      type: "اقل من 3 شهور",
-      type2: "Less 3 months",
-      membershipType: "Regular",
-      club: "Sheraton",
-      paymentMethod: "نقدا",
-      documents: "البطاقة الشخصية + طلب الإلغاء الورقي",
-      cancellationReason: "تعثر مادى",
-      cancellationReasonDetail: "العميل يواجه ظروفاً مالية صعبة تمنعه من استكمال الأقساط",
-      committeeNo: "5",
-      committeeYear: "2026",
-      subscriptionValue: 65000,
-      transferValue: 0,
-      cashAmount: 65000,
-      visaAmount: 0,
-      advancePaid: 65000,
-      checksPaid: 0,
-      checksUnpaid: 0,
-      annualRenewalDue: 0,
-      adminFees: 2500,
-      usageFee: 0,
-      visaFees2Percent: 0,
-      discountAmount: 2500,
-      debtABKCompanies: 0,
-      refundAmount: 62500,
-      refundToClient: "Not Required",
-      abkDebtDifference: "Not Required",
-      result: "Pending",
-      status: "Pending",
-      receiptReceived: true,
-      receiptReceivedDate: "2026-04-05",
-      salesPerson: "محمد أحمد - مبيعات شيراتون",
-      clubNote: "تم استلام أصل الإيصالات والبطاقة الشخصية",
-      adminNote: "طلب مستوفي الشروط ومطابق",
-      requestYear: 2026,
-    },
-    {
-      id: 2,
-      membershipNumber: "WD-30089",
-      memberName: "منى محمود عبد القادر",
-      loanUnderName: "شركة أمان للتمويل الاستهلاكي",
-      nationalId: "29004151203489",
-      externalId: "EXT-44569",
-      subscriptionDate: "2025-06-10",
-      requestDate: "2026-06-25",
-      days: 380,
-      type: "2 سنة",
-      type2: "Over 3 months",
-      membershipType: "Smart",
-      club: "Maadi",
-      paymentMethod: "Aman",
-      documents: "إفادة سداد شركة التمويل + البطاقة الشخصية",
-      cancellationReason: "مشكلة مع شركة التمويل",
-      cancellationReasonDetail: "ارتفاع نسبة الفائدة لشركة التمويل الاستهلاكي بشكل مبالغ فيه",
-      committeeNo: "5",
-      committeeYear: "2026",
-      subscriptionValue: 120000,
-      transferValue: 100000,
-      cashAmount: 10000,
-      visaAmount: 10000,
-      advancePaid: 20000,
-      checksPaid: 0,
-      checksUnpaid: 0,
-      annualRenewalDue: 2500,
-      adminFees: 2500,
-      usageFee: 30000, // 30% of transferValue (100k) for Smart membership (2 Years count)
-      visaFees2Percent: 200, // 2% of 10k visaAmount
-      discountAmount: 32700,
-      debtABKCompanies: 80000,
-      refundAmount: 80000, // Aman company refund logic
-      refundToClient: 0, // MAX(100k - 80k - 32.7k, 0) = 0
-      abkDebtDifference: "Not Required",
-      result: "Pending",
-      status: "Pending",
-      receiptReceived: false,
-      salesPerson: "سارة حسن - مبيعات المعادي",
-      clubNote: "بانتظار وصول أصل التنازل من العميل",
-      requestYear: 2026,
-    },
-    {
-      id: 3,
-      membershipNumber: "WD-99012",
-      memberName: "عبد الله بن فهد آل سعود",
-      nationalId: "1098765432",
-      externalId: "EXT-99012",
-      subscriptionDate: "2025-11-01",
-      requestDate: "2026-04-10",
-      days: 160,
-      type: "1 سنة",
-      type2: "Over 3 months",
-      membershipType: "International",
-      club: "Maadi",
-      paymentMethod: "عضوية دولية",
-      currency: "ريال سعودى",
-      documents: "طلب إلغاء عضوية دولية + صورة جواز السفر",
-      cancellationReason: "اسباب شخصية",
-      cancellationReasonDetail: "نقل الإقامة الدائمة خارج مصر وإنهاء العضوية الدولية",
-      committeeNo: "5",
-      committeeYear: "2026",
-      subscriptionValue: 45000,
-      transferValue: 0,
-      cashAmount: 45000,
-      visaAmount: 0,
-      advancePaid: 45000,
-      checksPaid: 0,
-      checksUnpaid: 0,
-      annualRenewalDue: 0,
-      adminFees: 0, // Exempt for international
-      usageFee: 0, // Exempt for international
-      visaFees2Percent: 0,
-      discountAmount: 0,
-      debtABKCompanies: 0,
-      refundAmount: 45000,
-      refundToClient: 45000,
-      abkDebtDifference: "Not Required",
-      result: "Pending",
-      status: "Pending",
-      receiptReceived: true,
-      receiptReceivedDate: "2026-04-12",
-      salesPerson: "خالد محمود - إدارة العضويات الدولية",
-      clubNote: "تم استلام أصل العقد وجواز السفر",
-      requestYear: 2026,
-    }
-  ],
-  committees: [
-    {
-      id: "comm-5-2026",
-      number: "5",
-      year: "2026",
-      status: "open",
-      approvalDate: "2026-07-15"
-    }
-  ],
-  // Per-request manual overrides for the printed memo. Keyed by request id
-  // (as a string). When a value exists for a request, the memo screen
-  // renders that frozen HTML snapshot instead of the normal
-  // auto-calculated template -- so an exceptional manual tweak on one
-  // membership never affects the shared template used by every other
-  // membership on that same form.
-  memoOverrides: {} as Record<string, { html: string; form?: string; savedBy: string; savedAt: string }>,
-  debtImportBatches: [] as any[],
-  // "مخالصة الإلغاءات": snapshot reports auto-generated whenever a bulk
-  // status change to "Cancelled" hits one or more company-payment-method
-  // requests -- one batch per company involved in that bulk action.
-  cancellationSettlementBatches: [] as any[],
-  auditLogs: [
-    {
-      id: "log-1",
-      username: "admin",
-      name: "أدمن النظام (المركز الرئيسي)",
-      role: "admin",
-      action: "System Initialization",
-      details: "تم تهيئة وتدشين نظام إلغاء العضويات لوادي دجلة بنجاح",
-      timestamp: "2026-06-27T10:00:00-07:00"
-    }
-  ],
-  emailLogs: [],
-  smtpSettings: {
-    host: "smtp.gmail.com",
-    port: 587,
-    username: "wd.cancellations@gmail.com",
-    password: ""
-  },
-  formulas: {
-    cutoffDate: "2026-07-01",
-    oldDaysThreshold: 90,
-    oldDaysLabel: "اقل من 3 شهور",
-    newDaysThreshold: 30,
-    newDaysLabel: "اقل من شهر",
-    adminFeesStandard: 2500,
-    visaFeePercentage: 0.02,
-    usageFeeExemptTypes: ["اقل من 3 شهور", "اقل من شهر", "International"],
-    usageFeeExemptClubs: ["Tanta", "طنطا"],
-    usageFeeExemptDocuments: ["جهة سيادية"],
-    usageFeeExemptExceptions: true,
-    cashRefundFormula: "subscriptionValue",
-    checksRefundFormula: "all_checks",
-    bankRefundFormula: "transferValue",
-    companyRefundFormula: "net_subscription",
-    regularUsagePercentages: [0.10, 0.20, 0.30, 0.40, 0.50],
-    smartUsagePercentages: [0.15, 0.30, 0.45, 0.60, 0.75],
-    usageFeeBase: "subscriptionValue",
-    exceptionRules: [
-      { id: '1', name: 'عضوية دولية', exemptAdminFee: true, exemptUsageFee: true, exemptVisaFee: false },
-      { id: '2', name: 'بدون خصم مصاريف ادارية', exemptAdminFee: true, exemptUsageFee: false, exemptVisaFee: true },
-      { id: '3', name: 'جهة سيادية', exemptAdminFee: false, exemptUsageFee: true, exemptVisaFee: false }
-    ],
-    paymentMethodOptions: {
-      cash: [
-        {
-          id: 'cash_sub',
-          value: 'subscriptionValue',
-          label: 'قيمة الاشتراك - إجمالي الخصم (افتراضي)',
-          description: 'قيمة الاشتراك - إجمالي مبلغ الخصم',
-          expression: 'subscriptionValue - discountAmount'
-        },
-        {
-          id: 'cash_trans',
-          value: 'transferValue',
-          label: 'قيمة التحويلة - إجمالي الخصم',
-          description: 'قيمة التحويلة - إجمالي الخصم',
-          expression: 'transferValue - discountAmount'
-        },
-        {
-          id: 'cash_coll',
-          value: 'collected',
-          label: 'المبلغ المحصل فعلياً (نقدي + فيزا) - إجمالي الخصم',
-          description: '(المبلغ النقدي + مبلغ الفيزا) - إجمالي الخصم',
-          expression: '(cashAmount + visaAmount) - discountAmount'
-        }
-      ],
-      checks: [
-        {
-          id: 'chk_all',
-          value: 'all_checks',
-          label: '(الشيكات المسددة + الشيكات الغير مسددة + المقدم) - الخصم (معادلة إجمالي الشيكات)',
-          description: '(الشيكات المسددة + الشيكات الغير مسددة + المقدم) - الخصم',
-          expression: 'advancePaid + checksPaid + checksUnpaid - discountAmount'
-        },
-        {
-          id: 'chk_paid',
-          value: 'paid_only',
-          label: '(الشيكات المسددة + المقدم) - الخصم فقط',
-          description: '(الشيكات المسددة + المقدم) - الخصم',
-          expression: 'advancePaid + checksPaid - discountAmount'
-        },
-        {
-          id: 'chk_sub',
-          value: 'subscriptionValue',
-          label: 'قيمة الاشتراك - إجمالي الخصم',
-          description: 'قيمة الاشتراك - الخصم',
-          expression: 'subscriptionValue - discountAmount'
-        }
-      ],
-      banks: [
-        {
-          id: 'bank_trans',
-          value: 'transferValue',
-          label: 'قيمة التحويلة - الخصم (افتراضي)',
-          description: 'قيمة التحويلة - الخصم | (فرق ABK = مديونية البنك - مبلغ الاسترداد)',
-          expression: 'transferValue - discountAmount'
-        },
-        {
-          id: 'bank_sub',
-          value: 'subscriptionValue',
-          label: 'قيمة الاشتراك - الخصم',
-          description: 'قيمة الاشتراك - الخصم | (فرق ABK = مديونية البنك - مبلغ الاسترداد)',
-          expression: 'subscriptionValue - discountAmount'
-        },
-        {
-          id: 'bank_coll',
-          value: 'collected',
-          label: 'المبلغ المحصل (تحويلة + مقدم) - الخصم',
-          description: '(قيمة التحويلة + المقدم) - الخصم',
-          expression: 'transferValue + advancePaid - discountAmount'
-        }
-      ],
-      companies: [
-        {
-          id: 'comp_net_sub',
-          value: 'net_subscription',
-          label: 'رد للعميل = MAX(قيمة الاشتراك - المديونية - الخصم, 0) [المعادلة الافتراضية]',
-          description: 'رد للعميل = MAX(قيمة الاشتراك - المديونية - الخصم, 0)',
-          expression: 'subscriptionValue - debtABKCompanies - discountAmount'
-        },
-        {
-          id: 'comp_net_trans',
-          value: 'net_transfer',
-          label: 'رد للعميل = MAX(قيمة التحويلة - المديونية - الخصم, 0)',
-          description: 'رد للعميل = MAX(قيمة التحويلة - المديونية - الخصم, 0)',
-          expression: 'transferValue - debtABKCompanies - discountAmount'
-        },
-        {
-          id: 'comp_debt_only',
-          value: 'debt_only',
-          label: 'استرداد شركة التمويل = مديونية شركة التمويل فقط',
-          description: 'المبلغ المسترد = مديونية شركة التمويل (إن وجدت)',
-          expression: 'debtABKCompanies'
-        }
-      ]
-    },
-    customPaymentMethods: []
-  },
-  customFields: [],
-  // "شيكات جاهزة للاستلام": checks uploaded by the admin from a bank/company
-  // sheet, linked to requests by "رقم العميل" (externalId). Re-uploading a
-  // sheet with an externalId that already exists updates that row instead
-  // of duplicating it.
-  readyChecks: [] as any[],
-  // "الشيكات البنكية" -- a second, independent checks list with the exact
-  // same shape/upload mechanism as readyChecks, just a separate dataset.
-  bankChecks: [] as any[],
-  // "إرسال شيكات" workflow: requests to send a member's checks, and who
-  // the resulting email goes to for each check type.
-  sendChecksRequests: [] as any[],
-  sendChecksRecipients: {
-    advance: { name: "رامز", email: "Ramez.Anis@wadidegla.com" },
-    bank: { name: "ناجى", email: "nagy.mamdouh@wadidegla.com" },
-    // "استفسار شيكات": follow-up inquiry about check collection status.
-    // Same person as bank checks by default, but editable independently.
-    inquiry: { name: "ناجى", email: "nagy.mamdouh@wadidegla.com" },
-  },
-};
+    mobileNumber: "رقم الموبايل",
+    actions: "تعديل"
+  });
 
-// Database state
-let db: any = { ...DEFAULT_DB };
-let dbSourceIsSafe = false;
+  // UI Control states
+  const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
+  const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
+  
+  // Delete Request Confirm Modal State
+  const [deleteModalState, setDeleteModalState] = useState<{
+    isOpen: boolean;
+    requestId: number | string | null;
+    memberName: string;
+    membershipNumber: string;
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    requestId: null,
+    memberName: '',
+    membershipNumber: '',
+    isLoading: false,
+  });
 
-let isDbLoaded = false;
-let dbLoadPromise: Promise<void> | null = null;
-
-// Load Database from disk & PostgreSQL (Neon / Cloud SQL)
-// opts.keepCurrentOnFailure: used when we are only REFRESHING data that was
-// already loaded safely (e.g. right after taking the write lock). If the
-// PostgreSQL read fails/times out in that case, keep serving the real data
-// we already have in memory instead of silently swapping it for the empty
-// local fallback copy -- that swap is what made all the data "disappear"
-// (and block saving) until the next successful load. Returns false when the
-// refresh could not be done, true otherwise.
-async function loadDb(opts?: { keepCurrentOnFailure?: boolean }): Promise<boolean> {
-  const prevDb = db;
-  const prevSafe = dbSourceIsSafe;
-  try {
-    dbSourceIsSafe = false;
-    let loadedFromSql = false;
-    let sqlReadFailed = false;
-    if (sqlDb && pool) {
-      try {
-        await ensureTablesExist(pool);
-        const queryPromise = sqlDb.select().from(appData).where(eq(appData.key, 'main_store'));
-        queryPromise.catch(() => {});
-        const timeoutPromise = new Promise<any[]>((_, reject) =>
-          setTimeout(() => reject(new Error('PostgreSQL select timed out')), 15000)
-        );
-        const rows = await Promise.race([queryPromise, timeoutPromise]);
-        if (rows && rows.length > 0 && rows[0].data) {
-          db = rows[0].data;
-          loadedFromSql = true;
-          dbSourceIsSafe = true;
-          console.log("Database successfully loaded from PostgreSQL.");
-        } else if (rows && rows.length === 0) {
-          // Genuinely empty database (first-ever run) - safe to initialize with defaults
-          dbSourceIsSafe = true;
-        }
-      } catch (sqlErr) {
-        sqlReadFailed = true;
-        console.warn("Could not query PostgreSQL on load, falling back to safe local store:", sqlErr);
+  // Bulk Delete Request Confirm Modal State
+  const [bulkDeleteModalState, setBulkDeleteModalState] = useState<{
+    isOpen: boolean;
+    ids: (number | string)[];
+    isLoading: boolean;
+  }>({
+    isOpen: false,
+    ids: [],
+    isLoading: false,
+  });
+  
+  // Requests views states
+  const [requestViewMode, setRequestViewMode] = useState<'list' | 'create' | 'edit'>('list');
+  const [editingRequest, setEditingRequest] = useState<any | null>(null);
+  const [selectedRequest, setSelectedRequest] = useState<any | null>(null); // Details Modal
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
+  const mainContentRef = useRef<HTMLDivElement>(null);
+  const { activeRef: activeTableScrollRef } = useScrollBarContext();
+  const [sendChecksPendingCount, setSendChecksPendingCount] = useState(0);
+  const [firstManagerModalRequest, setFirstManagerModalRequest] = useState<any | null>(null);
+  const [isSubmittingFirstManagerModal, setIsSubmittingFirstManagerModal] = useState(false);
+  const [statementModalRequest, setStatementModalRequest] = useState<any | null>(null);
+  const [firstManagerPdfModalRequest, setFirstManagerPdfModalRequest] = useState<any | null>(null);
+  const [sendToFirstManagerTarget, setSendToFirstManagerTarget] = useState<any | null>(null);
+  const [isSendingToFirstManager, setIsSendingToFirstManager] = useState(false);
+  
+  // User display name helper
+  const userDisplayName = useMemo(() => {
+    if (!currentUser) return '';
+    if (currentUser.name === 'المدير المالي الأول (مراجعة)' || currentUser.name === 'المدير المالي الأول' || currentUser.role === 'first_manager') {
+      if (currentUser.name === 'المدير المالي الأول (مراجعة)' || currentUser.name === 'المدير المالي الأول') {
+        return 'Manager';
       }
+      return currentUser.name || 'Manager';
     }
+    return currentUser.name || '';
+  }, [currentUser]);
 
-    if (!loadedFromSql && sqlReadFailed && opts?.keepCurrentOnFailure && prevSafe) {
-      console.warn("Refresh from PostgreSQL failed -- keeping the data already in memory.");
-      db = prevDb;
-      dbSourceIsSafe = prevSafe;
-      return false;
-    }
+  // First Manager pending count for badge & notifications
+  const firstManagerPendingCount = useMemo(() => {
+    return requests.filter(r => r.approvalSentToFirstManager && (r.firstManagerApproved === null || r.firstManagerApproved === undefined)).length;
+  }, [requests]);
 
-    if (!loadedFromSql) {
-      try {
-        if (fs.existsSync(DB_PATH)) {
-          const raw = fs.readFileSync(DB_PATH, "utf-8");
-          db = JSON.parse(raw);
-        } else {
-          db = JSON.parse(JSON.stringify(DEFAULT_DB));
-        }
-      } catch {
-        db = JSON.parse(JSON.stringify(DEFAULT_DB));
-      }
-    }
+  // First Manager decided count (accepted or rejected)
+  const firstManagerDecidedCount = useMemo(() => {
+    return requests.filter(r => r.approvalSentToFirstManager && (r.firstManagerApproved === true || r.firstManagerApproved === false)).length;
+  }, [requests]);
 
-    // Ensure all major properties are present and safe
-    if (!db || typeof db !== 'object') {
-      db = JSON.parse(JSON.stringify(DEFAULT_DB));
-    }
-    if (!db.users || !Array.isArray(db.users) || db.users.length === 0) {
-      db.users = JSON.parse(JSON.stringify(DEFAULT_DB.users));
-    }
-    if (!db.dropdowns || typeof db.dropdowns !== 'object') {
-      db.dropdowns = JSON.parse(JSON.stringify(DEFAULT_DB.dropdowns));
-    }
-    if (!db.dropdownLabels || typeof db.dropdownLabels !== 'object') {
-      db.dropdownLabels = JSON.parse(JSON.stringify(DEFAULT_DB.dropdownLabels));
-    }
+  // Dashboard filtering states
+  const [dashFilters, setDashFilters] = useState({
+    startDate: '',
+    endDate: '',
+    committeeNo: '',
+    club: '',
+    year: ''
+  });
 
-    // Seed any brand-new dropdown category that doesn't exist in this
-    // database yet (e.g. a category introduced in a later app update, like
-    // "documentTypes"), using the built-in defaults as a starting point.
-    //
-    // IMPORTANT: this only runs for a category that is entirely missing.
-    // It deliberately does NOT keep re-injecting individual default items
-    // into a category that already exists -- doing that used to silently
-    // undo an admin's deliberate deletion of a default option (e.g. from
-    // "نوع المستند") every time the server restarted / cold-started.
-    for (const key of Object.keys(DEFAULT_DB.dropdowns)) {
-      if (!db.dropdowns[key]) {
-        db.dropdowns[key] = JSON.parse(JSON.stringify((DEFAULT_DB.dropdowns as any)[key]));
-      }
-    }
-    for (const key of Object.keys(DEFAULT_DB.dropdownLabels)) {
-      if (!db.dropdownLabels[key]) {
-        db.dropdownLabels[key] = (DEFAULT_DB.dropdownLabels as any)[key];
-      }
-    }
-    if (!db.requests || !Array.isArray(db.requests)) db.requests = DEFAULT_DB.requests;
-    if (!db.committees || !Array.isArray(db.committees)) db.committees = DEFAULT_DB.committees;
-    if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = DEFAULT_DB.auditLogs;
-    if (!db.debtImportBatches || !Array.isArray(db.debtImportBatches)) db.debtImportBatches = [];
-    if (!db.cancellationSettlementBatches || !Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
-    if (!db.emailLogs || !Array.isArray(db.emailLogs)) db.emailLogs = DEFAULT_DB.emailLogs;
-    if (!db.smtpSettings) db.smtpSettings = DEFAULT_DB.smtpSettings;
-    if (!db.formulas) {
-      db.formulas = DEFAULT_DB.formulas;
-    } else {
-      if (!db.formulas.paymentMethodOptions) {
-        db.formulas.paymentMethodOptions = DEFAULT_DB.formulas.paymentMethodOptions;
-      }
-      if (!db.formulas.customPaymentMethods) {
-        db.formulas.customPaymentMethods = [];
-      }
-    }
-    if (!db.customFields || !Array.isArray(db.customFields)) db.customFields = [];
-    if (!db.readyChecks || !Array.isArray(db.readyChecks)) db.readyChecks = [];
-    if (!db.bankChecks || !Array.isArray(db.bankChecks)) db.bankChecks = [];
-    if (!db.sendChecksRequests || !Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
-    if (!db.sendChecksRecipients) db.sendChecksRecipients = DEFAULT_DB.sendChecksRecipients;
-    else {
-      if (!db.sendChecksRecipients.advance) db.sendChecksRecipients.advance = DEFAULT_DB.sendChecksRecipients.advance;
-      if (!db.sendChecksRecipients.bank) db.sendChecksRecipients.bank = DEFAULT_DB.sendChecksRecipients.bank;
-      if (!db.sendChecksRecipients.inquiry) db.sendChecksRecipients.inquiry = DEFAULT_DB.sendChecksRecipients.inquiry;
-    }
-    if (!db.labelNames) {
-      db.labelNames = DEFAULT_DB.labelNames;
-    } else if (!db.labelNames.mobileNumber) {
-      db.labelNames.mobileNumber = "رقم الموبايل";
-    }
+  // Reconciliation States
+  const [reconResults, setReconResults] = useState<any[]>([]);
+  const [reconSuccess, setReconSuccess] = useState('');
+  const [debtImportSuccess, setDebtImportSuccess] = useState('');
 
-    if (db.dropdowns && Array.isArray(db.dropdowns.exceptions)) {
-      if (!db.dropdowns.exceptions.includes("بدون رد اى مبلغ") && !db.dropdowns.exceptions.includes("بدون رد أي مبلغ")) {
-        db.dropdowns.exceptions.push("بدون رد اى مبلغ");
-      }
-    }
+  // Password Change State for Profile Modal
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [profileCurrentPassword, setProfileCurrentPassword] = useState('');
+  const [profileNewPassword, setProfileNewPassword] = useState('');
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState('');
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
 
-    // Seed these newer document-type defaults into an existing installation
-    // exactly ONCE, guarded by a flag -- NOT on every load like a plain
-    // "add if missing" check would do, since that would keep undoing an
-    // admin's deliberate rename or deletion of one of these options every
-    // time the server restarts.
-    if (!db._seedFlags) db._seedFlags = {};
-    if (!db._seedFlags.documentTypesV2 && db.dropdowns && Array.isArray(db.dropdowns.documentTypes)) {
-      ["طلب التراجع", "أصل الإيصال", "مذكرة فقد", "حافظة شيكات", "رقم الحساب"].forEach((docType) => {
-        if (!db.dropdowns.documentTypes.includes(docType)) {
-          db.dropdowns.documentTypes.push(docType);
-        }
-      });
-      db._seedFlags.documentTypesV2 = true;
-    }
+  // Signature state for Sector Manager
+  const [signatureFile, setSignatureFile] = useState<string | null>(null);
 
-    // One-time cleanup: strip the auto-generated "[بريد] تم إرسال إشعار
-    // للفرع..." notice lines that used to get appended (possibly more than
-    // once) into clubNote whenever a Club Notification email was sent --
-    // clubNote should only ever hold genuine notes typed by club staff.
-    if (Array.isArray(db.requests)) {
-      const noticeLine = "[بريد] تم إرسال إشعار للفرع بطلب استرداد أصول إيصالات العضوية";
-      db.requests.forEach((r: any) => {
-        if (typeof r.clubNote === "string" && r.clubNote.includes(noticeLine)) {
-          r.clubNote = r.clubNote
-            .split("\n")
-            .filter((line: string) => line.trim() !== noticeLine)
-            .join("\n")
-            .trim();
-        }
-      });
-    }
-
-    if (Array.isArray(db.users)) {
-      db.users.forEach((u: any) => {
-        if (u.username === 'manager1' || u.role === 'first_manager') {
-          if (u.name === 'المدير المالي الأول (مراجعة)' || u.name === 'المدير المالي الأول') {
-            u.name = 'Manager';
-          }
-        }
-      });
-    }
-
-    if (Array.isArray(db.requests)) {
-      db.requests = db.requests.map((r: any) => calculateRequestFields(r, db.formulas));
-    }
-    return true;
-  } catch (err) {
-    console.error("Error reading database, using fallback state:", err);
-    return false;
-  }
-}
-
-export async function ensureDbLoaded() {
-  if (isDbLoaded) return;
-  if (!dbLoadPromise) {
-    dbLoadPromise = (async () => {
-      await loadDb();
-      isDbLoaded = true;
-    })();
-  }
-  await dbLoadPromise;
-}
-
-// Save Database to disk and PostgreSQL.
-// IMPORTANT: this is awaited by every caller. On serverless platforms the
-// function execution can be frozen the instant the HTTP response is sent, so
-// a "fire and forget" write risks silently losing data. Awaiting here
-// guarantees the write reaches PostgreSQL before we ever respond.
-async function saveDb() {
-  try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
-  } catch (err) {
-    // Expected on read-only environments like Vercel
-  }
-
-  if (!dbSourceIsSafe) {
-    console.error("BLOCKED: refusing to sync to PostgreSQL because the in-memory data was not confirmed loaded from the real database (avoids overwriting real data with a stale/default fallback).");
-    return;
-  }
-
-  if (sqlDb) {
+  // Fetch current user from token
+  const verifySession = async (token: string) => {
     try {
-      await sqlDb.insert(appData)
-        .values({
-          key: 'main_store',
-          data: db,
-          updatedAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: appData.key,
-          set: {
-            data: db,
-            updatedAt: new Date(),
-          }
-        });
-    } catch (sqlSyncErr) {
-      console.error("Error persisting to PostgreSQL:", sqlSyncErr);
-    }
-  }
-}
-
-// Ensure loadDb starts immediately on startup
-ensureDbLoaded();
-
-// Helper to log audit actions safely
-async function logAudit(username: string, name: string, role: string, action: string, details: string, requestId?: number, changes?: { field: string; label: string; from: string; to: string }[]) {
-  try {
-    if (!db.auditLogs || !Array.isArray(db.auditLogs)) {
-      db.auditLogs = [];
-    }
-    const newLog: any = {
-      id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 1000),
-      username,
-      name,
-      role,
-      action,
-      details,
-      timestamp: new Date().toISOString(),
-      requestId
-    };
-    if (changes && changes.length > 0) {
-      newLog.changes = changes;
-    }
-    db.auditLogs.unshift(newLog);
-    await saveDb();
-  } catch (err) {
-    console.warn("Could not write audit log:", err);
-  }
-}
-
-// Fields that never belong in a user-facing change-history table: internal
-// bookkeeping, or values the system/form fills in automatically (e.g. the
-// edit form always sends isReReview/isException, and the server stamps
-// debtEnteredDate) -- showing them made a simple name edit look like it
-// changed five other things.
-const DIFF_IGNORE_FIELDS = new Set(["id", "isReReview", "isException", "debtEnteredDate"]);
-
-// Arabic names for common fields that have no entry in db.labelNames, so the
-// history table never shows raw English keys like "refundAmount".
-const FALLBACK_FIELD_LABELS: Record<string, string> = {
-  refundAmount: "مبلغ الاسترداد",
-  refundToClient: "مبلغ الرد للعميل",
-  debtABKCompanies: "مديونية البنوك/الشركات",
-  status: "الحالة",
-  statusDate: "تاريخ الحالة",
-  approvalDate: "تاريخ الاعتماد",
-  committeeNo: "رقم اللجنة",
-  committeeYear: "سنة اللجنة",
-  reviewed: "تمت المراجعة",
-  checkReadyForPickup: "الشيك جاهز للاستلام",
-  financeMemoSentDate: "تاريخ إرسال المذكرة للإدارة المالية",
-  receiptReceivedDate: "تاريخ استلام أصل الإيصال",
-  nationalId: "الرقم القومى",
-  externalId: "رقم العميل",
-  loanUnderName: "القرض بإسم",
-  cancellationReason: "سبب الإلغاء",
-  subscriptionValue: "قيمة العضوية",
-  transferValue: "قيمة التحويلة",
-  paymentMethod: "طريقة الدفع",
-  attachments: "المرفقات",
-};
-function fieldLabelFor(key: string): string {
-  return (db.labelNames && (db.labelNames as any)[key]) || FALLBACK_FIELD_LABELS[key] || key;
-}
-
-// "Nothing" in any of its stored shapes. A field going from missing to one of
-// these (e.g. undefined -> false / [] / {} / 0 / "") is NOT a real change.
-function isEmptyish(v: any): boolean {
-  if (v === undefined || v === null || v === "" || v === false || v === 0) return true;
-  if (Array.isArray(v)) return v.length === 0;
-  if (typeof v === "object") return Object.keys(v).length === 0;
-  return false;
-}
-
-// Field-by-field diff between a request before/after an edit, using the
-// Arabic label names configured in the system (db.labelNames).
-function buildRequestDiff(before: any, after: any): { field: string; label: string; from: string; to: string }[] {
-  const changes: { field: string; label: string; from: string; to: string }[] = [];
-  const allKeys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
-  for (const key of allKeys) {
-    if (DIFF_IGNORE_FIELDS.has(key)) continue;
-    const oldVal = before ? before[key] : undefined;
-    const newVal = after ? after[key] : undefined;
-    if (isEmptyish(oldVal) && isEmptyish(newVal)) continue;
-    const normOld = oldVal === undefined || oldVal === null ? "" : (typeof oldVal === "object" ? JSON.stringify(oldVal) : String(oldVal));
-    const normNew = newVal === undefined || newVal === null ? "" : (typeof newVal === "object" ? JSON.stringify(newVal) : String(newVal));
-    if (normOld !== normNew) {
-      changes.push({
-        field: key,
-        label: fieldLabelFor(key),
-        from: normOld === "" ? "—" : normOld,
-        to: normNew === "" ? "—" : normNew,
+      const res = await fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json();
+          setCurrentUser(data.user);
+          // Preload user's signature locally if sector manager
+          if (data.user.role === 'sector_manager' && data.user.signatureUrl) {
+            setSignatureFile(data.user.signatureUrl);
+          }
+        }
+      } else {
+        handleLogout();
+      }
+    } catch {
+      handleLogout();
+    } finally {
+      setAuthLoading(false);
     }
-  }
-  return changes;
-}
-
-// Builds a live nodemailer transporter from the saved SMTP settings, or
-// returns null if they're not fully configured yet (host/username/password
-// all required). Reused by both the actual "send email" endpoint and the
-// "test connection" endpoint in Settings, so they always agree on what
-// counts as "configured".
-function getMailer() {
-  const cfg = db.smtpSettings;
-  if (!cfg || !cfg.host || !cfg.username || !cfg.password) return null;
-  return nodemailer.createTransport({
-    host: cfg.host,
-    port: cfg.port || 587,
-    secure: Number(cfg.port) === 465,
-    auth: {
-      user: cfg.username,
-      pass: cfg.password,
-    },
-  });
-}
-
-// // Prevent any caching layer (browser or CDN) from serving stale API responses
-app.use((req, res, next) => {
-  if (req.path.startsWith("/api/")) {
-    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-    res.setHeader("Pragma", "no-cache");
-    res.setHeader("Expires", "0");
-  }
-  next();
-});
-
-// Ensure DB is loaded before all API routes
-app.use(async (req, res, next) => {
-  if (req.path.startsWith("/api/")) {
-    await ensureDbLoaded();
-  }
-  next();
-});
-
-// --- Concurrency safety: serialize write requests with a PostgreSQL advisory lock ---
-// A single fixed lock ID is used for the whole app's data store. Any request that can
-// modify data (POST/PUT/DELETE/PATCH) must acquire this lock before it's allowed to
-// proceed, and must release it once the response has been sent. While one write is
-// holding the lock, any other concurrent write simply waits its turn instead of
-// racing on a stale in-memory copy of the data and silently overwriting the first
-// write when it saves. Right after acquiring the lock we also force a genuinely
-// fresh reload from PostgreSQL, so the handler always mutates the very latest data,
-// even if this server instance's cached copy was from a moment ago.
-const DB_ADVISORY_LOCK_ID = 727272;
-const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
-
-// In-process write queue. The PostgreSQL pool is tiny on Vercel (2-3
-// connections) and every write holds one connection for the advisory lock;
-// if several writes waited on that lock at the same time they would use up
-// the whole pool and starve the very write that holds the lock (its reload
-// and save then time out -> the change is lost / the data "disappears").
-// Queueing writes here first means only ONE write per server instance is
-// ever waiting on the database lock.
-let localWriteChain: Promise<void> = Promise.resolve();
-function acquireLocalWriteSlot(): Promise<() => void> {
-  let release!: () => void;
-  const next = new Promise<void>((resolve) => { release = resolve; });
-  const prev = localWriteChain;
-  localWriteChain = prev.then(() => next);
-  return prev.then(() => release);
-}
-
-app.use(async (req, res, next) => {
-  if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || !pool) {
-    return next();
-  }
-
-  const releaseLocal = await acquireLocalWriteSlot();
-  // Safety net: never let a stuck request block the queue forever.
-  const safetyTimer = setTimeout(releaseLocal, 60000);
-
-  let lockClient: any = null;
-  const releaseLock = async () => {
-    clearTimeout(safetyTimer);
-    if (lockClient) {
-      const client = lockClient;
-      lockClient = null;
-      try {
-        await client.query("SELECT pg_advisory_unlock($1)", [DB_ADVISORY_LOCK_ID]);
-      } catch {}
-      try { client.release(); } catch {}
-    }
-    releaseLocal();
   };
-  res.on("finish", releaseLock);
-  res.on("close", releaseLock);
 
-  try {
-    lockClient = await pool.connect();
-    await lockClient.query("SELECT pg_advisory_lock($1)", [DB_ADVISORY_LOCK_ID]);
-    // We now hold the exclusive lock: reload the true latest data before this
-    // request's handler mutates anything.
-    const refreshed = await loadDb({ keepCurrentOnFailure: true });
-    if (!refreshed) {
-      // Could not get the latest data. Mutating a possibly stale copy could
-      // overwrite someone else's newer changes, so stop here and let the
-      // user retry instead of risking lost data.
-      await releaseLock();
-      return res.status(503).json({ error: "السيرفر مشغول لحظيًا ومقدرش يحدّث البيانات. من فضلك حاولي مرة تانية بعد ثواني (لم يتم حفظ أي تغيير)." });
+  useEffect(() => {
+    if (authToken) {
+      verifySession(authToken);
+    } else {
+      setAuthLoading(false);
     }
-  } catch (lockErr) {
-    console.warn("Could not acquire database lock, proceeding without it:", lockErr);
-    if (lockClient) {
-      try { lockClient.release(); } catch {}
-      lockClient = null;
-    }
-  }
+  }, [authToken]);
 
-  next();
-});
-
-// --- Automatic per-request change tracking (every endpoint, incl. bulk) ---
-// Wraps every mutating /api call: takes a light snapshot of all requests
-// right before the handler runs, and right before the response is sent
-// compares it against the new state. Any request that was created or had a
-// field changed gets a history entry (field-by-field "from -> to") that
-// shows up in that request's log popup -- no matter which endpoint made the
-// change (single edit, bulk upload, status change, committee cascade...),
-// including endpoints added in the future. If the handler already logged
-// the change itself, the diff is attached to that entry instead of adding
-// a duplicate one.
-const TRACK_SKIP_PATHS = [/^\/api\/auth\//, /^\/api\/backup\/restore/];
-const TRACK_LONG_STR = 300;
-const TRACK_MAX_CHANGES_PER_ENTRY = 60;
-
-function trackReplacer(_k: string, v: any) {
-  if (typeof v === "string" && v.length > TRACK_LONG_STR) {
-    return `«محتوى طويل:${v.length}|${v.slice(0, 24)}|${v.slice(-24)}»`;
-  }
-  return v;
-}
-
-function snapshotRequestsLight(): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const r of (db.requests || [])) {
-    m.set(String(r.id), JSON.stringify(r, trackReplacer));
-  }
-  return m;
-}
-
-function trackDisplayValue(key: string, v: any): string {
-  if (v === undefined || v === null || v === "") return "—";
-  if (key === "attachments" && Array.isArray(v)) {
-    return v.length === 0 ? "—" : v.map((a: any) => a?.fileName || a?.id || "مرفق").join("، ");
-  }
-  if (typeof v === "string") return v.startsWith("«محتوى طويل") ? "[ملف / محتوى طويل]" : v;
-  if (typeof v === "object") {
-    const str = JSON.stringify(v);
-    return str.length > 200 ? str.slice(0, 200) + "…" : str;
-  }
-  return String(v);
-}
-
-function diffLightSnapshots(beforeStr: string, afterStr: string) {
-  const before = JSON.parse(beforeStr);
-  const after = JSON.parse(afterStr);
-  const out: { field: string; label: string; from: string; to: string }[] = [];
-  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
-  for (const key of keys) {
-    if (DIFF_IGNORE_FIELDS.has(key)) continue;
-    const a = before[key];
-    const b = after[key];
-    if (JSON.stringify(a ?? null) === JSON.stringify(b ?? null)) continue;
-    if (isEmptyish(a) && isEmptyish(b)) continue;
-    out.push({
-      field: key,
-      label: fieldLabelFor(key),
-      from: trackDisplayValue(key, a),
-      to: trackDisplayValue(key, b),
-    });
-  }
-  return out;
-}
-
-function trackActionLabel(method: string, path: string): string {
-  if (path.includes("/bulk-review")) return "تحديث حالة المراجعة (جماعي)";
-  if (path.includes("/bulk-cancellation-status")) return "تحديث حالة الإلغاء (جماعي)";
-  if (path.includes("/bulk-finance-sent")) return "تحديث إرسال الإدارة المالية (جماعي)";
-  if (path.includes("/reconcile-system-status")) return "مطابقة حالة النظام (رفع شيت)";
-  if (path.includes("/import-company-debts") || path.includes("/debt-import-batches")) return "تحديث مديونيات (رفع شيت)";
-  if (path.endsWith("/api/requests/import")) return "استيراد مجمع للطلبات";
-  if (path.includes("/attachments")) return "تعديل المرفقات";
-  if (path.includes("/status-date")) return "تعديل تاريخ الحالة";
-  if (path.includes("first-manager")) return "إجراء المدير الأول";
-  if (path.includes("sector-manager")) return "إجراء رئيس القطاع";
-  if (path.includes("/committees")) return "تعديل لجنة (أثر على الطلب)";
-  if (path.includes("/formulas")) return "تعديل معادلات الحساب (أثر على الطلب)";
-  if (path.includes("/cancellation-settlements")) return "تعديل كشف تسوية";
-  if (path.includes("/send-checks")) return "إجراء على الشيكات";
-  if (method === "POST" && path === "/api/requests") return "إنشاء طلب إلغاء";
-  return "تعديل على الطلب";
-}
-
-app.use((req, res, next) => {
-  if (!req.path.startsWith("/api/") || !MUTATING_METHODS.has(req.method) || TRACK_SKIP_PATHS.some((re) => re.test(req.path))) {
-    return next();
-  }
-  let before: Map<string, string>;
-  try {
-    before = snapshotRequestsLight();
-  } catch (e) {
-    return next();
-  }
-  const startTs = Date.now();
-  let finalized = false;
-
-  const finalize = async () => {
-    if (finalized) return;
-    finalized = true;
+  // Fetch Core Data
+  const fetchAllData = async () => {
+    if (!authToken) return;
     try {
-      if (res.statusCode >= 400) return;
-      const user = (req as any).user;
-      if (!user) return;
-      if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = [];
-
-      // Entries this very request's handler already wrote (newest first).
-      const windowEntries: any[] = [];
-      for (let i = 0; i < db.auditLogs.length; i++) {
-        const l: any = db.auditLogs[i];
-        const t = Date.parse(l.timestamp);
-        if (!isNaN(t) && t < startTs - 5) break;
-        if (l.requestId !== undefined && l.requestId !== null && l.username === user.username) windowEntries.push(l);
-      }
-
-      const label = trackActionLabel(req.method, req.path);
-      let added = 0;
-      let touched = 0;
-      for (const r of (db.requests || [])) {
-        const id = String(r.id);
-        const afterStr = JSON.stringify(r, trackReplacer);
-        const beforeStr = before.get(id);
-        if (beforeStr === afterStr) continue;
-        const existing = windowEntries.find((l) => String(l.requestId) === id);
-
-        if (beforeStr === undefined) {
-          // Brand-new request created by this call.
-          if (existing) continue;
-          db.auditLogs.unshift({
-            id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
-            username: user.username, name: user.name, role: user.role,
-            action: "إنشاء طلب إلغاء",
-            details: `تم إنشاء الطلب للمشترك ${r.memberName || ""} رقم العضوية ${r.membershipNumber || ""} (${label})`,
-            timestamp: new Date().toISOString(),
-            requestId: r.id,
-          });
-          added++;
-          continue;
-        }
-
-        const changes = diffLightSnapshots(beforeStr, afterStr).slice(0, TRACK_MAX_CHANGES_PER_ENTRY);
-        if (changes.length === 0) continue;
-        if (existing) {
-          // Handler logged this action itself: just attach the diff table.
-          if (!existing.changes || existing.changes.length === 0) {
-            existing.changes = changes;
-            touched++;
-          }
-          continue;
-        }
-        db.auditLogs.unshift({
-          id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
-          username: user.username, name: user.name, role: user.role,
-          action: label,
-          details: `${label} -- المشترك ${r.memberName || ""} رقم العضوية ${r.membershipNumber || ""}`,
-          timestamp: new Date().toISOString(),
-          requestId: r.id,
-          changes,
-        });
-        added++;
-      }
-      if (added > 0 || touched > 0) await saveDb();
-    } catch (e) {
-      console.warn("Request change tracking failed (ignored):", e);
-    }
-  };
-
-  const origJson = res.json.bind(res);
-  const origSend = res.send.bind(res);
-  (res as any).json = (body?: any) => { finalize().finally(() => origJson(body)); return res; };
-  (res as any).send = (body?: any) => { finalize().finally(() => origSend(body)); return res; };
-  next();
-});
-
-// --- API Endpoints ---
-
-// Health & connection diagnostics
-app.get("/api/health", async (req, res) => {
-  let dbStatus = "in-memory / file";
-  let dbError = null;
-  if (sqlDb && pool) {
-    try {
-      await pool.query("SELECT 1");
-      dbStatus = "connected-postgres";
-    } catch (e: any) {
-      dbStatus = "error-postgres";
-      dbError = e?.message || String(e);
-    }
-  }
-  res.json({
-    status: "ok",
-    environment: process.env.VERCEL ? "vercel-serverless" : "standard-node",
-    database: dbStatus,
-    dbError,
-    usersCount: Array.isArray(db?.users) ? db.users.length : 0,
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Middleware to check authentication from a mock bearer/token header or custom simple token
-// For extreme ease of development, the token is simply `WD-TOKEN-<username>` which is robust and stateless!
-function getAuthenticatedUser(req: express.Request) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return null;
-  }
-  const token = authHeader.replace("Bearer ", "");
-  if (!token.startsWith("WD-TOKEN-")) {
-    return null;
-  }
-  const username = token.replace("WD-TOKEN-", "");
-  return db?.users?.find((u: any) => u.username === username) || null;
-}
-
-// Auth Middleware Wrapper
-const requireAuth = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const user = getAuthenticatedUser(req);
-  if (!user) {
-    return res.status(401).json({ error: "غير مصرح بالدخول - يرجى تسجيل الدخول أولاً" });
-  }
-  (req as any).user = user;
-  next();
-};
-
-// 1. Auth & Password Routes
-app.post("/api/auth/login", async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
-    if (!username || !password) {
-      return res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
-    }
-
-    if (!db || !Array.isArray(db.users)) {
-      db = { ...DEFAULT_DB, ...db };
-      if (!Array.isArray(db.users)) db.users = DEFAULT_DB.users;
-    }
-
-    const trimmedUser = String(username).trim().toLowerCase();
-    const user = db.users.find((u: any) => u.username && u.username.toLowerCase() === trimmedUser);
-    if (!user) {
-      return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
-    }
-
-    const hashedInput = hashPassword(String(password));
-    if (user.password !== hashedInput) {
-      return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
-    }
-
-    // Generate simple token
-    const token = `WD-TOKEN-${user.username}`;
-    
-    // Log login
-    logAudit(user.username, user.name, user.role, "تسجيل دخول", `قام المستخدم ${user.name} بتسجيل الدخول`);
-
-    // Return user without password
-    const { password: _, ...userSafe } = user;
-    res.json({ token, user: userSafe });
-  } catch (err: any) {
-    console.error("Login route error:", err);
-    res.status(500).json({ error: "حدث خطأ أثناء معالجة تسجيل الدخول: " + (err?.message || err) });
-  }
-});
-
-app.get("/api/auth/me", requireAuth, async (req, res) => {
-  const { password: _, ...userSafe } = (req as any).user;
-  res.json({ user: userSafe });
-});
-
-app.post("/api/auth/change-password", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { currentPassword, newPassword } = req.body;
-
-  if (!currentPassword || !newPassword) {
-    return res.status(400).json({ error: "يجب إدخال كلمة المرور الحالية والجديدة" });
-  }
-
-  const dbUser = db.users.find((u) => u.id === user.id);
-  if (!dbUser) {
-    return res.status(404).json({ error: "المستخدم غير موجود" });
-  }
-
-  if (dbUser.password !== hashPassword(currentPassword)) {
-    return res.status(400).json({ error: "كلمة المرور الحالية غير صحيحة" });
-  }
-
-  dbUser.password = hashPassword(newPassword);
-  dbUser.firstLogin = false;
-  dbUser.passwordChanged = true;
-  await saveDb();
-
-  logAudit(dbUser.username, dbUser.name, dbUser.role, "تغيير كلمة المرور", `قام المستخدم بتغيير كلمة المرور الخاصة به بنجاح`);
-  res.json({ success: true, message: "تم تغيير كلمة المرور بنجاح" });
-});
-
-// Admin reset any user password
-app.post("/api/auth/reset-password", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح - هذه الصلاحية للأدمن فقط" });
-  }
-
-  const { userId } = req.body;
-  if (!userId) {
-    return res.status(400).json({ error: "يجب تحديد معرف المستخدم المراد إعادة تعيينه" });
-  }
-
-  const dbUser = db.users.find((u) => u.id === userId);
-  if (!dbUser) {
-    return res.status(404).json({ error: "المستخدم غير موجود" });
-  }
-
-  dbUser.password = DEFAULT_HASH;
-  dbUser.firstLogin = true;
-  dbUser.passwordChanged = false;
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إعادة تعيين كلمة مرور", `تم إعادة تعيين كلمة مرور المستخدم ${dbUser.name} إلى كلمة المرور الافتراضية 123`);
-  res.json({ success: true, message: `تم إعادة تعيين كلمة مرور المستخدم إلى كلمة المرور الافتراضية (123)` });
-});
-
-// User Management (Admin Only)
-app.get("/api/users", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-  const safeUsers = db.users.map(({ password, ...u }) => u);
-  res.json(safeUsers);
-});
-
-app.post("/api/users", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-
-  const { id, username, name, role, club, allowedPages } = req.body;
-  if (!username || !name || !role) {
-    return res.status(400).json({ error: "جميع الحقول الأساسية مطلوبة" });
-  }
-
-  const exists = db.users.some((u) => u.username.toLowerCase() === username.toLowerCase());
-  if (exists) {
-    return res.status(400).json({ error: "اسم المستخدم هذا مسجل بالفعل بالمنظومة" });
-  }
-
-  const newUser = {
-    id: id || "usr-" + Date.now(),
-    username,
-    name,
-    role,
-    club: (role === "club" || role === "international_user") ? club : undefined,
-    allowedPages: Array.isArray(allowedPages) ? allowedPages : undefined,
-    firstLogin: true,
-    passwordChanged: false,
-    password: DEFAULT_HASH // Assign default '123'
-  };
-
-  db.users.push(newUser);
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء حساب مستخدم جديد", `تم إنشاء حساب مستخدم جديد باسم ${name} ودور ${role}`);
-  res.json({ success: true, user: { id: newUser.id, username, name, role, club, allowedPages: newUser.allowedPages } });
-});
-
-app.put("/api/users/:id", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin" && reqUser.id !== req.params.id) {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-
-  const { name, role, club, signatureUrl, allowedPages } = req.body;
-  const dbUser = db.users.find((u) => u.id === req.params.id);
-  if (!dbUser) {
-    return res.status(404).json({ error: "المستخدم غير موجود" });
-  }
-
-  if (name) dbUser.name = name;
-  if (reqUser.role === "admin") {
-    if (role) dbUser.role = role;
-    if (club !== undefined) dbUser.club = club;
-    if (allowedPages !== undefined) dbUser.allowedPages = Array.isArray(allowedPages) ? allowedPages : undefined;
-  } else {
-    if (club && (dbUser.role === "club" || dbUser.role === "international_user")) dbUser.club = club;
-  }
-  if (signatureUrl !== undefined && dbUser.role === "sector_manager") {
-    dbUser.signatureUrl = signatureUrl;
-  }
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حساب مستخدم", `تم تعديل بيانات الحساب لـ ${dbUser.name}`);
-  res.json({ success: true, user: { id: dbUser.id, username: dbUser.username, name: dbUser.name, role: dbUser.role, club: dbUser.club, signatureUrl: dbUser.signatureUrl, allowedPages: dbUser.allowedPages } });
-});
-
-app.delete("/api/users/:id", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-
-  const index = db.users.findIndex((u) => u.id === req.params.id);
-  if (index === -1) {
-    return res.status(404).json({ error: "المستخدم غير موجود" });
-  }
-
-  const targetUser = db.users[index];
-  if (targetUser.username === "admin") {
-    return res.status(400).json({ error: "لا يمكن حذف حساب الأدمن الأساسي" });
-  }
-
-  db.users.splice(index, 1);
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حساب مستخدم", `تم حذف حساب المستخدم ${targetUser.name}`);
-  res.json({ success: true });
-});
-
-// 2. Dynamic Dropdowns Routes
-app.get("/api/dropdowns", async (req, res) => {
-  res.json({
-    dropdowns: db.dropdowns || DEFAULT_DB.dropdowns,
-    dropdownLabels: db.dropdownLabels || DEFAULT_DB.dropdownLabels
-  });
-});
-
-// Create new dropdown category
-app.post("/api/dropdowns/categories/create", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لإضافة قائمة اختيار جديدة" });
-  }
-
-  const { categoryKey, categoryLabel, initialOption } = req.body;
-  if (!categoryLabel || !categoryLabel.trim()) {
-    return res.status(400).json({ error: "اسم القائمة بالعربية مطلوب" });
-  }
-
-  let key = (categoryKey && categoryKey.trim()) 
-    ? categoryKey.trim().replace(/\s+/g, '_') 
-    : `custom_${Date.now()}`;
-
-  if (!db.dropdowns) db.dropdowns = { ...DEFAULT_DB.dropdowns };
-  if (!db.dropdownLabels) db.dropdownLabels = { ...DEFAULT_DB.dropdownLabels };
-
-  if (db.dropdowns[key]) {
-    return res.status(400).json({ error: "هذه القائمة موجودة بالفعل" });
-  }
-
-  db.dropdowns[key] = (initialOption && initialOption.trim()) ? [initialOption.trim()] : ["خيار 1"];
-  db.dropdownLabels[key] = categoryLabel.trim();
-
-  await saveDb();
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة قائمة جديدة", `تم إنشاء قائمة اختيار جديدة: ${categoryLabel.trim()}`);
-  res.json({ 
-    success: true, 
-    dropdowns: db.dropdowns, 
-    dropdownLabels: db.dropdownLabels 
-  });
-});
-
-// Delete custom dropdown category
-app.delete("/api/dropdowns/categories/:category", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف قائمة اختيار" });
-  }
-
-  const { category } = req.params;
-  const coreCategories = ['clubs', 'membershipTypes', 'paymentMethods', 'cancellationReasons', 'committeeResults', 'cancellationStatuses', 'exceptions'];
-  if (coreCategories.includes(category)) {
-    return res.status(400).json({ error: "لا يمكن حذف القوائم الأساسية للنظام" });
-  }
-
-  if (db.dropdowns && db.dropdowns[category]) {
-    delete db.dropdowns[category];
-  }
-  if (db.dropdownLabels && db.dropdownLabels[category]) {
-    delete db.dropdownLabels[category];
-  }
-
-  await saveDb();
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف قائمة اختيار", `تم حذف قائمة الاختيار: ${category}`);
-  res.json({ 
-    success: true, 
-    dropdowns: db.dropdowns, 
-    dropdownLabels: db.dropdownLabels 
-  });
-});
-
-// Dynamic Field Labels Customization Routes
-app.get("/api/label-names", async (req, res) => {
-  res.json(db.labelNames || DEFAULT_DB.labelNames);
-});
-
-app.post("/api/label-names", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل تسميات الحقول" });
-  }
-
-  db.labelNames = {
-    ...(db.labelNames || DEFAULT_DB.labelNames),
-    ...req.body
-  };
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل تسميات الحقول", "تم تعديل بعض تسميات حقول الإدخال والتقارير");
-  res.json({ success: true, labelNames: db.labelNames });
-});
-
-// Custom Fields Routes
-app.get("/api/custom-fields", async (req, res) => {
-  res.json(db.customFields || []);
-});
-
-app.post("/api/custom-fields", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل الحقول المخصصة" });
-  }
-
-  if (Array.isArray(req.body)) {
-    db.customFields = req.body;
-  } else if (req.body && typeof req.body === "object") {
-    const field = req.body;
-    if (!field.id) {
-      field.id = "cf_" + Date.now() + "_" + Math.floor(Math.random() * 1000);
-    }
-    if (!db.customFields) db.customFields = [];
-    const index = db.customFields.findIndex((f: any) => f.id === field.id);
-    if (index >= 0) {
-      db.customFields[index] = field;
-    } else {
-      db.customFields.push(field);
-    }
-  }
-
-  await saveDb();
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إدارة الحقول المخصصة", "تم تحديث أو إضافة حقول مخصصة للنظام");
-  res.json({ success: true, customFields: db.customFields });
-});
-
-app.delete("/api/custom-fields/:id", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف الحقول المخصصة" });
-  }
-
-  const { id } = req.params;
-  if (db.customFields) {
-    db.customFields = db.customFields.filter((f: any) => f.id !== id);
-  }
-  await saveDb();
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف حقل مخصص", `تم حذف الحقل المخصص: ${id}`);
-  res.json({ success: true, customFields: db.customFields || [] });
-});
-
-app.post("/api/dropdowns/:category", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتعديل قوائم الاختيار" });
-  }
-
-  const { category } = req.params;
-  const { option } = req.body;
-
-  if (!option || !option.trim()) {
-    return res.status(400).json({ error: "خيار القائمة لا يمكن أن يكون فارغاً" });
-  }
-
-  if (!db.dropdowns[category]) {
-    db.dropdowns[category] = [];
-  }
-
-  const list = db.dropdowns[category];
-
-  if (list.includes(option.trim())) {
-    return res.status(400).json({ error: "هذا الخيار متواجد بالفعل في هذه القائمة" });
-  }
-
-  list.push(option.trim());
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إضافة خيار لقائمة", `تم إضافة "${option.trim()}" إلى قائمة ${category}`);
-  res.json({ success: true, dropdowns: db.dropdowns, dropdownLabels: db.dropdownLabels });
-});
-
-app.put("/api/dropdowns/:category/rename", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-
-  const { category } = req.params;
-  const { oldOption, newOption } = req.body;
-
-  if (!oldOption || !newOption || !newOption.trim()) {
-    return res.status(400).json({ error: "الخيار الجديد والقديم مطلوبان" });
-  }
-
-  const list = (db.dropdowns as any)[category];
-  if (!list) {
-    return res.status(404).json({ error: "القائمة المطلوبة غير صحيحة" });
-  }
-
-  const index = list.indexOf(oldOption);
-  if (index === -1) {
-    return res.status(404).json({ error: "الخيار القديم غير موجود بالقائمة" });
-  }
-
-  list[index] = newOption.trim();
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل خيار لقائمة", `تم تعديل الاسم من "${oldOption}" إلى "${newOption.trim()}" في قائمة ${category}`);
-  res.json({ success: true, dropdowns: db.dropdowns });
-});
-
-app.delete("/api/dropdowns/:category", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لحذف خيارات قوائم الاختيار" });
-  }
-
-  const { category } = req.params;
-  const { option } = req.query;
-
-  if (!option) {
-    return res.status(400).json({ error: "يجب تحديد الخيار المراد حذفه" });
-  }
-
-  const list = (db.dropdowns as any)[category];
-  if (!list) {
-    return res.status(404).json({ error: "القائمة المطلوبة غير صحيحة" });
-  }
-
-  const index = list.indexOf(option);
-  if (index === -1) {
-    return res.status(404).json({ error: "الخيار المطلوب غير متواجد" });
-  }
-
-  list.splice(index, 1);
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "حذف خيار من قائمة", `تم حذف "${option}" من قائمة ${category}`);
-  res.json({ success: true, dropdowns: db.dropdowns });
-});
-
-// 3. Committees Routes
-app.get("/api/committees", async (req, res) => {
-  res.json(db.committees);
-});
-
-app.post("/api/committees", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية التحكم باللجان" });
-  }
-
-  const { number, year, approvalDate } = req.body;
-  if (!number) {
-    return res.status(400).json({ error: "رقم اللجنة مطلوب" });
-  }
-
-  const commYear = (year && String(year).trim()) ? String(year).trim() : new Date().getFullYear().toString();
-
-  // Close all other committees
-  db.committees.forEach((c) => {
-    c.status = "closed";
-  });
-
-  const newComm = {
-    id: `comm-${number}-${commYear}-${Date.now()}`,
-    number: String(number).trim(),
-    year: commYear,
-    status: "open" as const,
-    approvalDate: approvalDate || ""
-  };
-
-  db.committees.push(newComm);
-  await saveDb();
-
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "إنشاء لجنة جديدة", `تم فتح لجنة جديدة برقم ${number}`);
-  res.json({ success: true, committee: newComm, committees: db.committees });
-});
-
-app.put("/api/committees/:id", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية التحكم باللجان" });
-  }
-
-  const { status, approvalDate, number, year } = req.body;
-  const comm = db.committees.find((c) => c.id === req.params.id);
-  if (!comm) {
-    return res.status(404).json({ error: "اللجنة غير موجودة" });
-  }
-
-  const oldNumber = comm.number;
-  const oldYear = comm.year;
-  const newNumberTrimmed = number !== undefined ? String(number).trim() : undefined;
-  const numberChanged = !!newNumberTrimmed && newNumberTrimmed !== oldNumber;
-
-  if (newNumberTrimmed) comm.number = newNumberTrimmed;
-  if (year !== undefined && String(year).trim()) comm.year = String(year).trim();
-
-  // Cascade renumbering: correcting THIS committee's number is a
-  // structural fix to the whole sequence, not just this one record -- so
-  // every OTHER committee numbered higher than the old number shifts by
-  // the same amount (e.g. correcting 7->6 automatically shifts 8->7),
-  // keeping the numbering consistent with no gaps or duplicates. This is
-  // intentionally different from editing a single request's committee
-  // number (done elsewhere), which only affects that one request.
-  const cascadeShifts: { fromNumber: string; toNumber: string }[] = [];
-  if (numberChanged) {
-    const oldNumInt = parseInt(oldNumber, 10);
-    const newNumInt = parseInt(newNumberTrimmed!, 10);
-    if (!isNaN(oldNumInt) && !isNaN(newNumInt) && oldNumInt !== newNumInt) {
-      const delta = oldNumInt - newNumInt;
-      const others = db.committees
-        .filter((c) => c.id !== comm.id)
-        .map((c) => ({ c, n: parseInt(c.number, 10) }))
-        .filter((x) => !isNaN(x.n) && x.n > oldNumInt)
-        .sort((a, b) => a.n - b.n); // shift lowest-numbered first to avoid transient collisions
-
-      others.forEach(({ c, n }) => {
-        const shiftedNum = String(n - delta);
-        cascadeShifts.push({ fromNumber: c.number, toNumber: shiftedNum });
-        c.number = shiftedNum;
-      });
-    }
-  }
-
-  if (status) comm.status = status;
-  if (approvalDate) comm.approvalDate = approvalDate;
-
-  // Re-tag every request that referenced this committee under its OLD
-  // number so it now correctly shows the corrected number, and (re)sync
-  // its approval date/decision.
-  if (numberChanged || approvalDate || status) {
-    db.requests.forEach((r) => {
-      if (r.committeeNo === oldNumber && (!oldYear || !r.committeeYear || r.committeeYear === oldYear)) {
-        if (numberChanged) r.committeeNo = comm.number;
-        if (year !== undefined && String(year).trim()) r.committeeYear = comm.year;
-        if (approvalDate) r.approvalDate = approvalDate;
-        if (comm.status === 'closed' && r.result !== "Rejected" && r.status !== "Rejected" && r.firstManagerApproved !== false) {
-          r.result = "Accepted";
-        }
-      }
-    });
-  }
-
-  // Re-tag requests referencing any cascade-shifted committee too.
-  cascadeShifts.forEach(({ fromNumber, toNumber }) => {
-    db.requests.forEach((r) => {
-      if (r.committeeNo === fromNumber) {
-        r.committeeNo = toNumber;
-      }
-    });
-  });
-
-  await saveDb();
-
-  const cascadeNote = cascadeShifts.length
-    ? `، وتم إزاحة ${cascadeShifts.length} لجنة أخرى تباعًا (${cascadeShifts.map(s => `${s.fromNumber}->${s.toNumber}`).join(', ')})`
-    : '';
-  logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل حالة اللجنة", `تم تعديل اللجنة ${oldNumber}->${comm.number}-${comm.year}: الحالة=${comm.status}${cascadeNote}`);
-  res.json({ success: true, committees: db.committees, requests: db.requests, cascadeShifts });
-});
-
-// --- Formulas API Endpoints ---
-app.get("/api/formulas", requireAuth, async (req, res) => {
-  res.json(db.formulas || DEFAULT_DB.formulas);
-});
-
-app.put("/api/formulas", requireAuth, async (req, res) => {
-  const reqUser = (req as any).user;
-  if (reqUser.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل معادلات النظام" });
-  }
-
-  const { formulas, recalculateScope } = req.body;
-  if (!formulas) {
-    return res.status(400).json({ error: "بيانات المعادلات غير مكتملة" });
-  }
-
-  db.formulas = { ...db.formulas, ...formulas };
-
-  let updatedCount = 0;
-  const cutoff = new Date(db.formulas.cutoffDate || "2026-07-01");
-
-  if (recalculateScope && recalculateScope !== 'none') {
-    db.requests = db.requests.map((r: any) => {
-      const subDate = new Date(r.subscriptionDate);
-      const isAfterCutoff = !isNaN(subDate.getTime()) && subDate.getTime() >= cutoff.getTime();
-
-      let shouldRecalc = false;
-      if (recalculateScope === 'all') {
-        shouldRecalc = true;
-      } else if (recalculateScope === 'old' && !isAfterCutoff) {
-        shouldRecalc = true;
-      } else if (recalculateScope === 'new' && isAfterCutoff) {
-        shouldRecalc = true;
-      }
-
-      if (shouldRecalc) {
-        updatedCount++;
-        return calculateRequestFields(r, db.formulas);
-      }
-      return r;
-    });
-  }
-
-  await saveDb();
-
-  logAudit(
-    reqUser.username, 
-    reqUser.name, 
-    reqUser.role, 
-    "تعديل القواعد والمعادلات الحسابية", 
-    `تم تحديث معادلات المنظومة ونطاق التطبيق: ${recalculateScope || 'المستقبل فقط'} (تم إعادة احتساب ${updatedCount} طلب)`
-  );
-
-  res.json({ 
-    success: true, 
-    formulas: db.formulas, 
-    requests: db.requests,
-    updatedCount 
-  });
-});
-
-// --- Mathematical Logic Helper for Cancellation Requests ---
-function evaluateCustomFormula(expression: string, vars: Record<string, number>): number {
-  if (!expression || typeof expression !== 'string') return 0;
-  try {
-    let safeExpr = expression;
-    const sortedKeys = Object.keys(vars).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-      const val = parseFloat(vars[key] as any) || 0;
-      const regex = new RegExp(`\\b${key}\\b`, 'g');
-      safeExpr = safeExpr.replace(regex, `(${val})`);
-    }
-    const sanitized = safeExpr.replace(/[^0-9\.\+\-\*\/\%\(\)\s]/g, '');
-    if (!sanitized.trim()) return 0;
-    const func = new Function(`return (${sanitized});`);
-    const result = func();
-    return isNaN(result) || !isFinite(result) ? 0 : Math.round(result * 100) / 100;
-  } catch (err) {
-    return 0;
-  }
-}
-
-function parseAnyDate(val: any): Date | null {
-  if (val === null || val === undefined || val === '') return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
-
-  if (typeof val === 'number') {
-    if (val > 10000 && val < 100000) {
-      return new Date(Math.round((val - 25569) * 86400 * 1000));
-    }
-    const d = new Date(val);
-    return isNaN(d.getTime()) ? null : d;
-  }
-
-  const str = String(val).trim();
-  if (!str) return null;
-
-  if (/^\d{5,6}$/.test(str)) {
-    const num = parseFloat(str);
-    if (num > 10000 && num < 100000) {
-      return new Date(Math.round((num - 25569) * 86400 * 1000));
-    }
-  }
-
-  if (/^\d{4}-\d{2}-\d{2}/.test(str)) {
-    const parts = str.split('T')[0].split('-');
-    const y = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) - 1;
-    const d = parseInt(parts[2], 10);
-    return new Date(y, m, d);
-  }
-
-  const MONTH_NAME_MAP: Record<string, number> = {
-    jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-    january: 0, february: 1, march: 2, april: 3, june: 5, july: 6, august: 7, september: 8, october: 9, november: 10, december: 11,
-    "يناير": 0, "فبراير": 1, "مارس": 2, "أبريل": 3, "ابريل": 3, "مايو": 4, "يونيو": 5, "يوليو": 6, "أغسطس": 7, "اغسطس": 7, "سبتمبر": 8, "أكتوبر": 9, "اكتوبر": 9, "نوفمبر": 10, "ديسمبر": 11
-  };
-
-  const tokens = str.split(/[\/\-\.\s,]+/);
-  if (tokens.length >= 3) {
-    const t0 = tokens[0].toLowerCase();
-    const t1 = tokens[1].toLowerCase();
-    const t2 = tokens[2].toLowerCase();
-
-    if (MONTH_NAME_MAP[t1] !== undefined) {
-      const day = parseInt(t0, 10);
-      const month = MONTH_NAME_MAP[t1];
-      let year = parseInt(t2, 10);
-      if (year < 100) year += 2000;
-      if (!isNaN(day) && !isNaN(year)) {
-        return new Date(year, month, day);
-      }
-    }
-
-    if (MONTH_NAME_MAP[t1] !== undefined && parseInt(t0, 10) > 1000) {
-      const year = parseInt(t0, 10);
-      const month = MONTH_NAME_MAP[t1];
-      const day = parseInt(t2, 10);
-      if (!isNaN(day) && !isNaN(year)) {
-        return new Date(year, month, day);
-      }
-    }
-
-    const n0 = parseInt(t0, 10);
-    const n1 = parseInt(t1, 10);
-    const n2 = parseInt(t2, 10);
-
-    if (!isNaN(n0) && !isNaN(n1) && !isNaN(n2)) {
-      if (n0 > 1000) {
-        return new Date(n0, n1 - 1, n2);
-      } else if (n2 > 1000) {
-        if (n1 <= 12) {
-          return new Date(n2, n1 - 1, n0);
-        } else if (n0 <= 12) {
-          return new Date(n2, n0 - 1, n1);
-        }
-      }
-    }
-  }
-
-  const fallback = new Date(str);
-  if (!isNaN(fallback.getTime()) && fallback.getFullYear() > 1900 && fallback.getFullYear() < 2100) {
-    return fallback;
-  }
-
-  return null;
-}
-
-function formatDateCustom(val: any): string {
-  const d = parseAnyDate(val);
-  if (!d) return val ? String(val) : '';
-  const ENGLISH_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-  const day = d.getDate();
-  const monthStr = ENGLISH_MONTHS[d.getMonth()];
-  const year = d.getFullYear();
-  return `${day}-${monthStr}-${year}`;
-}
-
-function parseSmartNumber(val: any): number {
-  if (val === null || val === undefined || val === '') return 0;
-  if (typeof val === 'number') {
-    return isNaN(val) || !isFinite(val) ? 0 : val;
-  }
-  let s = String(val).trim();
-  if (!s) return 0;
-
-  // Convert Eastern Arabic digits ٠-٩ to Western 0-9
-  const arabicDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-  for (let i = 0; i < arabicDigits.length; i++) {
-    s = s.split(arabicDigits[i]).join(String(i));
-  }
-
-  // Check if string is negative (e.g. "-500" or "(500)")
-  const isNegative = /^\s*\(.*\)\s*$/.test(s) || /^\s*-/.test(s);
-
-  // Remove currency words and symbols
-  s = s.replace(/ج\.?م|جم|جنيه|EGP|LE|L\.E\.|\$|ريال|USD/gi, '');
-
-  // Handle Arabic comma '،' or decimal separator '٫'
-  s = s.replace(/٫/g, '.').replace(/،/g, ',');
-
-  // If there's both comma and dot, e.g. "1,250.50", remove comma
-  if (s.includes(',') && s.includes('.')) {
-    s = s.replace(/,/g, '');
-  } else if (s.includes(',')) {
-    const parts = s.split(',');
-    if (parts.length > 1 && parts[parts.length - 1].length === 3) {
-      s = parts.join('');
-    } else if (parts.length === 2 && parts[1].length <= 2) {
-      s = parts.join('.');
-    } else {
-      s = parts.join('');
-    }
-  }
-
-  // Remove everything except digits, minus, and dot
-  s = s.replace(/[^0-9\.]/g, '');
-  if (!s) return 0;
-
-  const num = parseFloat(s);
-  if (isNaN(num) || !isFinite(num)) return 0;
-  return isNegative ? -Math.abs(num) : num;
-}
-
-function calculateRequestFields(reqData: any, customFormulas?: any): any {
-  const formulas = customFormulas || db.formulas || DEFAULT_DB.formulas;
-
-  // Format dates cleanly to D-MMM-YYYY format (e.g. 4-Apr-2026)
-  const subDate = parseAnyDate(reqData.subscriptionDate);
-  const reqDate = parseAnyDate(reqData.requestDate);
-
-  const formattedSubDate = subDate ? formatDateCustom(subDate) : (reqData.subscriptionDate || "");
-  const formattedReqDate = reqDate ? formatDateCustom(reqDate) : (reqData.requestDate || "");
-
-  // Parsing numbers to avoid concatenation
-  const cashAmount = parseSmartNumber(reqData.cashAmount);
-  const visaAmount = parseSmartNumber(reqData.visaAmount);
-  const transferValue = parseSmartNumber(reqData.transferValue);
-  const checksPaid = parseSmartNumber(reqData.checksPaid);
-  const checksUnpaid = parseSmartNumber(reqData.checksUnpaid);
-  const annualRenewalDue = parseSmartNumber(reqData.annualRenewalDue);
-  const debtABKCompanies = parseSmartNumber(reqData.debtABKCompanies);
-
-  // 1. مبلغ المقدم (Calculated)
-  const rawAdv = parseSmartNumber(reqData.advancePaid);
-  const advancePaid = (cashAmount + visaAmount) > 0 ? (cashAmount + visaAmount) : rawAdv;
-
-  // 2. قيمة الاشتراك (Calculated) = قيمة التحويلة + نقدا + فيزا + الشيكات المسددة + الشيكات الغير مسددة
-  const rawSubVal = parseSmartNumber(reqData.subscriptionValue);
-  const sumComponents = transferValue + cashAmount + visaAmount + checksPaid + checksUnpaid;
-  const subscriptionValue = sumComponents > 0 ? sumComponents : rawSubVal;
-
-  // 3. Days Calculation (DATEDIF)
-  let days = 0;
-  if (subDate && reqDate) {
-    const diffTime = reqDate.getTime() - subDate.getTime();
-    days = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-  }
-
-  // 4. Type & Type2 Calculation with 1 July Cutoff Rule
-  let type = "";
-  let type2: "Less 3 months" | "Over 3 months" | "Less 1 month" | "Over 1 month" = "Less 3 months";
-
-  const cutoff = parseAnyDate(formulas.cutoffDate) || new Date("2026-07-01");
-  const isAfterCutoff = subDate && subDate.getTime() >= cutoff.getTime();
-
-  if (isAfterCutoff) {
-    if (days <= (formulas.newDaysThreshold ?? 30)) {
-      type = formulas.newDaysLabel || "اقل من شهر";
-      type2 = "Less 1 month";
-    } else {
-      const yearsCount = Math.ceil(days / 365);
-      type = `${yearsCount} سنة`;
-      type2 = "Over 1 month";
-    }
-  } else {
-    if (days <= (formulas.oldDaysThreshold ?? 90)) {
-      type = formulas.oldDaysLabel || "اقل من 3 شهور";
-      type2 = "Less 3 months";
-    } else {
-      const yearsCount = Math.ceil(days / 365);
-      type = `${yearsCount} سنة`;
-      type2 = "Over 3 months";
-    }
-  }
-
-  // 5. مصاريف إدارية (Admin Fees)
-  const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
-  const isCompany = reqData.paymentMethod && !nonCompanyMethods.includes(reqData.paymentMethod.trim());
-  const stdAdminFee = formulas.adminFeesStandard ?? 2500;
-
-  // Exception rules lookup
-  const rules = formulas.exceptionRules || [
-    { id: '1', name: 'عضوية دولية', exemptAdminFee: true, exemptUsageFee: true, exemptVisaFee: false },
-    { id: '2', name: 'بدون خصم مصاريف ادارية', exemptAdminFee: true, exemptUsageFee: false, exemptVisaFee: true },
-    { id: '3', name: 'جهة سيادية', exemptAdminFee: false, exemptUsageFee: true, exemptVisaFee: false }
-  ];
-
-  const fullExceptionText = (
-    (reqData.exceptionType || "") + " " +
-    (reqData.exceptions || "") + " " +
-    (reqData.clubNote || "") + " " +
-    (reqData.adminNote || "") + " " +
-    (reqData.documents || "")
-  ).toLowerCase();
-
-  const isNoRefundException = Boolean(
-    fullExceptionText.includes("بدون رد اى مبلغ") ||
-    fullExceptionText.includes("بدون رد أي مبلغ") ||
-    fullExceptionText.includes("بدون رد اى مبالغ") ||
-    fullExceptionText.includes("بدون رد أي مبالغ") ||
-    fullExceptionText.includes("بدون رد مبلغ") ||
-    fullExceptionText.includes("بدون رد") ||
-    (reqData.exceptionType && (reqData.exceptionType.includes("بدون رد") || reqData.exceptionType.includes("بدون رد اى مبلغ") || reqData.exceptionType.includes("بدون رد أي مبلغ"))) ||
-    (reqData.exceptions && (reqData.exceptions.includes("بدون رد") || reqData.exceptions.includes("بدون رد اى مبلغ") || reqData.exceptions.includes("بدون رد أي مبلغ")))
-  );
-
-  const isAdminExemptByRule = rules.some((r: any) => r.exemptAdminFee && r.name && fullExceptionText.includes(r.name.toLowerCase()));
-  const isVisaExemptByRule = rules.some((r: any) => r.exemptVisaFee && r.name && fullExceptionText.includes(r.name.toLowerCase()));
-  const isUsageExemptByRule = rules.some((r: any) => r.exemptUsageFee && r.name && fullExceptionText.includes(r.name.toLowerCase()));
-
-  // Base net amount for company calculation
-  const companyNetBase = (formulas.companyRefundFormula === "net_transfer" && transferValue > 0) 
-    ? transferValue 
-    : (subscriptionValue > 0 ? subscriptionValue : (transferValue > 0 ? transferValue : sumComponents));
-  const net_amount = isCompany ? Math.max(0, companyNetBase - debtABKCompanies) : 0;
-
-  let calculatedAdminFees = stdAdminFee;
-
-  if (
-    reqData.membershipType === "International" ||
-    isAdminExemptByRule ||
-    fullExceptionText.includes("عضوية دولية") ||
-    fullExceptionText.includes("بدون خصم مصاريف ادارية")
-  ) {
-    calculatedAdminFees = 0;
-  } else if (isCompany) {
-    // Company rule 1: MIN(net_amount, admin_fee_limit)
-    calculatedAdminFees = Math.max(0, Math.min(net_amount, stdAdminFee));
-  }
-
-  // Override support
-  const adminFees = (reqData.adminFeesOverride !== undefined && reqData.adminFeesOverride !== null && reqData.adminFeesOverride !== "")
-    ? parseFloat(reqData.adminFeesOverride) 
-    : calculatedAdminFees;
-
-  // 7. مصاريف فيزا 2% (Visa Fees 2%) = فيزا × percentage
-  const visaFeePct = formulas.visaFeePercentage ?? 0.02;
-  const calculatedVisaFee = visaAmount * visaFeePct;
-  let visaFees2Percent = calculatedVisaFee;
-
-  if (reqData.visaFeeOverride !== undefined && reqData.visaFeeOverride !== null && reqData.visaFeeOverride !== "") {
-    visaFees2Percent = parseFloat(reqData.visaFeeOverride);
-  } else if (isVisaExemptByRule || fullExceptionText.includes("بدون خصم مصاريف ادارية")) {
-    visaFees2Percent = 0;
-  } else if (isCompany) {
-    // Company rule: If net_amount < 2500 or adminFees < 2500, visa_fee = 0
-    if (adminFees < 2500 || net_amount < 2500) {
-      visaFees2Percent = 0;
-    } else {
-      // Remaining after admin fees
-      const remAfterAdmin = net_amount - adminFees;
-      visaFees2Percent = Math.max(0, Math.min(remAfterAdmin, calculatedVisaFee));
-    }
-  }
-
-  // 6. مقابل الانتفاع (Usage Fees Formula)
-  let calculatedUsageFee = 0;
-  const exemptTypes = formulas.usageFeeExemptTypes || ["اقل من 3 شهور", "اقل من شهر", "International"];
-  const exemptClubs = formulas.usageFeeExemptClubs || ["Tanta", "طنطا"];
-  const exemptDocs = formulas.usageFeeExemptDocuments || ["جهة سيادية"];
-  const allowExceptionNotesExempt = formulas.usageFeeExemptExceptions !== false;
-
-  const isTypeExempt = exemptTypes.includes(type) || (exemptTypes.includes("International") && reqData.membershipType === "International");
-  const isClubExempt = exemptClubs.some((c: string) => {
-    if (!c) return false;
-    const cLower = c.toLowerCase().trim();
-    const reqClub = (reqData.club || "").toLowerCase().trim();
-    if (!reqClub) return false;
-    if (cLower === reqClub) return true;
-    if ((cLower.includes('tanta') || cLower.includes('طنطا')) && (reqClub.includes('tanta') || reqClub.includes('طنطا'))) return true;
-    return false;
-  });
-  const isDocExempt = exemptDocs.some((d: string) => d && ((reqData.documents || "").includes(d) || (reqData.exceptions || "").includes(d)));
-  const usageExemptionKeywords = ["إعفاء من مقابل الانتفاع", "اعفاء من مقابل الانتفاع", "معفى من مقابل الانتفاع", "معفي من مقابل الانتفاع", "إعفاء من الانتفاع", "اعفاء من الانتفاع"];
-  const isExceptionExempt = allowExceptionNotesExempt && (
-    (reqData.usageFeeOverride !== undefined && parseFloat(reqData.usageFeeOverride) === 0) ||
-    isUsageExemptByRule ||
-    fullExceptionText.includes("عضوية دولية") ||
-    fullExceptionText.includes("جهة سيادية") ||
-    usageExemptionKeywords.some((kw: string) => fullExceptionText.includes(kw))
-  );
-
-  if (isTypeExempt || isClubExempt || isDocExempt || isExceptionExempt) {
-    calculatedUsageFee = 0;
-  } else {
-    const yearsCount = Math.ceil(days / 365);
-    let percentage = 0;
-    const regP = formulas.regularUsagePercentages || [0.10, 0.20, 0.30, 0.40, 0.50];
-    const smartP = formulas.smartUsagePercentages || [0.15, 0.30, 0.45, 0.60, 0.75];
-
-    if (reqData.membershipType === "Regular") {
-      percentage = regP[Math.min(yearsCount - 1, regP.length - 1)] || 0;
-    } else if (reqData.membershipType === "Smart") {
-      percentage = smartP[Math.min(yearsCount - 1, smartP.length - 1)] || 0;
-    }
-
-    const baseVal = (formulas.usageFeeBase === "subscriptionValue") ? subscriptionValue : transferValue;
-    const stdUsageFee = baseVal * percentage;
-
-    if (isCompany) {
-      // Company rule 2: remainder = net_amount - (admin_fee + visa_fee)
-      // IF payment_duration_text != "اقل من 3 أشهر" AND net_amount > (admin_fee + visa_fee)
-      const remainder = net_amount - (adminFees + visaFees2Percent);
-      if (net_amount <= (adminFees + visaFees2Percent) || remainder <= 0) {
-        calculatedUsageFee = 0;
-      } else if (remainder < stdUsageFee) {
-        calculatedUsageFee = Math.max(0, remainder);
-      } else {
-        calculatedUsageFee = stdUsageFee;
-      }
-    } else {
-      calculatedUsageFee = stdUsageFee;
-    }
-  }
-
-  // Override support
-  const usageFee = (reqData.usageFeeOverride !== undefined && reqData.usageFeeOverride !== null && reqData.usageFeeOverride !== "")
-    ? parseFloat(reqData.usageFeeOverride) 
-    : calculatedUsageFee;
-
-  // 8. مبلغ الخصم (Discount Amount) = مصاريف إدارية + مقابل الانتفاع + مصاريف فيزا
-  const discountAmount = adminFees + usageFee + visaFees2Percent;
-
-  // 9. Refund Amount Formula (by Payment Method and Formulas Config with dynamic dropdown options)
-  let refundAmount: number | string = 0;
-  const rawRefundInput = reqData.refundAmount !== undefined && reqData.refundAmount !== null && reqData.refundAmount !== ""
-    ? (typeof reqData.refundAmount === "number" ? reqData.refundAmount : parseFloat(reqData.refundAmount))
-    : undefined;
-
-  const methodOptions = formulas.paymentMethodOptions || DEFAULT_DB.formulas.paymentMethodOptions;
-  const customMethods = formulas.customPaymentMethods || [];
-
-  const cashFormula = formulas.cashRefundFormula || "subscriptionValue";
-  const checksFormula = formulas.checksRefundFormula || "all_checks";
-  const bankFormula = formulas.bankRefundFormula || "transferValue";
-  const companyFormula = formulas.companyRefundFormula || "net_subscription";
-
-  const calcVars: Record<string, number> = {
-    subscriptionValue,
-    transferValue,
-    cashAmount,
-    visaAmount,
-    advancePaid,
-    checksPaid,
-    checksUnpaid,
-    annualRenewalDue,
-    adminFees,
-    usageFee,
-    visaFees2Percent,
-    discountAmount,
-    debtABKCompanies,
-    days,
-    net_amount
-  };
-
-  // Check if custom payment method matching reqData.paymentMethod exists
-  const matchedCustomMethod = customMethods.find((m: any) => m.methodName && m.methodName.trim().toLowerCase() === (reqData.paymentMethod || '').trim().toLowerCase());
-
-  if (matchedCustomMethod) {
-    const selectedOpt = (matchedCustomMethod.options || []).find((o: any) => o.value === matchedCustomMethod.selectedFormula || o.id === matchedCustomMethod.selectedFormula);
-    if (selectedOpt && selectedOpt.expression) {
-      refundAmount = Math.max(0, evaluateCustomFormula(selectedOpt.expression, calcVars));
-    } else {
-      refundAmount = Math.max(0, subscriptionValue - discountAmount);
-    }
-  } else if (reqData.paymentMethod === "نقدا" || reqData.paymentMethod === "نقداً") {
-    const cashOpts = methodOptions?.cash || [];
-    const selectedOpt = cashOpts.find((o: any) => o.value === cashFormula || o.id === cashFormula);
-    if (selectedOpt && selectedOpt.expression && !["subscriptionValue", "transferValue", "collected"].includes(selectedOpt.value)) {
-      refundAmount = Math.max(0, evaluateCustomFormula(selectedOpt.expression, calcVars));
-    } else {
-      let base = subscriptionValue;
-      if (cashFormula === "transferValue") base = transferValue;
-      else if (cashFormula === "collected") base = cashAmount + visaAmount;
-      refundAmount = Math.max(0, base - discountAmount);
-    }
-  } else if (reqData.paymentMethod === "شيكات") {
-    const checkOpts = methodOptions?.checks || [];
-    const selectedOpt = checkOpts.find((o: any) => o.value === checksFormula || o.id === checksFormula);
-    if (selectedOpt && selectedOpt.expression && !["all_checks", "paid_only", "subscriptionValue"].includes(selectedOpt.value)) {
-      refundAmount = Math.max(0, evaluateCustomFormula(selectedOpt.expression, calcVars));
-    } else {
-      let base = advancePaid + checksPaid;
-      if (checksFormula === "all_checks") base = advancePaid + checksPaid + checksUnpaid;
-      else if (checksFormula === "subscriptionValue") base = subscriptionValue;
-      refundAmount = Math.max(0, base - discountAmount);
-    }
-  } else if (reqData.paymentMethod === "ABK") {
-    // فى حالة طريقة الدفع ABK:
-    // مبلغ الاسترداد = قيمة الاشتراك - اجمالى مبلغ الخصم (ويظهر حتى فى عدم وجود مديونية)
-    const baseRefund = Math.max(0, subscriptionValue - discountAmount);
-    if (!debtABKCompanies || debtABKCompanies <= 0) {
-      refundAmount = baseRefund;
-    } else {
-      const diff = debtABKCompanies - baseRefund;
-      if (diff < 0) {
-        // لو الفرق بالسالب: وفى هذه الحالة مبلغ الاسترداد = مديونية البنك فقط
-        refundAmount = debtABKCompanies;
-      } else {
-        refundAmount = baseRefund;
-      }
-    }
-  } else if (["المشرق", "QNB"].includes(reqData.paymentMethod)) {
-    const bankOpts = methodOptions?.banks || [];
-    const selectedOpt = bankOpts.find((o: any) => o.value === bankFormula || o.id === bankFormula);
-    if (selectedOpt && selectedOpt.expression && !["transferValue", "subscriptionValue", "collected"].includes(selectedOpt.value)) {
-      refundAmount = Math.max(0, evaluateCustomFormula(selectedOpt.expression, calcVars));
-    } else if (bankFormula === "collected") {
-      refundAmount = Math.max(0, (transferValue + advancePaid) - discountAmount);
-    } else {
-      let base = transferValue;
-      if (bankFormula === "subscriptionValue") base = subscriptionValue;
-      refundAmount = Math.max(0, base - discountAmount);
-    }
-  } else if (isCompany) {
-    if (!debtABKCompanies || debtABKCompanies <= 0) {
-      refundAmount = "في انتظار المديونية";
-    } else {
-      refundAmount = debtABKCompanies;
-    }
-  } else {
-    refundAmount = Math.max(0, subscriptionValue - discountAmount);
-  }
-
-  // Handle 'بدون رد اى مبلغ' exception
-  if (isNoRefundException) {
-    refundAmount = 0;
-  } else {
-    // Fallback for records where the formula gave 0 -- use the explicit
-    // refund / subscription minus discount. EXCEPT for checks ("شيكات"): for
-    // checks the configured formula is the whole answer, and 0 is a real
-    // answer (e.g. checks that were never paid -> nothing to refund). It must
-    // NOT be replaced by a stale stored refund or by
-    // subscriptionValue - discountAmount -- that override is what made the
-    // memo and the requests list show an amount while the statement and the
-    // calculator correctly showed 0. Other payment methods keep the previous
-    // behaviour untouched.
-    if (reqData.paymentMethod !== "شيكات") {
-      if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
-        refundAmount = rawRefundInput;
-      } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
-        refundAmount = Math.max(0, subscriptionValue - discountAmount);
-      }
-    }
-  }
-
-  // 10. رد للعميل (Companies only): refundToClient = MAX(0, companyNetBase - debtABKCompanies - discountAmount)
-  // يتم حذفه بالكامل في حالة ABK
-  let refundToClient: number | string | "Not Required" = "Not Required";
-  if (reqData.paymentMethod === "ABK") {
-    refundToClient = "Not Required";
-  } else if (isNoRefundException) {
-    refundToClient = 0;
-  } else if (isCompany) {
-    if (!debtABKCompanies || debtABKCompanies <= 0) {
-      refundToClient = "في انتظار المديونية";
-    } else {
-      const compOpts = methodOptions?.companies || [];
-      const selectedOpt = compOpts.find((o: any) => o.value === companyFormula || o.id === companyFormula);
-      if (selectedOpt && selectedOpt.expression && !["net_subscription", "net_transfer", "debt_only"].includes(selectedOpt.value)) {
-        refundToClient = Math.max(0, evaluateCustomFormula(selectedOpt.expression, calcVars));
-      } else if (companyFormula === "debt_only") {
-        refundToClient = 0;
-      } else {
-        const companyNetBase = (companyFormula === "net_transfer" && transferValue > 0) 
-          ? transferValue 
-          : (subscriptionValue > 0 ? subscriptionValue : (transferValue > 0 ? transferValue : sumComponents));
-        refundToClient = Math.max(0, companyNetBase - debtABKCompanies - discountAmount);
-      }
-    }
-  }
-
-  // 11. فرق مديونية ABK: madiouniyat bank - baseRefund (حيث baseRefund = subscriptionValue - discountAmount)
-  let abkDebtDifference: number | "Not Required" | string = "Not Required";
-  if (reqData.paymentMethod === "ABK") {
-    if (!debtABKCompanies || debtABKCompanies <= 0) {
-      abkDebtDifference = "فى انتظار مديونية البنك";
-    } else {
-      const baseRefund = Math.max(0, subscriptionValue - discountAmount);
-      abkDebtDifference = debtABKCompanies - baseRefund;
-    }
-  }
-
-  // Calculate Custom Field Formulas if any
-  const customFieldValues: Record<string, any> = { ...(reqData.customFields || {}) };
-  if (db.customFields && Array.isArray(db.customFields)) {
-    const vars: Record<string, number> = {
-      subscriptionValue,
-      transferValue,
-      cashAmount,
-      visaAmount,
-      checksPaid,
-      checksUnpaid,
-      advancePaid,
-      annualRenewalDue,
-      adminFees,
-      usageFee,
-      visaFees2Percent,
-      discountAmount,
-      debtABKCompanies,
-      refundAmount: typeof refundAmount === 'number' ? refundAmount : 0,
-      days
-    };
-
-    for (const field of db.customFields) {
-      if (field.type === 'formula' && field.formulaExpression) {
-        customFieldValues[field.key] = evaluateCustomFormula(field.formulaExpression, vars);
-      }
-    }
-  }
-
-  // Dates formatting
-  const statusDateParsed = parseAnyDate(reqData.statusDate);
-  const approvalDateParsed = parseAnyDate(reqData.approvalDate);
-  let formattedStatusDate = statusDateParsed ? formatDateCustom(statusDateParsed) : (reqData.statusDate || "");
-  let formattedApprovalDate = approvalDateParsed ? formatDateCustom(approvalDateParsed) : (reqData.approvalDate || "");
-
-  if (!formattedStatusDate && (reqData.result === "Rejected" || reqData.status === "Rejected" || reqData.status === "Cancelled" || reqData.status === "Revoked" || reqData.status === "Deletion")) {
-    formattedStatusDate = formattedApprovalDate || formattedReqDate || formatDateCustom(new Date());
-  }
-
-  // Clear falsely assigned firstManagerApproved if not actually sent to First Manager
-  let fmApproved = reqData.firstManagerApproved;
-  if (!reqData.approvalSentToFirstManager && fmApproved === false && !reqData.firstManagerComments) {
-    fmApproved = undefined;
-  }
-
-  // Return full fields combined
-  return {
-    ...reqData,
-    subscriptionDate: formattedSubDate,
-    requestDate: formattedReqDate,
-    statusDate: formattedStatusDate,
-    approvalDate: formattedApprovalDate,
-    firstManagerApproved: fmApproved,
-    cashAmount,
-    visaAmount,
-    transferValue,
-    checksPaid,
-    checksUnpaid,
-    annualRenewalDue,
-    debtABKCompanies,
-    advancePaid,
-    subscriptionValue,
-    days,
-    type,
-    type2,
-    adminFees,
-    usageFee,
-    visaFees2Percent,
-    discountAmount,
-    refundAmount,
-    refundToClient,
-    abkDebtDifference,
-    currency: reqData.currency || "جم",
-    customFields: customFieldValues,
-    requestYear: !isNaN(reqDate.getFullYear()) ? reqDate.getFullYear() : new Date().getFullYear(),
-  };
-}
-
-function normalizeClubName(clubStr: any): string {
-  if (!clubStr || typeof clubStr !== 'string') return '';
-  let str = clubStr.trim().toLowerCase();
-  str = str.replace(/^(نادي|نادى|فرع|club|branch)\s+/g, '').trim();
-  const synonyms: Record<string, string> = {
-    'maadi': 'المعادي',
-    'معادي': 'المعادي',
-    'المعادي': 'المعادي',
-    'sheraton': 'شيراتون',
-    'الشيراتون': 'شيراتون',
-    'شيراتون': 'شيراتون',
-    'lotus': 'اللوتس',
-    'لوتس': 'اللوتس',
-    'اللوتس': 'اللوتس',
-    'alex': 'الإسكندرية',
-    'الكس': 'الإسكندرية',
-    'اسكندرية': 'الإسكندرية',
-    'الإسكندرية': 'الإسكندرية',
-    'الاسكندرية': 'الإسكندرية',
-    'tanta': 'طنطا',
-    'طنطا': 'طنطا',
-    'nakheel': 'النخيل',
-    'نخيل': 'النخيل',
-    'النخيل': 'النخيل',
-    'mansoura': 'المنصورة',
-    'منصورة': 'المنصورة',
-    'المنصورة': 'المنصورة',
-    'oct i': 'أكتوبر 1',
-    'oct 1': 'أكتوبر 1',
-    'october 1': 'أكتوبر 1',
-    'اكتوبر 1': 'أكتوبر 1',
-    'أكتوبر 1': 'أكتوبر 1',
-    'أكتوبر ١': 'أكتوبر 1',
-    'oct ii': 'أكتوبر 2',
-    'oct 2': 'أكتوبر 2',
-    'october 2': 'أكتوبر 2',
-    'اكتوبر 2': 'أكتوبر 2',
-    'أكتوبر 2': 'أكتوبر 2',
-    'أكتوبر ٢': 'أكتوبر 2',
-    'damietta': 'دمياط',
-    'دمياط': 'دمياط',
-    'assiut': 'أسيوط',
-    'اسيوط': 'أسيوط',
-    'أسيوط': 'أسيوط',
-    'elminya': 'المنيا',
-    'minya': 'المنيا',
-    'منيا': 'المنيا',
-    'المنيا': 'المنيا',
-  };
-  if (synonyms[str]) return synonyms[str];
-  return str.replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي');
-}
-
-function isSameClub(clubA: any, clubB: any): boolean {
-  if (!clubA || !clubB) return false;
-  const cA = String(clubA).trim();
-  const cB = String(clubB).trim();
-  if (cA.toLowerCase() === cB.toLowerCase()) return true;
-  const nA = normalizeClubName(cA);
-  const nB = normalizeClubName(cB);
-  if (!nA || !nB) return false;
-  if (nA === nB) return true;
-  if (nA.includes(nB) || nB.includes(nA)) return true;
-  return false;
-}
-
-function normalizeMembershipNumber(mem: any): string {
-  if (mem === null || mem === undefined) return '';
-  return String(mem)
-    .trim()
-    .toLowerCase()
-    .replace(/[\u0660-\u0669]/g, d => (d.charCodeAt(0) - 1632).toString())
-    .replace(/[\u06F0-\u06F9]/g, d => (d.charCodeAt(0) - 1776).toString())
-    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
-    .replace(/[أإآٱ]/g, 'ا')
-    .replace(/ة/g, 'ه')
-    .replace(/ى/g, 'ي')
-    .replace(/ئ/g, 'ي')
-    .replace(/ؤ/g, 'و')
-    .replace(/[-_–—\s\/\.\\]/g, '');
-}
-
-function isSameMembershipNumber(mem1: any, mem2: any): boolean {
-  if (!mem1 || !mem2) return false;
-  const s1 = String(mem1).trim().toLowerCase();
-  const s2 = String(mem2).trim().toLowerCase();
-  if (s1 === s2) return true;
-  const n1 = normalizeMembershipNumber(mem1);
-  const n2 = normalizeMembershipNumber(mem2);
-  return n1.length > 0 && n1 === n2;
-}
-
-function isInternationalRequest(r: any): boolean {
-  if (!r) return false;
-  const mType = String(r.membershipType || '').toLowerCase().trim();
-  const pMethod = String(r.paymentMethod || '').toLowerCase().trim();
-  const exc = String(r.exceptions || '').toLowerCase().trim();
-  const curr = String(r.currency || '').toLowerCase().trim();
-
-  // 1. Membership Type checks
-  if (
-    mType === 'international' ||
-    mType === 'عضوية دولية' ||
-    mType === 'دولي' ||
-    mType === 'دولية' ||
-    mType.includes('international') ||
-    mType.includes('دولية') ||
-    mType.includes('دولي')
-  ) {
-    return true;
-  }
-
-  // 2. Payment Method checks
-  if (
-    pMethod === 'international' ||
-    pMethod === 'عضوية دولية' ||
-    pMethod.includes('عضوية دولية') ||
-    pMethod.includes('international')
-  ) {
-    return true;
-  }
-
-  // 3. Exceptions checks
-  if (
-    exc.includes('عضوية دولية') ||
-    exc.includes('international')
-  ) {
-    return true;
-  }
-
-  // 4. Currency checks (Saudi Riyal / USD / Foreign currencies)
-  if (
-    curr.includes('ريال') ||
-    curr === 'sar' ||
-    curr.includes('سعودي') ||
-    curr.includes('سعودى') ||
-    curr === 'usd' ||
-    curr.includes('دولار')
-  ) {
-    return true;
-  }
-
-  return false;
-}
-
-// 4. Requests CRUD Endpoints
-// Check membership duplicate globally across all branches
-app.get("/api/requests/check-membership", requireAuth, async (req, res) => {
-  const { number, excludeId } = req.query;
-  const numStr = String(number || "").trim();
-  if (!numStr) {
-    return res.json({ found: false });
-  }
-
-  const existingForMem = db.requests.filter((r) => {
-    if (excludeId && String(r.id) === String(excludeId)) return false;
-    return isSameMembershipNumber(r.membershipNumber, numStr);
-  });
-
-  if (existingForMem.length === 0) {
-    return res.json({ found: false });
-  }
-
-  const isRejectedReq = (r: any) => {
-    const st = String(r.status || "").toLowerCase().trim();
-    const res = String(r.result || "").toLowerCase().trim();
-    return st === "rejected" || st === "مرفوض" || st.includes("مرفوض") || res === "rejected" || res === "مرفوض";
-  };
-
-  const activeRequest = existingForMem.find((r) => !isRejectedReq(r));
-  const rejectedRequests = existingForMem.filter((r) => isRejectedReq(r));
-
-  res.json({
-    found: true,
-    isAllowedReReview: !activeRequest && rejectedRequests.length > 0,
-    activeRequest: activeRequest || null,
-    rejectedRequests: rejectedRequests || [],
-    allMatches: existingForMem
-  });
-});
-
-app.get("/api/requests", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  let resultRequests = [...db.requests];
-
-  // Every user can see every club's requests (so a member can be tracked
-  // regardless of which club they visit). Editing rights stay club-scoped
-  // separately, enforced in the PUT/DELETE endpoints below.
-  if (user.role === "international_user") {
-    resultRequests = resultRequests.filter((r) => isInternationalRequest(r));
-  }
-
-  res.json(resultRequests);
-});
-
-app.post("/api/requests", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  
-  // Create default Serial No.
-  const maxId = db.requests.reduce((max, r) => r.id > max ? r.id : max, 0);
-  const newId = maxId + 1;
-
-  // Uniqueness validation of Membership Number (رقم العضوية)
-  const { membershipNumber } = req.body;
-  const existingWithSameNum = db.requests.filter((r) => isSameMembershipNumber(r.membershipNumber, membershipNumber));
-  
-  // Exception: Can submit if previous is Rejected
-  const isDuplicateActive = existingWithSameNum.some((r) => r.status !== "Rejected" && r.result !== "Rejected" && !String(r.status || "").includes("مرفوض") && !String(r.result || "").includes("مرفوض"));
-  if (isDuplicateActive) {
-    const activeOne = existingWithSameNum.find((r) => r.status !== "Rejected" && r.result !== "Rejected" && !String(r.status || "").includes("مرفوض") && !String(r.result || "").includes("مرفوض"));
-    const clubInfo = activeOne?.club ? ` من فرع (${activeOne.club})` : '';
-    return res.status(400).json({ error: `لا يمكن تكرار رقم العضوية حيث يوجد طلب سابق نشط بالمنظومة${clubInfo}. التكرار مسموح فقط إذا كان الطلب السابق مرفوضاً (Rejected).` });
-  }
-
-  // If there is a previous rejected request, mark as re-review (إعادة عرض)
-  const isReReview = existingWithSameNum.length > 0 && !isDuplicateActive;
-  let memberName = req.body.memberName || "";
-  let cancellationReasonDetail = req.body.cancellationReasonDetail || "";
-
-  if (isReReview) {
-    if (!memberName.includes("إعادة عرض")) {
-      memberName = `${memberName.trim()} (إعادة عرض)`;
-    }
-    if (cancellationReasonDetail && !cancellationReasonDetail.includes("إعادة عرض")) {
-      cancellationReasonDetail = `${cancellationReasonDetail.trim()} (إعادة عرض)`;
-    }
-  }
-
-  // For club user, force their club only
-  let clubName = req.body.club;
-  if (user.role === "club") {
-    clubName = user.club;
-  }
-
-  // For international user, ensure membershipType is International
-  let reqMembershipType = req.body.membershipType;
-  let reqCurrency = req.body.currency;
-  let reqPaymentMethod = req.body.paymentMethod;
-  if (user.role === "international_user") {
-    reqMembershipType = reqMembershipType || "International";
-    reqCurrency = reqCurrency || "ريال سعودى";
-    reqPaymentMethod = reqPaymentMethod || "عضوية دولية";
-  }
-
-  // Get current open committee and assign to new request
-  const openCommittee = db.committees.find((c) => c.status === "open");
-  let commNo = req.body.committeeNo;
-  let commYear = req.body.committeeYear;
-  let approvalDate = req.body.approvalDate;
-
-  if (openCommittee) {
-    commNo = commNo || openCommittee.number;
-    commYear = commYear || openCommittee.year || (openCommittee.approvalDate ? String(new Date(openCommittee.approvalDate).getFullYear()) : '2026');
-    approvalDate = approvalDate || openCommittee.approvalDate;
-  }
-  if (!commYear) {
-    commYear = approvalDate ? String(new Date(approvalDate).getFullYear()) : '2026';
-  }
-
-  const processedData = calculateRequestFields({
-    ...req.body,
-    id: newId,
-    memberName,
-    cancellationReasonDetail,
-    membershipType: reqMembershipType,
-    currency: reqCurrency,
-    paymentMethod: reqPaymentMethod,
-    isReReview: isReReview || req.body.isReReview,
-    club: clubName,
-    committeeNo: commNo,
-    committeeYear: commYear,
-    approvalDate: approvalDate,
-    result: "Pending",
-    status: req.body.status || "Pending",
-    statusDate: (req.body.status && req.body.status !== "Pending") ? (req.body.statusDate || "") : "",
-    receiptReceived: req.body.receiptReceived ?? false,
-    receiptReceivedDate: req.body.receiptReceivedDate || null,
-    reviewed: req.body.reviewed ?? false
-  });
-
-  db.requests.push(processedData);
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "إنشاء طلب إلغاء", `تم إنشاء طلب إلغاء جديد برقم عضوية ${membershipNumber} للمشترك ${processedData.memberName}`, newId);
-  res.json({ success: true, request: processedData });
-});
-
-// Helper functions for matching request IDs strictly and loosely
-function findRequestIndexById(rawId: any) {
-  const strId = String(rawId);
-  const numId = Number(rawId);
-  return db.requests.findIndex((r) => String(r.id) === strId || r.id == rawId || (!isNaN(numId) && r.id === numId));
-}
-
-function findRequestById(rawId: any) {
-  const strId = String(rawId);
-  const numId = Number(rawId);
-  return db.requests.find((r) => String(r.id) === strId || r.id == rawId || (!isNaN(numId) && r.id === numId));
-}
-
-app.put("/api/requests/:id", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const rawId = req.params.id;
-  const reqIndex = findRequestIndexById(rawId);
-
-  if (reqIndex === -1) {
-    return res.status(404).json({ error: "الطلب غير موجود في قاعدة البيانات" });
-  }
-
-  const existingRequest = db.requests[reqIndex];
-  const reqId = existingRequest.id;
-
-  // International user permission check
-  if (user.role === "international_user" && !isInternationalRequest(existingRequest)) {
-    return res.status(403).json({ error: "غير مصرح بتعديل طلبات غير تابعة للعضويات الدولية" });
-  }
-
-  // Club user permission check: can only edit their own club's requests
-  if (user.role === "club" && !isSameClub(existingRequest.club, user.club)) {
-    return res.status(403).json({ error: "غير مصرح بتعديل طلبات تابعة لنادي آخر" });
-  }
-
-  const bodyKeys = Object.keys(req.body);
-  // "Lightweight" updates -- receipt-received toggle and the finance-sent
-  // "Check" -- bypass the reviewed/approval-locked restrictions below,
-  // since they're simple operational flags rather than substantive edits
-  // to the request's data.
-  const isOnlyReceiptUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === "receiptReceived" || k === "receiptReceivedDate" || k === "financeMemoSentDate" || k === "financeMemoSentExceptionNote" || k === "financeMemoFormType");
-
-  // A club/international user can only tick "تم الاستلام" (receiptReceived)
-  // once they've attached the required proof document to the request --
-  // club users need one of the receipt-image/loss-memo/checks-folder
-  // categories, international-membership users need the account-number one.
-  if (isOnlyReceiptUpdate && req.body.receiptReceived === true && (user.role === "club" || user.role === "international_user")) {
-    const requiredCategories = user.role === "international_user"
-      ? ["رقم الحساب"]
-      : ["أصل الإيصال", "مذكرة فقد", "حافظة شيكات"];
-    const attachments = existingRequest.attachments || [];
-    const hasProof = attachments.some((a: any) => a.category && requiredCategories.includes(a.category));
-    if (!hasProof) {
-      return res.status(403).json({
-        error: user.role === "international_user"
-          ? "يرجى إرفاق مستند \"رقم الحساب\" أولًا قبل تأكيد استلام الأصل."
-          : "يرجى إرفاق مستند \"أصل الإيصال\" أو \"مذكرة فقد\" أو \"حافظة شيكات\" (واحد منهم على الأقل) أولًا قبل تأكيد استلام الأصل."
-      });
-    }
-  }
-
-  if (!isOnlyReceiptUpdate) {
-    // Restrict modification if the request is already reviewed and user is not admin
-    if (existingRequest.reviewed && user.role !== "admin") {
-      return res.status(403).json({ error: "لا يمكن تعديل الطلب بعد مراجعته (Reviewed) إلا من خلال الأدمن المركزي" });
-    }
-
-    // Restrict modification after Admin Approval (accepted/cancelled/status checks)
-    if ((user.role === "club" || user.role === "international_user") && (existingRequest.result === "Accepted" || existingRequest.approvalSentToFirstManager || existingRequest.approvalSentToSectorManager)) {
-      return res.status(403).json({ error: "لا يمكن تعديل الطلب بعد إرساله للمراجعين والاعتماد إلا من خلال الأدمن المركزي" });
-    }
-  }
-
-  // Check unique membership number exception if changed
-  const { membershipNumber } = req.body;
-  if (membershipNumber && !isSameMembershipNumber(membershipNumber, existingRequest.membershipNumber)) {
-    const existingWithSameNum = db.requests.filter((r) => isSameMembershipNumber(r.membershipNumber, membershipNumber) && String(r.id) !== String(reqId));
-    const isDuplicateActive = existingWithSameNum.some((r) => r.status !== "Rejected" && r.result !== "Rejected" && !String(r.status || "").includes("مرفوض") && !String(r.result || "").includes("مرفوض"));
-    if (isDuplicateActive) {
-      return res.status(400).json({ error: "لا يمكن تغيير رقم العضوية إلى هذا الرقم حيث يوجد طلب سابق نشط له بالمنظومة." });
-    }
-    if (existingWithSameNum.length > 0 && !isDuplicateActive) {
-      req.body.isReReview = true;
-      if (req.body.memberName && !req.body.memberName.includes("إعادة عرض")) {
-        req.body.memberName = `${req.body.memberName.trim()} (إعادة عرض)`;
-      }
-    }
-  }
-
-  // Restrict club user to their club
-  let bodyClub = req.body.club;
-  if (user.role === "club") {
-    bodyClub = user.club;
-  }
-
-  const reviewedValue = req.body.reviewed !== undefined ? !!req.body.reviewed : (existingRequest.reviewed ?? false);
-
-  // Automatically stamp the date the debt (ABK/Companies) was first
-  // entered manually -- mirrors the same auto-stamp already done for
-  // Excel debt uploads. Only set once (never overwritten by a later
-  // edit), and spread AFTER req.body so a client can't accidentally
-  // clear/override it.
-  const debtEnteredDatePatch: { debtEnteredDate?: string } = {};
-  if (
-    req.body.debtABKCompanies !== undefined &&
-    parseFloat(req.body.debtABKCompanies) > 0 &&
-    !existingRequest.debtEnteredDate
-  ) {
-    debtEnteredDatePatch.debtEnteredDate = new Date().toISOString().split('T')[0];
-  }
-
-  const updatedRequest = calculateRequestFields({
-    ...existingRequest,
-    ...req.body,
-    ...debtEnteredDatePatch,
-    reviewed: reviewedValue,
-    id: reqId,
-    club: bodyClub
-  });
-
-  // If this request's committee number/year is being set (or changed) to
-  // match a committee that was ALREADY approved/closed earlier, sync the
-  // approval retroactively -- otherwise the request stays stuck showing
-  // "waiting for committee" forever, since committee-approval propagation
-  // normally only runs ONCE, at the moment a committee is closed (before
-  // this request was ever assigned to it).
-  if (updatedRequest.committeeNo) {
-    const matchingCommittee = db.committees.find((c) =>
-      c.status === 'closed' &&
-      c.number === updatedRequest.committeeNo &&
-      (!c.year || !updatedRequest.committeeYear || c.year === updatedRequest.committeeYear)
-    );
-    if (matchingCommittee) {
-      if (matchingCommittee.approvalDate) updatedRequest.approvalDate = matchingCommittee.approvalDate;
-      if (updatedRequest.result !== "Rejected" && updatedRequest.status !== "Rejected" && updatedRequest.firstManagerApproved !== false) {
-        updatedRequest.result = "Accepted";
-      }
-    }
-  }
-
-  db.requests[reqIndex] = updatedRequest;
-
-  // "استفسار شيكات": when the club/admin ticks "تم الاستلام" (the original
-  // paper receipt was brought in) for a cheque-paying, committee-approved
-  // (Accepted) request, that's the signal to follow up with Finance about
-  // actually collecting those cheques -- auto-raise an inquiry for the
-  // admin to review, same accept/reject flow as "إرسال شيكات". Only fires
-  // on the false->true transition (not on every unrelated save), and never
-  // duplicates a pending inquiry already raised for this request.
-  if (
-    req.body.receiptReceived === true &&
-    !existingRequest.receiptReceived &&
-    updatedRequest.paymentMethod === "شيكات" &&
-    updatedRequest.result === "Accepted"
-  ) {
-    if (!Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
-    const alreadyPending = db.sendChecksRequests.some(
-      (s: any) => String(s.requestId) === String(updatedRequest.id) && s.checkType === "inquiry" && s.status === "pending"
-    );
-    if (!alreadyPending) {
-      db.sendChecksRequests.push({
-        id: `sc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        requestId: updatedRequest.id,
-        checkType: "inquiry",
-        status: "pending",
-        requestedBy: user.username,
-        requestedByName: user.name || user.username,
-        requestedByRole: user.role,
-        requestedAt: new Date().toISOString(),
-      });
-    }
-  }
-
-  await saveDb();
-
-  // Audit and notification triggers
-  let auditAction = "تعديل طلب إلغاء";
-  let auditMsg = `قام المستخدم ${user.name} بتعديل بيانات الطلب رقم العضوية ${updatedRequest.membershipNumber}`;
-  
-  if (user.role === "club") {
-    auditAction = "تعديل طلب من الفرع";
-    auditMsg = `[تنبيه فرع] قام الفرع بتعديل طلب المشترك ${updatedRequest.memberName} رقم العضوية ${updatedRequest.membershipNumber}`;
-  } else if (user.role === "international_user") {
-    auditAction = "تعديل طلب من مسؤول العضويات الدولية";
-    auditMsg = `[تنبيه دولي] قام مسؤول العضويات الدولية بتعديل طلب المشترك ${updatedRequest.memberName} رقم العضوية ${updatedRequest.membershipNumber}`;
-  }
-
-  const fieldChanges = buildRequestDiff(existingRequest, updatedRequest);
-  logAudit(user.username, user.name, user.role, auditAction, auditMsg, reqId, fieldChanges);
-  res.json({ success: true, request: updatedRequest });
-});
-
-// Bulk Review Route (Admin only)
-app.post("/api/requests/bulk-review", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تحديد مراجعة الطلبات" });
-  }
-
-  const { ids, reviewed } = req.body;
-  if (!Array.isArray(ids)) {
-    return res.status(400).json({ error: "الرجاء تحديد معرفات الطلبات بشكل صحيح" });
-  }
-
-  let updatedCount = 0;
-  let autoSentCount = 0;
-  const autoSentMembers: string[] = [];
-  const strIds = ids.map((id) => String(id));
-  db.requests.forEach((r) => {
-    if (strIds.includes(String(r.id))) {
-      r.reviewed = !!reviewed;
-      updatedCount++;
-
-      // عند تحديد الطلب كـ "مُراجع" من الأدمن، ولو مدة الاشتراك أكثر من 3 شهور
-      // (أو أكثر من شهر حسب تاريخ الاشتراك)، يتم إرسال الطلب تلقائيًا للمدير الأول
-      // بمرفقاته الحالية، دون الحاجة لضغط الأدمن على زر "إرسال للمدير الأول" يدويًا.
-      // لا يتم إعادة الإرسال لو الطلب مُرسل بالفعل حتى لا يتم إفساد قرار سابق للمدير الأول.
-      const isLongDuration = r.type2 === "Over 3 months" || r.type2 === "Over 1 month";
-      if (reviewed && isLongDuration && !r.approvalSentToFirstManager) {
-        r.approvalSentToFirstManager = true;
-        r.firstManagerApproved = null;
-        r.result = "Pending";
-        r.firstManagerSentAt = new Date().toISOString();
-        r.firstManagerSentBy = `${user.name || user.username} (إرسال تلقائي عند المراجعة)`;
-        autoSentCount++;
-        autoSentMembers.push(`${r.memberName} (${r.membershipNumber})`);
-      }
-    }
-  });
-
-  if (updatedCount > 0) {
-    await saveDb();
-    logAudit(
-      user.username,
-      user.name,
-      user.role,
-      reviewed ? "مراجعة جماعية للطلبات" : "إلغاء مراجعة جماعية",
-      `تم تحديث حالة المراجعة لعدد ${updatedCount} طلبات إلى ${reviewed ? "مُراجع" : "غير مُراجع"}`
-    );
-
-    if (autoSentCount > 0) {
-      logAudit(
-        user.username,
-        user.name,
-        user.role,
-        "إرسال تلقائي للمدير الأول بعد المراجعة",
-        `تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا لمهام واعتمادات المدير الأول (مدة الاشتراك أكثر من الحد المسموح) بمجرد تحديدها كمُراجعة: ${autoSentMembers.join("، ")}`
-      );
-    }
-  }
-
-  res.json({ success: true, requests: db.requests, autoSentToFirstManagerCount: autoSentCount });
-});
-
-// Bulk Cancellation Status Route (Admin & Managers)
-app.post("/api/requests/bulk-cancellation-status", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "first_manager" && user.role !== "sector_manager") {
-    return res.status(403).json({ error: "غير مصرح لك بتحديث حالات الإلغاء" });
-  }
-
-  const { ids, status, statusDate } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: "الرجاء تحديد عضوية واحدة على الأقل" });
-  }
-  if (!status) {
-    return res.status(400).json({ error: "الرجاء اختيار حالة الإلغاء" });
-  }
-  if (status !== 'Pending' && !statusDate) {
-    return res.status(400).json({ error: "تاريخ حالة الإلغاء إجباري عند اختيار حالة إلغاء جديدة" });
-  }
-
-  let updatedCount = 0;
-  const strIds = ids.map((id) => String(id));
-
-  // Company payment methods for "مخالصة الإلغاءات" -- companies ONLY.
-  // Banks (ABK, المشرق, QNB...) and every non-company method are
-  // intentionally EXCLUDED here (they still use the company/bank debt-sheet
-  // workflow in Reports.tsx, which is separate).
-  const nonCompanyMethods = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
-  const isCompanySettlementMethod = (method: any) => {
-    const m = String(method || "").trim();
-    if (!m) return false;
-    return !nonCompanyMethods.includes(m);
-  };
-  // Grouped by company/payment-method name -- one settlement batch gets
-  // created per company involved in this bulk action.
-  const companyRowsByMethod: Record<string, any[]> = {};
-
-  db.requests.forEach((r) => {
-    if (strIds.includes(String(r.id))) {
-      r.status = status;
-      r.statusDate = status === 'Pending' ? '' : (statusDate || '');
-      
-      if (status === 'Cancelled' || status === 'Deletion' || status === 'Revoked') {
-        if (r.statusDate) {
-          const sDate = new Date(r.statusDate);
-          if (!isNaN(sDate.getFullYear())) {
-            r.refundYear = sDate.getFullYear();
-          }
-        }
-      } else {
-        r.refundYear = undefined;
-      }
-      
-      updatedCount++;
-
-      if (status === 'Cancelled' && isCompanySettlementMethod(r.paymentMethod)) {
-        const key = String(r.paymentMethod || "").trim();
-        if (!companyRowsByMethod[key]) companyRowsByMethod[key] = [];
-        companyRowsByMethod[key].push({
-          membershipNumber: r.membershipNumber || '',
-          memberName: r.memberName || '',
-          nationalId: r.nationalId || '',
-          externalId: r.externalId || '',
-        });
-      }
-    }
-  });
-
-  let settlementBatchesCreated = 0;
-  if (status === 'Cancelled') {
-    if (!Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
-    for (const companyName of Object.keys(companyRowsByMethod)) {
-      const rows = companyRowsByMethod[companyName];
-      if (rows.length === 0) continue;
-      db.cancellationSettlementBatches.unshift({
-        id: `csb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        companyName,
-        statusDate: statusDate || '',
-        createdAt: new Date().toISOString(),
-        createdBy: user.name || user.username,
-        rows,
-      });
-      settlementBatchesCreated++;
-    }
-  }
-
-  if (updatedCount > 0) {
-    await saveDb();
-    logAudit(
-      user.username,
-      user.name,
-      user.role,
-      "تحديث حالة الإلغاء الجماعية",
-      `تم تحديث حالة الإلغاء لعدد ${updatedCount} عضوية إلى (${status}) وتاريخ (${statusDate || '—'})`
-    );
-    if (settlementBatchesCreated > 0) {
-      logAudit(
-        user.username,
-        user.name,
-        user.role,
-        "إنشاء مخالصة إلغاءات",
-        `تم إنشاء ${settlementBatchesCreated} تقرير/تقارير مخالصة إلغاءات تلقائيًا (${Object.keys(companyRowsByMethod).join('، ')})`
-      );
-    }
-  }
-
-  res.json({ success: true, updatedCount, settlementBatchesCreated, requests: db.requests });
-});
-
-app.post("/api/requests/bulk-finance-sent", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { ids, sentDate } = req.body;
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: "الرجاء تحديد عضوية واحدة على الأقل" });
-  }
-
-  let updatedCount = 0;
-  const strIds = ids.map((id) => String(id));
-
-  db.requests.forEach((r) => {
-    if (strIds.includes(String(r.id))) {
-      r.financeMemoSentDate = sentDate || null;
-      updatedCount++;
-    }
-  });
-
-  if (updatedCount > 0) {
-    await saveDb();
-    logAudit(
-      user.username,
-      user.name,
-      user.role,
-      sentDate ? "تحديد إرسال المذكرة للإدارة المالية (جماعي)" : "إلغاء تحديد إرسال المذكرة للإدارة المالية (جماعي)",
-      sentDate
-        ? `تم تحديد عدد ${updatedCount} عضوية كـ"تم إرسال المذكرة للإدارة المالية" بتاريخ (${sentDate})`
-        : `تم إلغاء تحديد "تم إرسال المذكرة للإدارة المالية" لعدد ${updatedCount} عضوية`
-    );
-  }
-
-  res.json({ success: true, updatedCount, requests: db.requests });
-});
-
-app.post("/api/requests/bulk-delete", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { ids } = req.body;
-
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح لك بالحذف الجماعي للطلبات - هذه الصلاحية للأدمن فقط" });
-  }
-
-  if (!Array.isArray(ids) || ids.length === 0) {
-    return res.status(400).json({ error: "لم يتم تحديد أي طلبات للحذف" });
-  }
-
-  const idsSet = new Set(ids.map(id => String(id)));
-  const initialCount = db.requests ? db.requests.length : 0;
-
-  db.requests = (db.requests || []).filter(r => !idsSet.has(String(r.id)));
-  const deletedCount = initialCount - db.requests.length;
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "حذف جماعي للطلبات", `تم حذف عدد ${deletedCount} طلب إلغاء دفعة واحدة`);
-  res.json({ success: true, count: deletedCount, requests: db.requests });
-});
-
-app.delete("/api/requests/clear-all", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-
-  const prevCount = db.requests ? db.requests.length : 0;
-  db.requests = [];
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "مسح كافة طلبات الإلغاء", `تم مسح جميع طلبات الإلغاء من قاعدة البيانات (عدد ${prevCount} طلب)`);
-  res.json({ success: true, count: prevCount, requests: [] });
-});
-
-app.delete("/api/requests/:id", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const rawId = req.params.id;
-  const index = findRequestIndexById(rawId);
-  if (index === -1) {
-    return res.status(404).json({ error: "الطلب غير موجود بملفات قاعدة البيانات" });
-  }
-
-  const targetReq = db.requests[index];
-
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح لك بحذف الطلبات - هذه الصلاحية للأدمن فقط" });
-  }
-
-  db.requests.splice(index, 1);
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "حذف طلب إلغاء", `تم حذف طلب إلغاء للمشترك ${targetReq.memberName} رقم العضوية ${targetReq.membershipNumber}`, targetReq.id);
-  res.json({ success: true, requests: db.requests });
-});
-
-// --- Attachments & Documents Archive Management Endpoints ---
-
-// 1. Get all attachments across all cancellation requests (visible to all users across all branches)
-app.get("/api/attachments/all", requireAuth, async (req, res) => {
-  try {
-    const allAttachments: any[] = [];
-    
-    (db.requests || []).forEach((r: any) => {
-      const isLocked = Boolean(r.reviewed);
-      const reqAttachments = Array.isArray(r.attachments) ? r.attachments : [];
-      
-      reqAttachments.forEach((att: any) => {
-        allAttachments.push({
-          ...att,
-          isLocked,
-          requestId: r.id,
-          membershipNumber: r.membershipNumber || "",
-          memberName: r.memberName || "",
-          loanUnderName: r.loanUnderName || "",
-          nationalId: r.nationalId || "",
-          externalId: r.externalId || "",
-          mobileNumber: r.mobileNumber || "",
-          club: r.club || "",
-          committeeNo: r.committeeNo || "",
-          committeeYear: r.committeeYear || "",
-          requestDate: r.requestDate || "",
-          subscriptionDate: r.subscriptionDate || "",
-          membershipType: r.membershipType || "Regular",
-          paymentMethod: r.paymentMethod || "",
-          status: r.status || "Pending",
-          result: r.result || "Pending",
-          reviewed: Boolean(r.reviewed),
-          receiptReceived: Boolean(r.receiptReceived),
-          refundAmount: r.refundAmount ?? 0,
-          cancellationReason: r.cancellationReason || "",
-          cancellationReasonDetail: r.cancellationReasonDetail || "",
-          salesPerson: r.salesPerson || ""
-        });
-      });
-
-      // If there's an official First Manager review PDF attached, include it in the global archive
-      if (r.firstManagerPdfUrl) {
-        allAttachments.push({
-          id: `fm-pdf-${r.id}`,
-          fileName: r.firstManagerPdfName || "مستندات_الطلب_المعتمدة.pdf",
-          fileType: "application/pdf",
-          fileSize: r.firstManagerPdfSize || 0,
-          fileData: r.firstManagerPdfUrl,
-          uploadedAt: r.firstManagerSentAt || r.requestDate || new Date().toISOString(),
-          uploadedBy: r.firstManagerSentBy || "admin",
-          uploaderName: r.firstManagerSentBy || "أدمن النظام",
-          uploaderRole: "admin",
-          uploaderClub: "المركز الرئيسي",
-          category: "ملف مراجعة الإدارة المالية",
-          notes: r.firstManagerSendNotes || "ملف الـ PDF المعتمد المرفق للمدير الأول",
-          isLocked,
-          requestId: r.id,
-          membershipNumber: r.membershipNumber || "",
-          memberName: r.memberName || "",
-          loanUnderName: r.loanUnderName || "",
-          nationalId: r.nationalId || "",
-          externalId: r.externalId || "",
-          mobileNumber: r.mobileNumber || "",
-          club: r.club || "",
-          committeeNo: r.committeeNo || "",
-          committeeYear: r.committeeYear || "",
-          requestDate: r.requestDate || "",
-          subscriptionDate: r.subscriptionDate || "",
-          membershipType: r.membershipType || "Regular",
-          paymentMethod: r.paymentMethod || "",
-          status: r.status || "Pending",
-          result: r.result || "Pending",
-          reviewed: Boolean(r.reviewed),
-          receiptReceived: Boolean(r.receiptReceived),
-          refundAmount: r.refundAmount ?? 0,
-          cancellationReason: r.cancellationReason || "",
-          cancellationReasonDetail: r.cancellationReasonDetail || "",
-          salesPerson: r.salesPerson || ""
-        });
-      }
-    });
-
-    res.json({
-      success: true,
-      total: allAttachments.length,
-      attachments: allAttachments
-    });
-  } catch (err: any) {
-    res.status(500).json({ error: "فشل استرجاع المرفقات: " + err?.message });
-  }
-});
-
-// 2. Upload attachments to a specific request (any user can upload before or after review)
-app.post("/api/requests/:id/attachments", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
-  }
-
-  const { attachment, attachments } = req.body;
-  const newItems: any[] = [];
-
-  if (attachment && typeof attachment === "object") {
-    newItems.push(attachment);
-  }
-  if (Array.isArray(attachments)) {
-    newItems.push(...attachments);
-  }
-
-  if (newItems.length === 0) {
-    return res.status(400).json({ error: "لم يتم إرسال أي ملفات مرفقة" });
-  }
-
-  if (!Array.isArray(request.attachments)) {
-    request.attachments = [];
-  }
-
-  const processedItems = newItems.map((item) => ({
-    id: item.id || `att-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
-    fileName: item.fileName || "مستند_مرفق",
-    fileType: item.fileType || (item.fileName?.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg"),
-    fileSize: item.fileSize || (item.fileData ? Math.round(item.fileData.length * 0.75) : 0),
-    fileData: item.fileData || "",
-    uploadedAt: item.uploadedAt || new Date().toISOString(),
-    uploadedBy: user.username,
-    uploaderName: user.name || user.username,
-    uploaderRole: user.role,
-    uploaderClub: user.club || "المركز الرئيسي",
-    category: item.category || "أخرى",
-    notes: item.notes || ""
-  }));
-
-  request.attachments.push(...processedItems);
-  await saveDb();
-
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "رفع مرفقات للطلب",
-    `تم رفع ${processedItems.length} مرفق جديد لطلب العضوية ${request.membershipNumber} (${request.memberName})`,
-    request.id
-  );
-
-  res.json({
-    success: true,
-    message: "تم رفع وحفظ المرفقات بنجاح",
-    request,
-    attachments: request.attachments,
-    requests: db.requests
-  });
-});
-
-// 3. Delete an attachment (Admin can always delete; non-admin users allowed before Admin Review)
-app.delete("/api/requests/:id/attachments/:attachmentId", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "طلب الإلغاء غير موجود" });
-  }
-
-  // Deleting an attachment is open to any user while the request is still
-  // unreviewed ("قيد المراجعة"). Once the request is reviewed/locked, only
-  // the central admin can delete it.
-  if (user.role !== "admin" && Boolean(request.reviewed)) {
-    return res.status(403).json({
-      error: "لا يمكن حذف المستند بعد اعتماد الطلب - الحذف بعد الاعتماد متاح للأدمن المركزي فقط."
-    });
-  }
-
-  if (!Array.isArray(request.attachments)) {
-    request.attachments = [];
-  }
-
-  const attIndex = request.attachments.findIndex((a: any) => String(a.id) === String(req.params.attachmentId));
-  if (attIndex === -1) {
-    return res.status(404).json({ error: "المرفق المطلوب غير موجود بالطلب" });
-  }
-
-  const deletedAtt = request.attachments[attIndex];
-  request.attachments.splice(attIndex, 1);
-  await saveDb();
-
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "حذف مرفق من الطلب",
-    `تم حذف المرفق (${deletedAtt.fileName}) من طلب العضوية ${request.membershipNumber} (${request.memberName})`,
-    request.id
-  );
-
-  res.json({
-    success: true,
-    message: "تم حذف المرفق بنجاح",
-    request,
-    attachments: request.attachments,
-    requests: db.requests
-  });
-});
-
-// --- Workflow Operations ---
-
-// 1. Admin sends cancellation to First Manager with attached PDF and notes
-app.post("/api/requests/:id/send-first-manager", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن المركزي فقط يمكنه إرسال طلبات الاعتماد" });
-  }
-
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-
-  const { pdfData, pdfName, pdfSize, notes } = req.body || {};
-
-  request.approvalSentToFirstManager = true;
-  request.firstManagerApproved = null; // reset if rejected previously
-  request.result = "Pending";
-
-  if (pdfData !== undefined) {
-    request.firstManagerPdfUrl = pdfData || "";
-    request.firstManagerPdfName = pdfName || "مستندات_الطلب.pdf";
-    request.firstManagerPdfSize = pdfSize || 0;
-  }
-  if (notes !== undefined) {
-    request.firstManagerSendNotes = notes || "";
-  }
-  request.firstManagerSentAt = new Date().toISOString();
-  request.firstManagerSentBy = user.name || user.username;
-
-  await saveDb();
-
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "إرسال للمدير الأول",
-    `تم إرسال طلب المشترك ${request.memberName} (${request.membershipNumber}) مع ملف PDF ومستندات الأوراق للاعتماد`,
-    request.id
-  );
-  res.json({ success: true, request, requests: db.requests });
-});
-
-// Admin attach or update PDF for First Manager review
-app.post("/api/requests/:id/attach-first-manager-pdf", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط يمكنه إرفاق أو تعديل ملف الـ PDF" });
-  }
-
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-
-  const { pdfData, pdfName, pdfSize, notes } = req.body || {};
-  if (pdfData !== undefined) {
-    request.firstManagerPdfUrl = pdfData || "";
-    request.firstManagerPdfName = pdfName || "مستندات_الطلب.pdf";
-    request.firstManagerPdfSize = pdfSize || 0;
-  }
-  if (notes !== undefined) {
-    request.firstManagerSendNotes = notes || "";
-  }
-
-  await saveDb();
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "تحديث ملف PDF للمدير الأول",
-    `تم تحديث ملف الـ PDF المرفق لطلب المشترك ${request.memberName} (${request.membershipNumber})`,
-    request.id
-  );
-  res.json({ success: true, request, requests: db.requests });
-});
-
-// 2. First Manager approves or rejects (Days > 90/3 months only)
-app.post("/api/requests/:id/first-manager-action", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "first_manager") {
-    return res.status(403).json({ error: "صلاحية المدير المالي الأول فقط هي المصرح لها باتخاذ أو تعديل القرار" });
-  }
-
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-
-  const { approve, comments, rejectionDate } = req.body;
-  const todayStr = new Date().toISOString().split("T")[0];
-  const isValidDateStr = typeof rejectionDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(rejectionDate);
-  const effectiveRejectionDate = isValidDateStr ? rejectionDate : todayStr;
-
-  if (approve) {
-    request.firstManagerApproved = true;
-    request.firstManagerComments = comments || "";
-    request.firstManagerDecisionDate = todayStr;
-    request.approvalSentToSectorManager = true;
-    // If it was previously rejected, revert to pending for sector manager review
-    if (request.status === "Rejected" || request.result === "Rejected") {
-      request.status = "Pending";
-      request.result = "Pending";
-      request.statusDate = "";
-    }
-  } else {
-    request.firstManagerApproved = false;
-    request.firstManagerComments = comments || "";
-    request.rejectionReason = comments || "";
-    request.firstManagerDecisionDate = todayStr;
-    request.result = "Rejected";
-    request.status = "Rejected" as any;
-    request.statusDate = effectiveRejectionDate;
-    (request as any).cancellationStatusDate = effectiveRejectionDate;
-    request.approvalSentToSectorManager = false;
-    request.sectorManagerApproved = null;
-  }
-  
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, approve ? "اعتماد المدير المالي الأول" : "رفض المدير المالي الأول", `تم ${approve ? 'اعتماد (Accept)' : 'رفض (Reject)'} طلب العضوية ${request.membershipNumber} - ملاحظات: ${comments || 'لا توجد'}`, request.id);
-  res.json({ success: true, request });
-});
-
-// 3. Admin sends directly to Sector Manager (for <3 months, which skips First Manager)
-app.post("/api/requests/:id/send-sector-manager", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "غير مصرح" });
-  }
-
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-
-  request.approvalSentToSectorManager = true;
-  request.sectorManagerApproved = null;
-  request.result = "Pending";
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "إرسال لرئيس القطاع", `تم تحويل الطلب رقم ${request.membershipNumber} مباشرة لرئيس قطاع الشؤون المالية للاعتماد النهائي`, request.id);
-  res.json({ success: true, request });
-});
-
-// 4. Sector Manager approves or rejects (Final approval with digital signature)
-app.post("/api/requests/:id/sector-manager-action", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "sector_manager" && user.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية رئيس القطاع المالي مطلوبة للاعتماد النهائي" });
-  }
-
-  const request = findRequestById(req.params.id);
-  if (!request) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-
-  const { approve, comments } = req.body;
-  const sectorUser = db.users.find((u) => u.role === "sector_manager");
-
-  if (approve) {
-    request.sectorManagerApproved = true;
-    request.sectorManagerComments = comments;
-    request.result = "Accepted";
-    
-    // Apply digital signature if available
-    if (sectorUser && sectorUser.signatureUrl) {
-      request.sectorManagerSignature = sectorUser.signatureUrl;
-    }
-    
-    // Auto populate status date if accepted
-    request.statusDate = new Date().toISOString().split("T")[0];
-  } else {
-    request.sectorManagerApproved = false;
-    request.sectorManagerComments = comments;
-    request.rejectionReason = comments || "";
-    request.result = "Rejected";
-    request.status = "Rejected" as any;
-  }
-
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, approve ? "اعتماد رئيس قطاع المالية" : "رفض رئيس قطاع المالية", `تم الاعتماد النهائي للطلب ${request.membershipNumber} مع وضع الختم الإلكتروني وتاريخ المراجعة`, request.id);
-  res.json({ success: true, request });
-});
-
-// --- Emails Simulation ---
-app.get("/api/emails", requireAuth, async (req, res) => {
-  res.json(db.emailLogs);
-});
-
-app.post("/api/emails/send", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { requestId, type, recipient, subject, body } = req.body;
-
-  if (!recipient) {
-    return res.status(400).json({ error: "البريد الإلكتروني للمستلم مطلوب" });
-  }
-
-  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
-  const newEmail: any = {
-    id: "mail-" + Date.now(),
-    sender: `Wadi Degla Cancellation Hub <${senderAddress}>`,
-    recipient,
-    subject,
-    body,
-    sentAt: new Date().toISOString(),
-    requestId,
-    type,
-    deliveryStatus: "failed",
-    deliveryError: undefined as string | undefined,
-  };
-
-  const transporter = getMailer();
-  if (!transporter) {
-    newEmail.deliveryError = "إعدادات SMTP غير مكتملة";
-    db.emailLogs.unshift(newEmail);
-    await saveDb();
-    return res.status(422).json({
-      error: "لم يتم إرسال البريد فعليًا: إعدادات SMTP غير مكتملة. يرجى ضبطها من صفحة الإعدادات (إعدادات > SMTP) أولًا.",
-      email: newEmail
-    });
-  }
-
-  try {
-    await transporter.sendMail({
-      from: newEmail.sender,
-      to: recipient,
-      subject,
-      html: body,
-    });
-    newEmail.deliveryStatus = "sent";
-  } catch (err: any) {
-    newEmail.deliveryError = err?.message || "فشل الاتصال بخادم البريد";
-    db.emailLogs.unshift(newEmail);
-    await saveDb();
-    return res.status(502).json({
-      error: `تعذر إرسال البريد فعليًا: ${newEmail.deliveryError}`,
-      email: newEmail
-    });
-  }
-
-  db.emailLogs.unshift(newEmail);
-
-  await saveDb();
-  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني فعليًا إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
-  res.json({ success: true, email: newEmail });
-});
-
-// --- SMTP Settings (Admin only) ---
-app.get("/api/smtp-settings", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية الاطلاع على إعدادات البريد" });
-  }
-  const cfg = db.smtpSettings || DEFAULT_DB.smtpSettings;
-  // Never send the actual password back to the browser -- just whether
-  // one is currently saved, so the UI can show a placeholder instead of
-  // requiring it to be re-typed every time.
-  res.json({
-    host: cfg.host || "",
-    port: cfg.port || 587,
-    username: cfg.username || "",
-    hasPassword: !!cfg.password,
-  });
-});
-
-app.put("/api/smtp-settings", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل إعدادات البريد" });
-  }
-  const { host, port, username, password } = req.body;
-  if (!host || !username) {
-    return res.status(400).json({ error: "خادم البريد (Host) واسم المستخدم مطلوبين" });
-  }
-  if (!db.smtpSettings) db.smtpSettings = { host: "", port: 587, username: "", password: "" };
-  db.smtpSettings.host = String(host).trim();
-  db.smtpSettings.port = Number(port) || 587;
-  db.smtpSettings.username = String(username).trim();
-  // Only overwrite the stored password if a new one was actually typed,
-  // so re-saving the host/port later doesn't wipe out the saved password.
-  if (password) {
-    db.smtpSettings.password = password;
-  }
-  await saveDb();
-  logAudit(user.username, user.name, user.role, "تحديث إعدادات SMTP", `تم تحديث إعدادات خادم البريد الإلكتروني (${db.smtpSettings.host})`);
-  res.json({ success: true });
-});
-
-app.post("/api/smtp-settings/test", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اختبار إعدادات البريد" });
-  }
-  const transporter = getMailer();
-  if (!transporter) {
-    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك ادخلي الخادم واسم المستخدم وكلمة المرور واحفظيهم أولًا." });
-  }
-  try {
-    await transporter.verify();
-    res.json({ success: true });
-  } catch (err: any) {
-    res.status(502).json({ error: err?.message || "فشل الاتصال بخادم البريد. تأكدي من صحة البيانات (الخادم، المنفذ، اسم المستخدم، كلمة المرور)." });
-  }
-});
-
-// Unlike "/test" above (which only verifies the SMTP login/connection),
-// this actually sends a real email to a chosen address -- the only way to
-// confirm messages truly get delivered, not just that the login works.
-app.post("/api/smtp-settings/send-test", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اختبار إعدادات البريد" });
-  }
-  const { to } = req.body;
-  if (!to || !String(to).trim()) {
-    return res.status(400).json({ error: "من فضلك ادخلي بريد إلكتروني تستلمي عليه رسالة الاختبار" });
-  }
-  const transporter = getMailer();
-  if (!transporter) {
-    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك ادخلي الخادم واسم المستخدم وكلمة المرور واحفظيهم أولًا." });
-  }
-  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
-  try {
-    const info = await transporter.sendMail({
-      from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
-      to: String(to).trim(),
-      subject: "رسالة اختبار -- منظومة إلغاء العضويات وادي دجلة",
-      html: `<div dir="rtl" style="text-align:right"><p>ده اختبار للتأكد إن إعدادات البريد شغالة صح.</p><p>لو وصلتك الرسالة دي، يبقى الإعدادات سليمة والنظام جاهز يبعت إيميلات فعلية.</p><p style="color:#888;font-size:12px">تم الإرسال في: ${new Date().toISOString()}</p></div>`,
-    });
-    logAudit(user.username, user.name, user.role, "إرسال بريد اختباري", `تم إرسال بريد اختباري إلى ${to}`);
-    res.json({ success: true, messageId: info?.messageId || null });
-  } catch (err: any) {
-    res.status(502).json({ error: err?.message || "فشل إرسال البريد الاختباري. تأكدي من صحة البيانات، ومن استخدام App Password صحيحة لو بتستخدمي Gmail." });
-  }
-});
-
-// --- System Status Reconciliation (Excel upload update) ---
-app.post("/api/requests/reconcile-system-status", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه هذه الصلاحية" });
-  }
-
-  const { mappings } = req.body; // Array of { membershipNumber, systemStatus }
-  if (!mappings || !Array.isArray(mappings)) {
-    return res.status(400).json({ error: "بيانات المطابقة غير صحيحة" });
-  }
-
-  let updatedCount = 0;
-  mappings.forEach((item: any) => {
-    const request = db.requests.find((r) => r.membershipNumber === item.membershipNumber);
-    if (request) {
-      request.systemStatus = item.systemStatus;
-      updatedCount++;
-    }
-  });
-
-  await saveDb();
-  logAudit(user.username, user.name, user.role, "مطابقة حالة النظام", `تم تحديث حالة النظام الداخلي لعدد ${updatedCount} عضوية بناءً على رفع ملف إكسل للمطابقة`);
-  res.json({ success: true, updatedCount, requests: db.requests });
-});
-
-// --- Bulk Company / Bank Debts Import Endpoint ---
-// Shared matching + update logic for a company/bank debt import, used by
-// both the original "/api/requests/import-company-debts" endpoint and the
-// newer tagged-batch "/api/debt-import-batches" endpoint below, so both
-// stay in sync and never diverge.
-function applyCompanyDebtsImport(rows: any[], actor?: { username: string; name: string; role: string }, sourceLabel?: string) {
-  // Writes one history entry straight into db.auditLogs (no per-entry DB
-  // save -- the caller already saves once after the whole import) so each
-  // affected request shows this upload in its own change-history popup.
-  const pushRequestLog = (requestId: number, action: string, details: string, changes?: { field: string; label: string; from: string; to: string }[]) => {
-    if (!actor) return;
-    if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = [];
-    const entry: any = {
-      id: "log-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
-      username: actor.username,
-      name: actor.name,
-      role: actor.role,
-      action,
-      details,
-      timestamp: new Date().toISOString(),
-      requestId,
-    };
-    if (changes && changes.length > 0) entry.changes = changes;
-    db.auditLogs.unshift(entry);
-  };
-
-  let updatedCount = 0;
-  let nonZeroDebtCount = 0;
-  let zeroDebtCount = 0;
-  let totalDebtAmount = 0;
-  const notFoundList: string[] = [];
-  const updatedMembersList: any[] = [];
-  // Rows where the debt amount was >= the request's own subscription value --
-  // rejected for that specific request only, the rest of the batch still
-  // goes through normally.
-  const rejectedDebtList: any[] = [];
-
-  rows.forEach((row: any) => {
-    const mNumRaw = String(row.membershipNumber || "").trim();
-    if (!mNumRaw) return;
-
-    const cleanMNum = mNumRaw.replace(/^0+/, '');
-    const cleanNatId = String(row.nationalId || '').trim();
-
-    const matchingRequests = db.requests.filter((r: any) => {
-      const dbMNum = String(r.membershipNumber || '').trim();
-      const cleanDbMNum = dbMNum.replace(/^0+/, '');
-      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
-      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
-      return false;
-    });
-
-    if (matchingRequests.length > 0) {
-      const newDebt = parseSmartNumber(row.debtABKCompanies);
-
-      const todayStr = new Date().toISOString().split("T")[0];
-
-      matchingRequests.forEach((request: any) => {
-        // Reject the debt for this specific request only if it's >= the
-        // request's own subscription value (a debt can never legitimately
-        // equal or exceed what the member actually subscribed for). Only
-        // enforced when subscriptionValue is actually known/positive, so
-        // older/incomplete records aren't silently blocked.
-        if ((request.subscriptionValue || 0) > 0 && newDebt >= request.subscriptionValue) {
-          rejectedDebtList.push({
-            membershipNumber: request.membershipNumber,
-            memberName: request.memberName,
-            subscriptionValue: request.subscriptionValue,
-            attemptedDebt: newDebt,
-          });
-          pushRequestLog(
-            request.id,
-            "رفض مديونية من شيت",
-            `${sourceLabel || "رفع شيت مديونيات"}: تم رفض مديونية ${newDebt.toLocaleString()} لأنها أكبر من أو تساوي قيمة الاشتراك (${Number(request.subscriptionValue).toLocaleString()})`
-          );
-          return; // skip this request only -- rest of the batch continues
-        }
-
-        if (newDebt > 0) {
-          nonZeroDebtCount++;
-          totalDebtAmount += newDebt;
-        } else {
-          zeroDebtCount++;
-        }
-
-        const requestBefore = { ...request };
-        const prevDebt = request.debtABKCompanies || 0;
-        request.debtABKCompanies = newDebt;
-
-        if (newDebt > 0 && !request.debtEnteredDate) {
-          request.debtEnteredDate = todayStr;
-        }
-
-        if (row.loanUnderName && String(row.loanUnderName).trim() && row.loanUnderName !== 'لا يوجد') {
-          request.loanUnderName = String(row.loanUnderName).trim();
-        }
-        if (row.nationalId && String(row.nationalId).trim()) {
-          request.nationalId = String(row.nationalId).trim();
-        }
-        if (row.paymentMethod && String(row.paymentMethod).trim()) {
-          request.paymentMethod = String(row.paymentMethod).trim();
-        }
-
-        request.statusDate = todayStr;
-        const sDate = new Date(todayStr);
-        if (!isNaN(sDate.getFullYear()) && (request.status === 'Cancelled' || request.status === 'Deletion' || request.status === 'Revoked')) {
-          request.refundYear = sDate.getFullYear();
-        }
-
-        const recalculated = calculateRequestFields(request, db.formulas);
-        Object.assign(request, recalculated);
-
-        pushRequestLog(
-          request.id,
-          "تحديث المديونية عبر شيت",
-          `${sourceLabel || "رفع شيت مديونيات"}: مديونية البنوك/الشركات من ${Number(prevDebt).toLocaleString()} إلى ${Number(newDebt).toLocaleString()}`,
-          buildRequestDiff(requestBefore, request)
-        );
-
-        updatedCount++;
-        updatedMembersList.push({
-          id: request.id,
-          membershipNumber: request.membershipNumber,
-          memberName: request.memberName,
-          paymentMethod: request.paymentMethod,
-          previousDebt: prevDebt,
-          newDebt: newDebt,
-          statusDate: request.statusDate,
-          refundAmount: request.refundAmount,
-          refundToClient: request.refundToClient
-        });
-      });
-    } else {
-      notFoundList.push(mNumRaw);
-    }
-  });
-
-  return { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList };
-}
-
-app.post("/api/requests/import-company-debts", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "auditor") {
-    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
-  }
-
-  const { rows } = req.body;
-  if (!rows || !Array.isArray(rows)) {
-    return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
-  }
-
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows, { username: user.username, name: user.name, role: user.role }, "رفع شيت مديونيات الشركات والبنوك");
-
-  await saveDb();
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "تحديث مديونيات الشركات والبنك",
-    `تم تحديث مديونية البنوك/الشركات لعدد ${updatedCount} طلب (بإجمالي مديونيات ${totalDebtAmount.toLocaleString()} ج.م، منها ${nonZeroDebtCount} مديونية برصيد فعلي) عبر رفع شيت Excel${rejectedDebtList.length > 0 ? `، وتم رفض ${rejectedDebtList.length} صف لأن المديونية فيها أكبر من أو تساوي قيمة الاشتراك` : ''}`
-  );
-
-  res.json({
-    success: true,
-    updatedCount,
-    nonZeroDebtCount,
-    zeroDebtCount,
-    totalDebtAmount,
-    notFoundCount: notFoundList.length,
-    notFoundList,
-    updatedMembersList,
-    rejectedDebtCount: rejectedDebtList.length,
-    rejectedDebtList,
-    requests: db.requests
-  });
-});
-
-// --- Reports: tagged company/bank debt import batches ---
-// Same underlying matching/update logic as the endpoint above, but each
-// upload is also saved as a labeled batch (company/bank + committee
-// number), so it can be found and re-exported later with extra columns
-// from the "Reports" page.
-app.post("/api/debt-import-batches", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "auditor") {
-    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية تحديث المديونيات" });
-  }
-
-  const { rows, paymentMethod, committeeNo, committeeYear } = req.body;
-  if (!rows || !Array.isArray(rows) || rows.length === 0) {
-    return res.status(400).json({ error: "بيانات شيت المديونيات غير صحيحة" });
-  }
-  if (!paymentMethod || !String(paymentMethod).trim()) {
-    return res.status(400).json({ error: "يرجى اختيار الشركة/طريقة الدفع قبل الرفع" });
-  }
-  if (!committeeNo || !String(committeeNo).trim()) {
-    return res.status(400).json({ error: "يرجى اختيار رقم اللجنة قبل الرفع" });
-  }
-
-  const { updatedCount, nonZeroDebtCount, zeroDebtCount, totalDebtAmount, notFoundList, updatedMembersList, rejectedDebtList } = applyCompanyDebtsImport(rows, { username: user.username, name: user.name, role: user.role }, `رفع دفعة مديونية لشركة "${String(paymentMethod).trim()}" - لجنة ${String(committeeNo).trim()}`);
-
-  // Map membership number -> the debt value it had right BEFORE this
-  // batch was applied, so an accidental/wrong upload can be reverted
-  // later via the delete/undo endpoint below.
-  const prevDebtByMembership: Record<string, number> = {};
-  updatedMembersList.forEach((m: any) => {
-    prevDebtByMembership[String(m.membershipNumber || '').trim()] = m.previousDebt || 0;
-  });
-  const rejectedMembershipSet = new Set(rejectedDebtList.map((r: any) => String(r.membershipNumber || '').trim()));
-
-  if (!db.debtImportBatches) db.debtImportBatches = [];
-  const batch = {
-    id: `batch-${Date.now()}`,
-    paymentMethod: String(paymentMethod).trim(),
-    committeeNo: String(committeeNo).trim(),
-    committeeYear: committeeYear ? String(committeeYear).trim() : "",
-    uploadedAt: new Date().toISOString(),
-    uploadedBy: user.name || user.username,
-    // Rejected rows (debt >= subscription value) are excluded here since
-    // nothing was actually applied for them -- keeping them would make the
-    // delete/revert endpoint below wrongly try to "undo" a change that
-    // never happened.
-    rows: rows
-      .filter((r: any) => !rejectedMembershipSet.has(String(r.membershipNumber || "").trim()))
-      .map((r: any) => {
-        const mNum = String(r.membershipNumber || "").trim();
-        return {
-          membershipNumber: mNum,
-          loanUnderName: r.loanUnderName ? String(r.loanUnderName).trim() : "",
-          nationalId: r.nationalId ? String(r.nationalId).trim() : "",
-          paymentMethod: r.paymentMethod ? String(r.paymentMethod).trim() : String(paymentMethod).trim(),
-          debtAmount: parseSmartNumber(r.debtABKCompanies),
-          previousDebtAmount: prevDebtByMembership[mNum] ?? 0,
-        };
-      }),
-    rejectedRows: rejectedDebtList,
-  };
-  db.debtImportBatches.unshift(batch);
-
-  await saveDb();
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "رفع دفعة مديونية (تقارير)",
-    `تم رفع دفعة مديونية جديدة لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo}، تم تحديث ${updatedCount} طلب (بإجمالي ${totalDebtAmount.toLocaleString()} ج.م)${rejectedDebtList.length > 0 ? `، وتم رفض ${rejectedDebtList.length} صف لأن المديونية فيها أكبر من أو تساوي قيمة الاشتراك` : ''}`
-  );
-
-  res.json({
-    success: true,
-    batchId: batch.id,
-    updatedCount,
-    nonZeroDebtCount,
-    zeroDebtCount,
-    totalDebtAmount,
-    notFoundCount: notFoundList.length,
-    notFoundList,
-    updatedMembersList,
-    rejectedDebtCount: rejectedDebtList.length,
-    rejectedDebtList,
-    requests: db.requests
-  });
-});
-
-app.get("/api/debt-import-batches", requireAuth, async (req, res) => {
-  const batches = (db.debtImportBatches || []).map((b: any) => ({
-    id: b.id,
-    paymentMethod: b.paymentMethod,
-    committeeNo: b.committeeNo,
-    committeeYear: b.committeeYear,
-    uploadedAt: b.uploadedAt,
-    uploadedBy: b.uploadedBy,
-    rowCount: (b.rows || []).length,
-  }));
-  res.json({ batches });
-});
-
-app.get("/api/debt-import-batches/:id/export", requireAuth, async (req, res) => {
-  const batch = (db.debtImportBatches || []).find((b: any) => b.id === req.params.id);
-  if (!batch) {
-    return res.status(404).json({ error: "دفعة الرفع غير موجودة" });
-  }
-
-  const enrichedRows = batch.rows.map((row: any) => {
-    const mNumRaw = String(row.membershipNumber || "").trim();
-    const cleanMNum = mNumRaw.replace(/^0+/, '');
-    const cleanNatId = String(row.nationalId || '').trim();
-
-    const match = db.requests.find((r: any) => {
-      const dbMNum = String(r.membershipNumber || '').trim();
-      const cleanDbMNum = dbMNum.replace(/^0+/, '');
-      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
-      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
-      return false;
-    });
-
-    return {
-      membershipNumber: row.membershipNumber,
-      memberName: match?.memberName || '',
-      nationalId: match?.nationalId || row.nationalId || '',
-      externalId: match?.externalId || '',
-      subscriptionValue: match?.subscriptionValue || 0,
-      transferValue: match?.transferValue || 0,
-      subscriptionDate: match?.subscriptionDate || '',
-      requestDate: match?.requestDate || '',
-      debtAmount: match ? (match.debtABKCompanies || 0) : row.debtAmount,
-      paymentMethod: match?.paymentMethod || row.paymentMethod,
-    };
-  });
-
-  res.json({
-    batch: {
-      id: batch.id,
-      paymentMethod: batch.paymentMethod,
-      committeeNo: batch.committeeNo,
-      committeeYear: batch.committeeYear,
-      uploadedAt: batch.uploadedAt,
-      uploadedBy: batch.uploadedBy,
-    },
-    rows: enrichedRows,
-  });
-});
-
-// Delete/undo an accidentally-uploaded debt import batch: reverts every
-// matched request's debt back to whatever it was right BEFORE this batch
-// was applied, then removes the batch from the history list.
-app.delete("/api/debt-import-batches/:id", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "auditor") {
-    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف دفعات المديونية" });
-  }
-
-  const batchIndex = (db.debtImportBatches || []).findIndex((b: any) => b.id === req.params.id);
-  if (batchIndex === -1) {
-    return res.status(404).json({ error: "دفعة الرفع غير موجودة" });
-  }
-  const batch = db.debtImportBatches[batchIndex];
-
-  let revertedCount = 0;
-  batch.rows.forEach((row: any) => {
-    const mNumRaw = String(row.membershipNumber || "").trim();
-    if (!mNumRaw) return;
-    const cleanMNum = mNumRaw.replace(/^0+/, '');
-    const cleanNatId = String(row.nationalId || '').trim();
-
-    const matchingRequests = db.requests.filter((r: any) => {
-      const dbMNum = String(r.membershipNumber || '').trim();
-      const cleanDbMNum = dbMNum.replace(/^0+/, '');
-      if (dbMNum === mNumRaw || (cleanDbMNum && cleanMNum && cleanDbMNum === cleanMNum)) return true;
-      if (cleanNatId && r.nationalId && String(r.nationalId).trim() === cleanNatId) return true;
-      return false;
-    });
-
-    matchingRequests.forEach((request: any) => {
-      // Only revert if the request's debt still matches what THIS batch
-      // set it to -- if she's uploaded another (correct) batch since,
-      // that later value takes priority and shouldn't be clobbered by
-      // undoing an older batch.
-      if ((request.debtABKCompanies || 0) === (row.debtAmount || 0)) {
-        request.debtABKCompanies = row.previousDebtAmount || 0;
-        const recalculated = calculateRequestFields(request, db.formulas);
-        Object.assign(request, recalculated);
-        revertedCount++;
-      }
-    });
-  });
-
-  db.debtImportBatches.splice(batchIndex, 1);
-  await saveDb();
-
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "حذف/تراجع دفعة مديونية (تقارير)",
-    `تم حذف دفعة المديونية لشركة "${batch.paymentMethod}" - لجنة رقم ${batch.committeeNo} (رُفعت بتاريخ ${batch.uploadedAt}) وتم إرجاع المديونية لـ ${revertedCount} طلب لقيمتها السابقة`
-  );
-
-  res.json({ success: true, revertedCount, requests: db.requests });
-});
-
-// ----- "مخالصة الإلغاءات" (Cancellation Settlement Reports) -----
-// Read-only history of the settlement batches auto-created by
-// /api/requests/bulk-cancellation-status whenever a bulk "Cancelled"
-// status change hits company-payment-method requests.
-
-app.get("/api/cancellation-settlements", requireAuth, async (req, res) => {
-  const batches = (db.cancellationSettlementBatches || []).map((b: any) => ({
-    id: b.id,
-    companyName: b.companyName,
-    statusDate: b.statusDate,
-    createdAt: b.createdAt,
-    createdBy: b.createdBy,
-    rowCount: (b.rows || []).length,
-  }));
-  res.json({ batches });
-});
-
-app.get("/api/cancellation-settlements/:id/export", requireAuth, async (req, res) => {
-  const batch = (db.cancellationSettlementBatches || []).find((b: any) => b.id === req.params.id);
-  if (!batch) {
-    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
-  }
-  res.json({
-    batch: {
-      id: batch.id,
-      companyName: batch.companyName,
-      statusDate: batch.statusDate,
-      createdAt: batch.createdAt,
-      createdBy: batch.createdBy,
-    },
-    rows: batch.rows || [],
-  });
-});
-
-app.delete("/api/cancellation-settlements/:id", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin" && user.role !== "auditor") {
-    return res.status(403).json({ error: "الأدمن والمراجع فقط لديهم صلاحية حذف تقارير مخالصة الإلغاءات" });
-  }
-
-  const batchIndex = (db.cancellationSettlementBatches || []).findIndex((b: any) => b.id === req.params.id);
-  if (batchIndex === -1) {
-    return res.status(404).json({ error: "تقرير مخالصة الإلغاءات غير موجود" });
-  }
-  const batch = db.cancellationSettlementBatches[batchIndex];
-  db.cancellationSettlementBatches.splice(batchIndex, 1);
-  await saveDb();
-
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "حذف مخالصة إلغاءات (تقارير)",
-    `تم حذف تقرير مخالصة الإلغاءات لشركة "${batch.companyName}" (أُنشئ بتاريخ ${batch.createdAt})`
-  );
-
-  res.json({ success: true });
-});
-
-// Update single request statusDate (Admin only)
-app.post("/api/requests/:id/status-date", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل تاريخ الحالة" });
-  }
-
-  const rawId = req.params.id;
-  const reqIndex = findRequestIndexById(rawId);
-  if (reqIndex === -1) {
-    return res.status(404).json({ error: "الطلب غير موجود في قاعدة البيانات" });
-  }
-
-  const { statusDate } = req.body;
-  const request = db.requests[reqIndex];
-  const prevDate = request.statusDate || "غير محدد";
-  request.statusDate = statusDate ? String(statusDate).trim() : "";
-
-  if (request.statusDate) {
-    const sDate = new Date(request.statusDate);
-    if (!isNaN(sDate.getFullYear()) && (request.status === 'Cancelled' || request.status === 'Deletion' || request.status === 'Revoked')) {
-      request.refundYear = sDate.getFullYear();
-    }
-  }
-
-  await saveDb();
-  logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "تعديل تاريخ الحالة يدويًا",
-    `قام الأدمن بتعديل تاريخ الحالة للعضوية رقم ${request.membershipNumber} من (${prevDate}) إلى (${request.statusDate || 'فارغ'})`,
-    request.id
-  );
-
-  res.json({ success: true, request, requests: db.requests });
-});
-
-// --- Excel Bulk Import Endpoints ---
-app.post("/api/requests/import", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط يمكنه استيراد البيانات" });
-  }
-
-  const { rows } = req.body; // Array of request objects parsed in front-end
-  if (!rows || !Array.isArray(rows)) {
-    return res.status(400).json({ error: "تنسيق البيانات غير صحيح" });
-  }
-
-  let importedCount = 0;
-  let updatedCount = 0;
-  let skippedCount = 0;
-
-  rows.forEach((row: any) => {
-    // Basic validations
-    if (!row.membershipNumber || !row.memberName) {
-      skippedCount++;
-      return;
-    }
-
-    const existingWithSameNum = db.requests.filter((r) => String(r.membershipNumber).trim() === String(row.membershipNumber).trim());
-    const existingActive = existingWithSameNum.find((r) => r.status !== "Rejected" && r.result !== "Rejected");
-
-    if (existingActive) {
-      // Sync every core "data" field from the re-uploaded row onto the
-      // existing record -- this used to only touch a handful of workflow
-      // flags below, which meant re-importing a corrected sheet (e.g. to
-      // fill in the club or payment method for an already-existing
-      // membership number) silently did nothing for those fields, leaving
-      // stale/blank data in place. Paired with the client-side `hasCol()`
-      // check in App.tsx: a column that isn't in the sheet at all comes
-      // through as `undefined` here and is left untouched, so uploading a
-      // sheet with just a couple of columns only ever updates those columns.
-      const dataFields = [
-        'club', 'paymentMethod', 'membershipType', 'nationalId', 'externalId',
-        'mobileNumber', 'subscriptionDate', 'requestDate', 'loanUnderName',
-        'documents', 'cancellationReason',
-        'salesPerson', 'subscriptionValue', 'transferValue', 'cashAmount',
-        'visaAmount', 'checksPaid', 'checksUnpaid', 'annualRenewalDue',
-        'debtABKCompanies', 'refundAmount', 'committeeNo', 'committeeYear',
-        'approvalDate', 'clubNote', 'currency', 'exceptions', 'exceptionType',
-        'type'
-      ];
-      dataFields.forEach((field) => {
-        if (row[field] !== undefined && row[field] !== '') {
-          existingActive[field] = row[field];
-        }
-      });
-
-      // Update existing record if import contains updated flags/comments
-      if (row.firstManagerComments) {
-        existingActive.firstManagerComments = row.firstManagerComments;
-      }
-      if (row.adminNote) {
-        existingActive.adminNote = row.adminNote;
-      }
-      if (row.cancellationReasonDetail && row.cancellationReasonDetail !== "بدون أسباب تفصيلية") {
-        existingActive.cancellationReasonDetail = row.cancellationReasonDetail;
-      }
-      if (row.receiptReceived !== undefined) {
-        existingActive.receiptReceived = row.receiptReceived;
-        if (row.receiptReceived) {
-          existingActive.receiptReceivedDate = row.receiptReceivedDate || existingActive.receiptReceivedDate || new Date().toISOString().split('T')[0];
-        }
-      }
-      if (row.reviewed !== undefined) {
-        existingActive.reviewed = row.reviewed;
-      }
-      if (row.approvalSentToFirstManager !== undefined) {
-        existingActive.approvalSentToFirstManager = row.approvalSentToFirstManager;
-      }
-      if (row.firstManagerApproved !== undefined) {
-        existingActive.firstManagerApproved = row.firstManagerApproved;
-      }
-      if (row.result && row.result !== "Pending") {
-        existingActive.result = row.result;
-      }
-      if (row.status && row.status !== "Pending") {
-        existingActive.status = row.status;
-      }
-
-      const recalculated = calculateRequestFields(existingActive, db.formulas);
-      Object.assign(existingActive, recalculated);
-      updatedCount++;
-      return;
-    }
-
-    const isReReview = existingWithSameNum.length > 0;
-    let mName = row.memberName || "";
-    if (isReReview && !mName.includes("إعادة عرض")) {
-      mName = `${mName.trim()} (إعادة عرض)`;
-    }
-
-    const maxId = db.requests.reduce((max, r) => r.id > max ? r.id : max, 0);
-    const newId = maxId + 1;
-
-    const processed = calculateRequestFields({
-      ...row,
-      id: newId,
-      memberName: mName,
-      loanUnderName: row.loanUnderName || mName,
-      isReReview: isReReview ? true : row.isReReview,
-      result: row.result || "Pending",
-      status: row.status || "Pending",
-      firstManagerApproved: row.firstManagerApproved,
-      receiptReceived: row.receiptReceived === undefined ? false : row.receiptReceived,
-      receiptReceivedDate: row.receiptReceived ? (row.receiptReceivedDate || new Date().toISOString().split('T')[0]) : null,
-      reviewed: row.reviewed === undefined ? false : row.reviewed,
-      approvalSentToFirstManager: row.approvalSentToFirstManager === undefined ? false : row.approvalSentToFirstManager,
-      subscriptionDate: row.subscriptionDate || "2026-01-01",
-      requestDate: row.requestDate || "2026-06-01",
-      // Defaults apply ONLY when creating a brand-new record. The front-end
-      // now sends a blank cell as "no value" (undefined) so that updating an
-      // existing record never overwrites it with these defaults.
-      paymentMethod: row.paymentMethod || "نقدا",
-      membershipType: row.membershipType || "Regular",
-      documents: row.documents || "مكتمل",
-      cancellationReason: row.cancellationReason || "اسباب شخصية",
-      salesPerson: row.salesPerson || "مسؤول الفرع",
-      currency: row.currency || "جم",
-      subscriptionValue: row.subscriptionValue ?? 0,
-      transferValue: row.transferValue ?? 0,
-      cashAmount: row.cashAmount ?? 0,
-      visaAmount: row.visaAmount ?? 0,
-      checksPaid: row.checksPaid ?? 0,
-      checksUnpaid: row.checksUnpaid ?? 0,
-      annualRenewalDue: row.annualRenewalDue ?? 0,
-      debtABKCompanies: row.debtABKCompanies ?? 0,
-    });
-
-    db.requests.push(processed);
-    importedCount++;
-  });
-
-  await saveDb();
-  logAudit(user.username, user.name, user.role, "استيراد بيانات مجمع", `تم استيراد ${importedCount} طلب جديد وتحديث ${updatedCount} طلب، وتخطي ${skippedCount} سجلات`);
-  res.json({ success: true, importedCount: importedCount + updatedCount, skippedCount, requests: db.requests });
-});
-
-// --- Full Database Backup / Restore API ---
-app.get("/api/backup", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لتصدير نسخة احتياطية" });
-  }
-
-  logAudit(user.username, user.name, user.role, "نسخ احتياطي للمركز المالي", `تم عمل وتصدير نسخة احتياطية كاملة لقاعدة بيانات المنظومة`);
-  res.json(db);
-});
-
-app.post("/api/backup/restore", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية الأدمن مطلوبة لاستعادة نسخة احتياطية" });
-  }
-
-  const restoredDb = req.body;
-  if (!restoredDb || !restoredDb.users || !restoredDb.dropdowns || !restoredDb.requests) {
-    return res.status(400).json({ error: "ملف النسخ الاحتياطي غير صالح أو ناقص البيانات الهيكلية" });
-  }
-
-  db = { ...restoredDb };
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "استرجاع قاعدة البيانات", `تم استرجاع وتطبيق نسخة احتياطية خارجية لقاعدة بيانات النظام بالكامل بنجاح`);
-  res.json({ success: true, message: "تم استعادة قاعدة البيانات بالكامل بنجاح" });
-});
-
-// --- Per-request manual memo overrides ---
-// A membership's memo can be manually edited (any word/number) and that
-// edit sticks permanently for that one membership only, without touching
-// the shared template used by every other membership on the same form.
-app.get("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
-  const { requestId } = req.params;
-  const override = (db.memoOverrides && db.memoOverrides[requestId]) || null;
-  res.json({ override });
-});
-
-app.post("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { requestId } = req.params;
-  const { html, form } = req.body;
-  if (!html || typeof html !== "string") {
-    return res.status(400).json({ error: "محتوى المذكرة مطلوب" });
-  }
-
-  if (!db.memoOverrides) db.memoOverrides = {};
-  db.memoOverrides[requestId] = {
-    html,
-    form: form || null,
-    savedBy: user.name || user.username,
-    savedAt: new Date().toISOString(),
-  };
-
-  await logAudit(
-    user.username,
-    user.name,
-    user.role,
-    "تعديل يدوي في مذكرة",
-    `تم حفظ تعديل يدوي دائم في مذكرة الطلب رقم ${requestId} (لا يؤثر على باقي العضويات)`,
-    Number(requestId) || undefined
-  );
-  await saveDb();
-  res.json({ success: true });
-});
-
-app.delete("/api/memo-overrides/:requestId", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { requestId } = req.params;
-
-  if (db.memoOverrides && db.memoOverrides[requestId]) {
-    delete db.memoOverrides[requestId];
-    await logAudit(
-      user.username,
-      user.name,
-      user.role,
-      "استرجاع الشكل الافتراضي للمذكرة",
-      `تم إلغاء التعديل اليدوي والرجوع للقالب الافتراضي لمذكرة الطلب رقم ${requestId}`,
-      Number(requestId) || undefined
-    );
-    await saveDb();
-  }
-  res.json({ success: true });
-});
-
-// --- Audit logs fetch ---
-app.get("/api/logs/audit", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط له حق الاطلاع على سجل الحركات" });
-  }
-  res.json(db.auditLogs);
-});
-
-// Per-request change history -- open to every authenticated user, scoped
-// to the one request id asked for (never leaks unrelated admin actions).
-app.get("/api/requests/:id/logs", requireAuth, async (req, res) => {
-  const { id } = req.params;
-  const logs = (db.auditLogs || []).filter((l: any) => l.requestId !== undefined && l.requestId !== null && String(l.requestId) === String(id));
-  res.json(logs);
-});
-
-// ----- "الشيكات" (شيك المقدم / الشيكات البنكية) -----
-// Checks uploaded by the admin (matched to requests via "رقم العميل" /
-// externalId). Every non-admin role only ever sees the rows whose linked
-// request belongs to their own club. "شيك المقدم" and "الشيكات البنكية"
-// are two fully independent lists with the exact same shape/mechanism --
-// registerChecksListEndpoints wires up one set of GET/upload/delete routes
-// per list so the logic isn't duplicated.
-
-function getLatestSendChecksRequest(requestId: any, checkType: "advance" | "bank") {
-  const matches = (db.sendChecksRequests || []).filter(
-    (s: any) => String(s.requestId) === String(requestId) && s.checkType === checkType
-  );
-  if (matches.length === 0) return null;
-  return matches.reduce((latest: any, cur: any) => (cur.requestedAt > latest.requestedAt ? cur : latest));
-}
-
-function registerChecksListEndpoints(dbKey: "readyChecks" | "bankChecks", checkType: "advance" | "bank", routePrefix: string) {
-  app.get(`/api/${routePrefix}`, requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    const rows = (db[dbKey] || []).map((c: any) => {
-      const linkedRequest = c.requestId != null ? db.requests.find((r) => String(r.id) === String(c.requestId)) : null;
-      const sendReq = c.requestId != null ? getLatestSendChecksRequest(c.requestId, checkType) : null;
-      return {
-        id: c.id,
-        // The member's name comes from the linked request (matched by
-        // رقم العميل / externalId) so it is always the system's name; an
-        // uploaded name (older sheets) is only a fallback for unlinked rows.
-        name: linkedRequest?.memberName || c.name || "",
-        receivedDate: c.receivedDate || null,
-        checkDueDate: c.checkDueDate,
-        checkAmount: c.checkAmount,
-        bank: c.bank,
-        externalId: c.externalId,
-        uploadedAt: c.uploadedAt,
-        uploadedBy: c.uploadedBy,
-        requestId: c.requestId || null,
-        committeeNo: linkedRequest?.committeeNo || null,
-        committeeYear: linkedRequest?.committeeYear || null,
-        membershipNumber: linkedRequest?.membershipNumber || null,
-        paymentMethod: linkedRequest?.paymentMethod || null,
-        mobileNumber: linkedRequest?.mobileNumber || null,
-        club: linkedRequest?.club || null,
-        requestStatus: linkedRequest?.status || null,
-        sendCheckRequestId: sendReq?.id || null,
-        sendCheckStatus: sendReq?.status || null,
-        sendCheckRejectionReason: sendReq?.rejectionReason || null,
-      };
-    });
-
-    let visibleRows = user.role === "admin"
-      ? rows
-      : rows.filter((c) => c.club && isSameClub(c.club, user.club));
-
-    // "شيك المقدم": once the linked request reaches a final status
-    // (Cancelled / Deletion / Revoked) the check has already been handed
-    // over, so it drops off the page automatically. The badge count is
-    // simply "checks still on the page", so it goes down as they leave.
-    if (checkType === "advance") {
-      visibleRows = visibleRows.filter((c) => !["Cancelled", "Revoked", "Deletion"].includes(c.requestStatus || ""));
-    }
-
-    // Bank checks leave the count when the admin marks them as received.
-    const readyCount = checkType === "advance"
-      ? visibleRows.length
-      : visibleRows.filter((c) => !c.receivedDate).length;
-
-    res.json({ rows: visibleRows, readyCount });
-  });
-
-  app.post(`/api/${routePrefix}/upload`, requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية رفع شيت الشيكات" });
-    }
-
-    const { rows } = req.body;
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return res.status(400).json({ error: "الشيت فارغ أو غير صالح" });
-    }
-
-    if (!Array.isArray(db[dbKey])) db[dbKey] = [];
-
-    let updatedCount = 0;
-    let addedCount = 0;
-    let linkedCount = 0;
-
-    for (const row of rows) {
-      const externalId = String(row.externalId || "").trim();
-      if (!externalId) continue;
-
-      const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
-
-      const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-      const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
-      const entry: any = {
-        id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: row.name || existingEntry?.name || "",
-        checkDueDate: row.checkDueDate || "",
-        checkAmount: Number(row.checkAmount) || 0,
-        bank: row.bank || "",
-        externalId,
-        requestId: linkedRequest ? linkedRequest.id : null,
-        uploadedAt: new Date().toISOString(),
-        uploadedBy: user.name || user.username,
-      };
-      // Re-uploading must never wipe a "received" mark the admin already set
-      if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
-
-      if (existingIndex >= 0) {
-        db[dbKey][existingIndex] = entry;
-        updatedCount++;
-      } else {
-        db[dbKey].push(entry);
-        addedCount++;
-      }
-
-      if (linkedRequest) {
-        linkedCount++;
-        if (checkType === "advance") {
-          // Marks this request's finance-memo stage as "الشيك جاهز للاستلام"
-          // instead of "تم ارسال المذكرة الى الادارة المالية" -- harmless/inert
-          // for requests that have already moved past that stage.
-          linkedRequest.checkReadyForPickup = true;
-        }
-      }
-    }
-
-    await saveDb();
-    logAudit(
-      user.username,
-      user.name,
-      user.role,
-      "رفع شيت شيكات",
-      `تم رفع ${rows.length} صف (${addedCount} جديد، ${updatedCount} تحديث)، تم ربط ${linkedCount} منهم بطلبات موجودة`
-    );
-
-    res.json({ success: true, addedCount, updatedCount, linkedCount });
-  });
-
-  // Add a single check manually (client number only, no sheet needed).
-  app.post(`/api/${routePrefix}/manual`, requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية إضافة شيكات يدويًا" });
-    }
-    const externalId = String(req.body?.externalId || "").trim();
-    if (!externalId) {
-      return res.status(400).json({ error: "رقم العميل مطلوب" });
-    }
-    if (!Array.isArray(db[dbKey])) db[dbKey] = [];
-
-    const linkedRequest = db.requests.find((r) => String(r.externalId || "").trim() === externalId);
-    const existingIndex = db[dbKey].findIndex((c: any) => String(c.externalId || "").trim() === externalId);
-    const existingEntry = existingIndex >= 0 ? db[dbKey][existingIndex] : null;
-
-    const entry: any = {
-      id: existingEntry ? existingEntry.id : `chk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      name: req.body?.name ? String(req.body.name).trim() : (existingEntry?.name || linkedRequest?.memberName || ""),
-      checkDueDate: req.body?.checkDueDate ? String(req.body.checkDueDate).trim() : (existingEntry?.checkDueDate || ""),
-      checkAmount: req.body?.checkAmount != null ? (Number(req.body.checkAmount) || 0) : (existingEntry?.checkAmount || 0),
-      bank: req.body?.bank ? String(req.body.bank).trim() : (existingEntry?.bank || ""),
-      externalId,
-      requestId: linkedRequest ? linkedRequest.id : null,
-      uploadedAt: new Date().toISOString(),
-      uploadedBy: user.name || user.username,
-    };
-    if (existingEntry?.receivedDate) entry.receivedDate = existingEntry.receivedDate;
-
-    if (existingIndex >= 0) {
-      db[dbKey][existingIndex] = entry;
-    } else {
-      db[dbKey].push(entry);
-    }
-    if (linkedRequest && checkType === "advance") {
-      linkedRequest.checkReadyForPickup = true;
-    }
-
-    await saveDb();
-    logAudit(user.username, user.name, user.role, "إضافة شيك يدويًا", `رقم عميل ${externalId}`);
-    res.json({ success: true, entry });
-  });
-
-  if (checkType === "bank") {
-    // Admin marks a bank check as received (with a date), or undoes it.
-    // Purely informational -- never touches the request's status.
-    app.put(`/api/${routePrefix}/:id/received`, requireAuth, async (req, res) => {
-      const user = (req as any).user;
-      if (user.role !== "admin") {
-        return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تسجيل استلام الشيك" });
-      }
-      const entry = (db[dbKey] || []).find((c: any) => c.id === req.params.id);
-      if (!entry) {
-        return res.status(404).json({ error: "الصف غير موجود" });
-      }
-      const { receivedDate } = req.body;
-      if (receivedDate === null || receivedDate === undefined || receivedDate === "") {
-        delete entry.receivedDate;
-      } else if (typeof receivedDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(receivedDate)) {
-        entry.receivedDate = receivedDate;
-      } else {
-        return res.status(400).json({ error: "تاريخ الاستلام غير صالح" });
-      }
-      await saveDb();
-      logAudit(
-        user.username,
-        user.name,
-        user.role,
-        entry.receivedDate ? "تسجيل استلام شيك بنكي" : "إلغاء تسجيل استلام شيك بنكي",
-        `رقم عميل ${entry.externalId}${entry.receivedDate ? ` - تاريخ الاستلام ${entry.receivedDate}` : ""}`
-      );
-      res.json({ success: true, receivedDate: entry.receivedDate || null });
-    });
-  }
-
-  app.delete(`/api/${routePrefix}/:id`, requireAuth, async (req, res) => {
-    const user = (req as any).user;
-    if (user.role !== "admin") {
-      return res.status(403).json({ error: "الأدمن فقط لديه صلاحية حذف صفوف الشيكات" });
-    }
-
-    const index = (db[dbKey] || []).findIndex((c: any) => c.id === req.params.id);
-    if (index === -1) {
-      return res.status(404).json({ error: "الصف غير موجود" });
-    }
-    const removed = db[dbKey][index];
-    db[dbKey].splice(index, 1);
-    await saveDb();
-
-    logAudit(user.username, user.name, user.role, "حذف صف شيك", `تم حذف شيك "${removed.name}" (رقم عميل ${removed.externalId})`);
-    res.json({ success: true });
-  });
-}
-
-registerChecksListEndpoints("readyChecks", "advance", "ready-checks");
-registerChecksListEndpoints("bankChecks", "bank", "bank-checks");
-
-// ----- "إرسال شيكات" workflow -----
-// A club (or admin) asks the finance team to actually send a member's
-// checks. Admin accepts (an email goes out to the configured recipient
-// for that check type) or rejects (a reason is stored and shown back on
-// the checks-list row itself -- no email either way for a rejection).
-
-app.get("/api/send-checks-recipients", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية عرض بيانات مستلمي إيميلات إرسال الشيكات" });
-  }
-  res.json(db.sendChecksRecipients);
-});
-
-app.put("/api/send-checks-recipients", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تعديل بيانات مستلمي إيميلات إرسال الشيكات" });
-  }
-  const { checkType, name, email } = req.body;
-  if (checkType !== "advance" && checkType !== "bank" && checkType !== "inquiry") {
-    return res.status(400).json({ error: "نوع الشيك غير صالح" });
-  }
-  if (!name || !String(name).trim() || !email || !String(email).trim()) {
-    return res.status(400).json({ error: "الاسم والإيميل مطلوبين" });
-  }
-  db.sendChecksRecipients[checkType] = { name: String(name).trim(), email: String(email).trim() };
-  await saveDb();
-  res.json({ success: true, recipients: db.sendChecksRecipients });
-});
-
-app.get("/api/send-checks-requests", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية عرض طلبات إرسال الشيكات" });
-  }
-  const enriched = (db.sendChecksRequests || []).map((s: any) => {
-    const linkedRequest = db.requests.find((r) => String(r.id) === String(s.requestId));
-    return {
-      ...s,
-      memberName: linkedRequest?.memberName || null,
-      membershipNumber: linkedRequest?.membershipNumber || null,
-      externalId: linkedRequest?.externalId || null,
-      club: linkedRequest?.club || null,
-    };
-  });
-  // Newest first
-  enriched.sort((a: any, b: any) => (a.requestedAt < b.requestedAt ? 1 : -1));
-  res.json({ items: enriched });
-});
-
-app.post("/api/send-checks-requests", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  const { requestId, checkType } = req.body;
-  if (checkType !== "advance" && checkType !== "bank" && checkType !== "inquiry") {
-    return res.status(400).json({ error: "نوع الشيك غير صالح" });
-  }
-  const linkedRequest = db.requests.find((r) => String(r.id) === String(requestId));
-  if (!linkedRequest) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-  if (user.role !== "admin" && !isSameClub(linkedRequest.club, user.club)) {
-    return res.status(403).json({ error: "لا يمكنك إرسال طلب لعضوية لا تتبع نفس النادي" });
-  }
-
-  const existingPending = (db.sendChecksRequests || []).find(
-    (s: any) => String(s.requestId) === String(requestId) && s.checkType === checkType && s.status === "pending"
-  );
-  if (existingPending) {
-    return res.status(409).json({ error: "يوجد بالفعل طلب إرسال شيكات قيد الانتظار لنفس العضوية" });
-  }
-
-  const entry = {
-    id: `sc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    requestId: linkedRequest.id,
-    checkType,
-    status: "pending",
-    requestedBy: user.username,
-    requestedByName: user.name || user.username,
-    requestedByRole: user.role,
-    requestedAt: new Date().toISOString(),
-  };
-  if (!Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
-  db.sendChecksRequests.push(entry);
-  await saveDb();
-
-  logAudit(user.username, user.name, user.role, "طلب إرسال شيكات", `طلب إرسال شيكات (${checkType === "advance" ? "شيك المقدم" : "الشيكات البنكية"}) لعضوية ${linkedRequest.membershipNumber}`);
-  res.json({ success: true, item: entry });
-});
-
-app.post("/api/send-checks-requests/:id/decision", requireAuth, async (req, res) => {
-  const user = (req as any).user;
-  if (user.role !== "admin") {
-    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية اتخاذ قرار على طلبات إرسال الشيكات" });
-  }
-  const entry = (db.sendChecksRequests || []).find((s: any) => s.id === req.params.id);
-  if (!entry) {
-    return res.status(404).json({ error: "الطلب غير موجود" });
-  }
-  if (entry.status !== "pending") {
-    return res.status(409).json({ error: "تم اتخاذ قرار على هذا الطلب بالفعل" });
-  }
-
-  const { approve, rejectionReason } = req.body;
-  const linkedRequest = db.requests.find((r) => String(r.id) === String(entry.requestId));
-
-  if (!approve) {
-    if (!rejectionReason || !String(rejectionReason).trim()) {
-      return res.status(400).json({ error: "من فضلك اكتب سبب الرفض" });
-    }
-    entry.status = "rejected";
-    entry.rejectionReason = String(rejectionReason).trim();
-    entry.decidedBy = user.username;
-    entry.decidedByName = user.name || user.username;
-    entry.decidedAt = new Date().toISOString();
-    await saveDb();
-    logAudit(user.username, user.name, user.role, "رفض إرسال شيكات", `تم رفض طلب إرسال شيكات لعضوية ${linkedRequest?.membershipNumber || entry.requestId}: ${entry.rejectionReason}`);
-    return res.json({ success: true, item: entry });
-  }
-
-  // Approve -- send the actual email to the configured recipient for this check type
-  const recipient = db.sendChecksRecipients?.[entry.checkType as "advance" | "bank" | "inquiry"];
-  if (!recipient?.email) {
-    return res.status(422).json({ error: "لا يوجد إيميل مستلم مضبوط لهذا النوع من الشيكات -- من فضلك اضبطيه أولًا." });
-  }
-  const transporter = getMailer();
-  if (!transporter) {
-    return res.status(422).json({ error: "إعدادات SMTP غير مكتملة -- من فضلك اضبطيها من صفحة الإعدادات أولًا." });
-  }
-
-  const memberName = linkedRequest?.memberName || "—";
-  const membershipNumber = linkedRequest?.membershipNumber || "—";
-  const externalId = linkedRequest?.externalId || "—";
-  const club = linkedRequest?.club || "—";
-  const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
-
-  // Both templates share the same 3-row data table; only the greeting,
-  // request line, and whether the club line appears differ. All of this
-  // mail is Arabic, so it's rendered right-to-left throughout.
-  const dataTable = `
-      <table style="border-collapse:collapse;margin:12px 0">
-        <tr>
-          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">اسم العضو</td>
-          <td style="border:1px solid #ccc;padding:8px 14px">${memberName}</td>
-        </tr>
-        <tr>
-          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">رقم العضوية</td>
-          <td style="border:1px solid #ccc;padding:8px 14px">${membershipNumber}</td>
-        </tr>
-        <tr>
-          <td style="border:1px solid #ccc;padding:8px 14px;font-weight:bold;background:#f5f5f5">رقم العميل</td>
-          <td style="border:1px solid #ccc;padding:8px 14px">${externalId}</td>
-        </tr>
-      </table>`;
-
-  const html = entry.checkType === "inquiry"
-    ? `
-    <div dir="rtl" style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9;text-align:right">
-      <p>الساده الافاضل</p>
-      <p>تحيه طيبه وبعد،</p>
-      <p>برجاء الافاده بخصوص تحصيل الشيكات الخاصه بالعضو / ${memberName}</p>
-      ${dataTable}
-      <p>مع خالص الشكر،</p>
-    </div>
-  `
-    : `
-    <div dir="rtl" style="font-family:Arial,sans-serif;font-size:14px;color:#222;line-height:1.9;text-align:right">
-      <p>ا/ ${recipient.name}</p>
-      <p>تحيه طيبه وبعد،</p>
-      <p>برجاء إرسال شيكات العضو الموضح بياناته أدناه:</p>
-      ${dataTable}
-      <p>الى نادى ${club}</p>
-      <p>ولكم منا جزيل الشكر،</p>
-    </div>
-  `;
-
-  const subject = entry.checkType === "inquiry"
-    ? `استفسار شيكات - عضوية رقم ${membershipNumber}`
-    : `ارسال شيكات - عضوية رقم ${membershipNumber}`;
-
-  try {
-    await transporter.sendMail({
-      from: `Wadi Degla Cancellation Hub <${senderAddress}>`,
-      to: recipient.email,
-      subject,
-      html,
-    });
-  } catch (err: any) {
-    return res.status(502).json({ error: err?.message || "فشل إرسال الإيميل" });
-  }
-
-  entry.status = "accepted";
-  entry.decidedBy = user.username;
-  entry.decidedByName = user.name || user.username;
-  entry.decidedAt = new Date().toISOString();
-  await saveDb();
-  logAudit(user.username, user.name, user.role, "قبول إرسال شيكات", `تم قبول طلب إرسال شيكات لعضوية ${membershipNumber} وإرسال إيميل إلى ${recipient.email}`);
-  res.json({ success: true, item: entry });
-});
-
-// --- Global Error Handler ---
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("Express API Error:", err);
-  if (res.headersSent) {
-    return next(err);
-  }
-  res.status(500).json({
-    error: err?.message || "حدث خطأ غير متوقع في معالجة الطلب على الخادم",
-    details: process.env.NODE_ENV === "development" ? String(err) : undefined
-  });
-});
-
-// Vite Middleware for client loading in dev mode
-async function startServer() {
-  console.log("startServer invoked. NODE_ENV:", process.env.NODE_ENV);
-  try {
-    // Trigger DB load asynchronously so server listens immediately without blocking on DB timeouts
-    ensureDbLoaded().catch((err) => {
-      console.warn("Notice: ensureDbLoaded initial background load:", err?.message || err);
-    });
-
-    if (process.env.NODE_ENV !== "production") {
-      console.log("Initializing Vite dev server middleware...");
-      const { createServer: createViteServer } = await import("vite");
-      const vite = await createViteServer({
-        server: { middlewareMode: true },
-        appType: "spa",
-      });
-      app.use(vite.middlewares);
-      app.use("*", async (req, res, next) => {
-        const url = req.originalUrl;
+      const headers = { 'Authorization': `Bearer ${authToken}` };
+
+      // Helper to safely parse JSON response
+      const safeJson = async (r: Response) => {
+        if (!r.ok) return null;
+        const ct = r.headers.get('content-type') || '';
+        if (!ct.includes('application/json')) return null;
         try {
-          const indexPath = path.resolve(process.cwd(), "index.html");
-          if (fs.existsSync(indexPath)) {
-            let template = fs.readFileSync(indexPath, "utf-8");
-            template = await vite.transformIndexHtml(url, template);
-            res.status(200).set({ "Content-Type": "text/html" }).end(template);
-          } else {
-            next();
+          return await r.json();
+        } catch {
+          return null;
+        }
+      };
+
+      // Formulas config FIRST: every amount calculated in the browser
+      // (calculator, settlement statement, memo) must use the same saved
+      // formulas the server uses, before the requests are rendered.
+      try {
+        const resFormulas = await fetch('/api/formulas', { headers });
+        const dataFormulas = await safeJson(resFormulas);
+        if (dataFormulas) setActiveFormulasConfig(dataFormulas);
+      } catch (e) {
+        console.error('Failed to load formulas config', e);
+      }
+
+      // Requests
+      const resRequests = await fetch('/api/requests', { headers });
+      const dataRequests = await safeJson(resRequests);
+      if (dataRequests) {
+        setRequests(dataRequests);
+        // If a request's details modal happens to be open, refresh its
+        // content too instead of leaving it showing stale data.
+        setSelectedRequest((prev: any) => {
+          if (!prev) return prev;
+          const updated = dataRequests.find((r: any) => String(r.id) === String(prev.id));
+          return updated || prev;
+        });
+      }
+
+      // "الشيكات" sidebar badge: total pending check-related actions
+      // waiting on the admin -- "إرسال شيكات" (advance + bank) requests AND
+      // "استفسار شيكات" inquiries combined, since both now live as tabs
+      // inside the same "الشيكات" page. (Admin only -- the endpoint itself
+      // is admin-gated.)
+      if (currentUser?.role === 'admin') {
+        try {
+          const resSendChecks = await fetch('/api/send-checks-requests', { headers });
+          const dataSendChecks = await safeJson(resSendChecks);
+          if (dataSendChecks) {
+            const pending = (dataSendChecks.items || []).filter((i: any) => i.status === 'pending').length;
+            setSendChecksPendingCount(pending);
           }
         } catch (e) {
-          vite.ssrFixStacktrace(e as Error);
-          next(e);
+          console.error('Failed to load send-checks pending count', e);
         }
-      });
-      console.log("Vite middleware mounted successfully.");
-    } else {
-      const distPath = path.join(process.cwd(), "dist");
-      app.use(express.static(distPath));
-      app.get("*", (req, res) => {
-        res.sendFile(path.join(distPath, "index.html"));
-      });
+      }
+
+      // Dropdowns
+      const resDropdowns = await fetch('/api/dropdowns', { headers });
+      const dataDropdowns = await safeJson(resDropdowns);
+      if (dataDropdowns) {
+        if (dataDropdowns.dropdowns) {
+          setDropdowns(dataDropdowns.dropdowns);
+          if (dataDropdowns.dropdownLabels) setDropdownLabels(dataDropdowns.dropdownLabels);
+        } else {
+          setDropdowns(dataDropdowns);
+        }
+      }
+
+      // Label Names
+      const resLabels = await fetch('/api/label-names', { headers });
+      const dataLabels = await safeJson(resLabels);
+      if (dataLabels) setLabelNames(dataLabels);
+
+      // Committees
+      const resCommittees = await fetch('/api/committees', { headers });
+      const dataCommittees = await safeJson(resCommittees);
+      if (dataCommittees) setCommittees(dataCommittees);
+
+      // Custom Fields
+      const resCF = await fetch('/api/custom-fields', { headers });
+      const dataCF = await safeJson(resCF);
+      if (dataCF && Array.isArray(dataCF)) setCustomFields(dataCF);
+
+      // Audit logs (Admin only)
+      if (currentUser?.role === 'admin') {
+        const resLogs = await fetch('/api/logs/audit', { headers });
+        const dataLogs = await safeJson(resLogs);
+        if (dataLogs) setAuditLogs(dataLogs);
+      }
+    } catch (err) {
+      console.error("Error fetching data:", err);
+    }
+  };
+
+  // Manual "soft" refresh: re-pulls the latest data from the server (in
+  // case another user changed something) without navigating away from
+  // whichever tab, filters, or open details modal the person is currently on.
+  const handleManualRefresh = async () => {
+    setIsManualRefreshing(true);
+    try {
+      await fetchAllData();
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
+  // Footer horizontal scroll controls -- targets whichever table is
+  // currently registered (via ScrollBarContext) as the active scroll
+  // target, falling back to the main page content area when no table is
+  // mounted (e.g. the Dashboard, which has no wide table).
+  const getFooterScrollEl = (): HTMLElement | null => {
+    return activeTableScrollRef?.current || mainContentRef.current;
+  };
+  const handleFooterScrollRight = () => {
+    getFooterScrollEl()?.scrollBy({ left: 350, behavior: 'smooth' });
+  };
+  const handleFooterScrollLeft = () => {
+    getFooterScrollEl()?.scrollBy({ left: -350, behavior: 'smooth' });
+  };
+  const handleFooterScrollToStart = () => {
+    const el = getFooterScrollEl();
+    if (el) {
+      const isNegativeMode = el.scrollLeft <= 0;
+      el.scrollTo({ left: isNegativeMode ? 0 : 10000, behavior: 'smooth' });
+    }
+  };
+  const handleFooterScrollToEnd = () => {
+    const el = getFooterScrollEl();
+    if (el) {
+      const { scrollWidth, clientWidth, scrollLeft } = el;
+      const maxScroll = scrollWidth - clientWidth;
+      const isNegativeMode = scrollLeft <= 0;
+      el.scrollTo({ left: isNegativeMode ? -maxScroll : 0, behavior: 'smooth' });
+    }
+  };
+
+  useEffect(() => {
+    const handleCFUpdate = () => {
+      fetchAllData();
+    };
+    window.addEventListener('custom-fields-updated', handleCFUpdate);
+    return () => window.removeEventListener('custom-fields-updated', handleCFUpdate);
+  }, [authToken]);
+
+  // Automatic background sync: periodically re-pulls the latest data so
+  // changes another logged-in user makes (e.g. an admin reviewing a
+  // request) show up here without anyone needing to hit manual refresh.
+  // Paused while a request create/edit form is open, so a background pull
+  // never resets fields someone is actively typing into.
+  useEffect(() => {
+    if (!authToken || !currentUser) return;
+    const intervalId = setInterval(() => {
+      if (requestViewMode === 'list') {
+        fetchAllData();
+      }
+    }, 45000); // every 45 seconds
+    return () => clearInterval(intervalId);
+  }, [authToken, currentUser, requestViewMode]);
+
+  useEffect(() => {
+    if (currentUser) {
+      fetchAllData();
+      if (currentUser.role !== 'admin' && ['cancellation_status', 'memo', 'reconcile', 'reports', 'formulas', 'dropdowns_lists', 'emails', 'settings'].includes(activeTab)) {
+        setActiveTab('dashboard');
+      }
+    }
+  }, [currentUser]);
+
+  useEffect(() => {
+    (window as any).refreshLabelNames = () => {
+      if (authToken) {
+        fetch('/api/label-names', { headers: { 'Authorization': `Bearer ${authToken}` } })
+          .then(res => res.json())
+          .then(data => setLabelNames(data))
+          .catch(err => console.error(err));
+      }
+    };
+    return () => {
+      delete (window as any).refreshLabelNames;
+    };
+  }, [authToken]);
+
+  const handleLoginSuccess = (token: string, user: any) => {
+    localStorage.setItem('wd_token', token);
+    setAuthToken(token);
+    setCurrentUser(user);
+    if (user.role === 'club') {
+      setDashFilters(f => ({ ...f, club: user.club || '' }));
+    }
+    if (user.role === 'first_manager') {
+      setActiveTab('first_manager_pending');
+    }
+    if (user.role === 'admin') {
+      setShowLoginCommitteePrompt(true);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('wd_token');
+    setAuthToken(null);
+    setCurrentUser(null);
+    setRequests([]);
+    setAuditLogs([]);
+  };
+
+  // Profile Password Change handler
+  const handleProfilePasswordChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileError('');
+    setProfileSuccess('');
+
+    if (!profileCurrentPassword || !profileNewPassword || !profileConfirmPassword) {
+      setProfileError('يرجى ملء جميع الحقول');
+      return;
+    }
+    if (profileNewPassword !== profileConfirmPassword) {
+      setProfileError('كلمتا المرور الجديدتان غير متطابقتين');
+      return;
+    }
+    if (profileNewPassword === '123') {
+      setProfileError('لا يمكن استخدام كلمة المرور الافتراضية 123 كخيار آمن');
+      return;
     }
 
-    const server = app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Wadi Degla Cancellation Server running on http://localhost:${PORT}`);
+    try {
+      const res = await fetch('/api/auth/change-password', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          currentPassword: profileCurrentPassword,
+          newPassword: profileNewPassword
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProfileSuccess('تم تغيير كلمة المرور بنجاح!');
+        setProfileCurrentPassword('');
+        setProfileNewPassword('');
+        setProfileConfirmPassword('');
+      } else {
+        setProfileError(data.error || 'فشل تغيير كلمة المرور');
+      }
+    } catch (err: any) {
+      setProfileError(err.message);
+    }
+  };
+
+  // Profile Signature upload for Sector Manager (png file convert to base64)
+  const handleSignatureUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.type !== 'image/png') {
+      alert('يرجى رفع صورة توقيع بصيغة PNG شفافة فقط لدمجها بمذكرات الإلغاء');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      setSignatureFile(base64);
+
+      try {
+        const res = await fetch(`/api/users/${currentUser.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ signatureUrl: base64 })
+        });
+        if (res.ok) {
+          alert('تم رفع وتثبيت توقيعك وختمك الإلكتروني بنجاح على نظام التسويات!');
+          verifySession(authToken!);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Saving Cancellation Request (Create/Edit)
+  const handleSaveRequest = async (payload: any) => {
+    try {
+      const method = requestViewMode === 'create' ? 'POST' : 'PUT';
+      const url = requestViewMode === 'create' ? '/api/requests' : `/api/requests/${editingRequest.id}`;
+
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        setRequestViewMode('list');
+        setEditingRequest(null);
+        fetchAllData();
+      } else {
+        alert(data.error || 'فشل حفظ الطلب، يرجى التحقق من الرقم المالي والعضوية الفرعية');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBulkReview = async (ids: (number | string)[], reviewed: boolean) => {
+    if (!ids || ids.length === 0) return;
+
+    // 1. Optimistic update in local state immediately so UI reflects change instantly without lag
+    const strIds = ids.map((id) => String(id).trim());
+    setRequests((prev) =>
+      prev.map((r) => (strIds.includes(String(r.id).trim()) ? { ...r, reviewed } : r))
+    );
+
+    // Also update selectedRequest if opened in modal
+    if (selectedRequest && strIds.includes(String(selectedRequest.id).trim())) {
+      setSelectedRequest((prev: any) => (prev ? { ...prev, reviewed } : prev));
+    }
+
+    try {
+      const res = await fetch('/api/requests/bulk-review', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ ids, reviewed })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.requests && Array.isArray(data.requests)) {
+          setRequests(data.requests);
+        } else {
+          fetchAllData();
+        }
+        const autoSentCount = data.autoSentToFirstManagerCount || 0;
+        if (autoSentCount > 0) {
+          alert(
+            `${ids.length > 1 ? `تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!\n` : ''}تم إرسال ${autoSentCount} طلب/طلبات تلقائيًا للمدير الأول بمرفقاتها (المدة أكثر من 3 شهور/شهر).`
+          );
+        } else if (ids.length > 1) {
+          alert(`تم تحديث حالة المراجعة لعدد ${ids.length} طلبات بنجاح!`);
+        }
+      } else {
+        fetchAllData();
+        alert(data.error || 'فشل تحديث حالة المراجعة');
+      }
+    } catch (err) {
+      console.error("Error updating review status:", err);
+      fetchAllData();
+    }
+  };
+
+  const handleDeleteRequestPrompt = (id: number | string) => {
+    const targetReq = requests.find((r) => String(r.id) === String(id));
+    setDeleteModalState({
+      isOpen: true,
+      requestId: id,
+      memberName: targetReq?.memberName || '',
+      membershipNumber: targetReq?.membershipNumber || '',
+      isLoading: false,
+    });
+  };
+
+  const executeDeleteRequest = async () => {
+    if (!deleteModalState.requestId) return;
+    setDeleteModalState(prev => ({ ...prev, isLoading: true }));
+
+    try {
+      const res = await fetch(`/api/requests/${deleteModalState.requestId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchAllData();
+        if (selectedRequest && String(selectedRequest.id) === String(deleteModalState.requestId)) {
+          setSelectedRequest(null);
+        }
+      } else {
+        alert(data.error || 'حدث خطأ أثناء محاولة حذف الطلب');
+      }
+    } catch (err: any) {
+      alert(err.message || 'تعذر الاتصال بالسيرفر لحذف الطلب');
+    } finally {
+      setDeleteModalState({
+        isOpen: false,
+        requestId: null,
+        memberName: '',
+        membershipNumber: '',
+        isLoading: false,
+      });
+    }
+  };
+
+  const handleBulkDeleteRequestsPrompt = (ids: (number | string)[]) => {
+    if (!ids || ids.length === 0) return;
+    setBulkDeleteModalState({
+      isOpen: true,
+      ids,
+      isLoading: false,
+    });
+  };
+
+  const executeBulkDeleteRequest = async () => {
+    const ids = bulkDeleteModalState.ids;
+    if (!ids || ids.length === 0) return;
+
+    setBulkDeleteModalState(prev => ({ ...prev, isLoading: true }));
+
+    try {
+      const res = await fetch('/api/requests/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ ids })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRequests(prev => prev.filter(r => !ids.map(String).includes(String(r.id))));
+        fetchAllData();
+        if (selectedRequest && ids.map(String).includes(String(selectedRequest.id))) {
+          setSelectedRequest(null);
+        }
+        setBulkDeleteModalState({ isOpen: false, ids: [], isLoading: false });
+      } else {
+        alert(data.error || 'حدث خطأ أثناء الحذف الجماعي');
+        setBulkDeleteModalState(prev => ({ ...prev, isLoading: false }));
+      }
+    } catch (err: any) {
+      alert(err.message || 'تعذر الاتصال بالخادم للحذف الجماعي');
+      setBulkDeleteModalState(prev => ({ ...prev, isLoading: false }));
+    }
+  };
+
+  const handleClearAllRequests = async () => {
+    if (!window.confirm(`⚠️ تحذير مسح كافة البيانات!\n\nهل أنت متأكد تماماً من مسح جميع طلبات الإلغاء؟ (عدد الطلبات الحالية: ${requests.length})\n\nسيتم إفراغ قاعدة البيانات بالكامل وتصفير القائمة لتتمكن من رفع البيانات من جديد.`)) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/requests/clear-all', {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert(`تم مسح كافة طلبات الإلغاء بنجاح (عدد ${data.count ?? requests.length} طلب). يمكنك الآن إعادة رفع البيانات.`);
+        setRequests([]);
+        fetchAllData();
+        setSelectedRequest(null);
+      } else {
+        alert(data.error || 'حدث خطأ أثناء مسح طلبات الإلغاء');
+      }
+    } catch (err: any) {
+      alert(err.message || 'تعذر الاتصال بالخادم لمسح البيانات');
+    }
+  };
+
+  // Workflow Action buttons (inside details modal)
+  const handleSendToFirstManager = async (reqId: number) => {
+    const foundReq = requests.find(r => r.id === reqId);
+    if (foundReq) {
+      setSendToFirstManagerTarget(foundReq);
+    } else {
+      // Fallback
+      try {
+        const res = await fetch(`/api/requests/${reqId}/send-first-manager`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (res.ok) {
+          alert('تم إرسال الطلب لمهام واعتمادات المدير الأول بنجاح!');
+          fetchAllData();
+          setSelectedRequest(null);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
+
+  const handleExecuteSendToFirstManager = async (reqId: number, pdfData: string, pdfName: string, pdfSize: number, notes: string) => {
+    setIsSendingToFirstManager(true);
+    try {
+      const res = await fetch(`/api/requests/${reqId}/send-first-manager`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}` 
+        },
+        body: JSON.stringify({ pdfData, pdfName, pdfSize, notes })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert('تم إرسال الطلب ومستندات أوراق العضو (PDF) بنجاح إلى مهام واعتمادات المدير الأول!');
+        setSendToFirstManagerTarget(null);
+        fetchAllData();
+        if (selectedRequest && selectedRequest.id === reqId) {
+          setSelectedRequest(null);
+        }
+      } else {
+        alert(data.error || 'حدث خطأ أثناء إرسال الطلب');
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('تعذر الاتصال بالخادم لإرسال الطلب');
+    } finally {
+      setIsSendingToFirstManager(false);
+    }
+  };
+
+  const handleAttachFirstManagerPdf = async (reqId: number, pdfData: string, pdfName: string, pdfSize: number, notes: string) => {
+    try {
+      const res = await fetch(`/api/requests/${reqId}/attach-first-manager-pdf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ pdfData, pdfName, pdfSize, notes })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        alert('تم حفظ وتحديث ملف الـ PDF بنجاح!');
+        fetchAllData();
+      } else {
+        alert(data.error || 'حدث خطأ أثناء تحديث ملف PDF');
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('تعذر الاتصال بالخادم لتحديث ملف PDF');
+    }
+  };
+
+  const handleFirstManagerDecision = async (reqId: number, approve: boolean, comments: string, rejectionDate?: string) => {
+    setIsSubmittingFirstManagerModal(true);
+    try {
+      const res = await fetch(`/api/requests/${reqId}/first-manager-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ approve, comments, rejectionDate })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'تعذر حفظ قرار المدير المالي الأول');
+      }
+      alert(approve ? 'تم اعتماد الطلب بنجاح وتحويله لرئيس قطاع المالية!' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
+      await fetchAllData();
+      setSelectedRequest(null);
+      setFirstManagerModalRequest(null);
+    } catch (err: any) {
+      alert(err.message || 'حدث خطأ أثناء حفظ قرار المدير المالي الأول');
+      console.error(err);
+    } finally {
+      setIsSubmittingFirstManagerModal(false);
+    }
+  };
+
+  const handleSendToSectorManager = async (reqId: number) => {
+    try {
+      const res = await fetch(`/api/requests/${reqId}/send-sector-manager`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      });
+      if (res.ok) {
+        alert('تم تحويل الطلب لملف الاعتماد الفوري والختم الإلكتروني لرئيس قطاع المالية!');
+        fetchAllData();
+        setSelectedRequest(null);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleSectorManagerDecision = async (reqId: number, approve: boolean, comments: string) => {
+    try {
+      const res = await fetch(`/api/requests/${reqId}/sector-manager-action`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({ approve, comments })
+      });
+      if (res.ok) {
+        alert(approve ? 'تم الاعتماد المالي النهائي للطلب وتثبيت الختم والتوقيع الأزرق برقم اللجنة!' : 'تم رفض الطلب');
+        fetchAllData();
+        setSelectedRequest(null);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Update receipt received checkbox (Admin Only)
+  const handleUpdateReceiptStatus = async (reqId: number, received: boolean) => {
+    try {
+      const res = await fetch(`/api/requests/${reqId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${authToken}`
+        },
+        body: JSON.stringify({
+          receiptReceived: received,
+          receiptReceivedDate: received ? new Date().toISOString().split('T')[0] : null
+        })
+      });
+      if (res.ok) {
+        fetchAllData();
+        // Update details modal instantly
+        const updated = await res.json();
+        setSelectedRequest(updated.request);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'حدث خطأ أثناء تحديث حالة الاستلام');
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // Excel Reconciliation engine
+  const handleReconcileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setReconResults([]);
+    setReconSuccess('');
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        
+        // Parse rows as JSON
+        const rows: any[] = XLSX.utils.sheet_to_json(sheet);
+        
+        // Expected columns mapping (Arabic or English)
+        // e.g. "رقم العضوية" or "membershipNumber", "حالة النظام" or "systemStatus"
+        const mappedRows = rows.map(r => {
+          const mNum = r['رقم العضوية'] || r['membershipNumber'] || r['Membership Number'] || '';
+          const sStatus = r['حالة النظام'] || r['systemStatus'] || r['System Status'] || '';
+          return { membershipNumber: String(mNum).trim(), systemStatus: String(sStatus).trim() };
+        }).filter(r => r.membershipNumber);
+
+        if (mappedRows.length === 0) {
+          alert('ملف الإكسل لا يحتوي على بيانات مطابقة صحيحة. يرجى التأكد من احتواء الملف على عمود "رقم العضوية" وعمود "حالة النظام".');
+          return;
+        }
+
+        // Send to backend to update DB matching fields
+        const res = await fetch('/api/requests/reconcile-system-status', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ mappings: mappedRows })
+        });
+
+        const backendData = await res.json();
+        if (res.ok) {
+          // Compute mismatches lists locally for UI presentation
+          const mismatches: any[] = [];
+          backendData.requests.forEach((req: any) => {
+            if (req.systemStatus && req.status !== req.systemStatus) {
+              mismatches.push({
+                membershipNumber: req.membershipNumber,
+                memberName: req.memberName,
+                club: req.club,
+                status: req.status,
+                systemStatus: req.systemStatus,
+                mismatchReason: `حالة التسوية (${translateStatus(req.status)}) لا تتطابق مع حالة السي آر إم الموحد (${translateStatus(req.systemStatus)})`
+              });
+            }
+          });
+
+          setReconResults(mismatches);
+          setReconSuccess(`تمت معالجة ملف المطابقة بنجاح لمطابقة لجان الإلغاء! تم فحص وتحديث ${backendData.updatedCount} عضوية.`);
+          fetchAllData();
+        } else {
+          alert(backendData.error);
+        }
+      } catch (err: any) {
+        alert(`فشل قراءة ملف إكسل: ${err.message}`);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Download Template for Bulk Company / Bank Debts Upload
+  const handleDownloadCompanyDebtsTemplate = () => {
+    const nonCompany = ["نقدا", "نقداً", "شيكات", "فيزا", "ABK", "عضوية دولية", "المشرق", "QNB", "تحويل بنكي"];
+    const companyRequests = requests.filter(r => {
+      const method = r.paymentMethod || '';
+      return method === 'ABK' || method === 'المشرق' || !nonCompany.includes(method.trim());
     });
 
-    server.on("error", (err: any) => {
-      console.error("HTTP server error on port " + PORT + ":", err);
+    const targetList = companyRequests.length > 0 ? companyRequests : requests;
+
+    const dataToExport = targetList.map((r, idx) => ({
+      'م': idx + 1,
+      'رقم العضوية': r.membershipNumber || '',
+      'القرض بإسم': r.loanUnderName || 'لا يوجد',
+      'الرقم القومى': r.nationalId || '',
+      'طريقة الدفع': r.paymentMethod || '',
+      'مديونية البنوك/الشركات': r.debtABKCompanies || 0
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'مديونيات_البنوك_والشركات');
+    XLSX.writeFile(workbook, `نموذج_رفع_مديونيات_الشركات_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  // Bulk Import Company / Bank Debts Handler
+  const handleImportCompanyDebtsExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDebtImportSuccess('');
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const mappedRows = parseDebtWorkbook(data);
+
+        if (mappedRows.length === 0) {
+          alert('ملف الإكسل لا يحتوي على بيانات مطابقة صحيحة. يرجى التأكد من احتواء الملف على عمود "رقم العضوية" وعمود "مديونية البنوك/الشركات".');
+          return;
+        }
+
+        const res = await fetch('/api/requests/import-company-debts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ rows: mappedRows })
+        });
+
+        const backendData = await res.json();
+        if (res.ok) {
+          if (backendData.requests) {
+            setRequests(backendData.requests);
+          }
+
+          let msg = `تم تحديث مديونية البنوك/الشركات بنجاح لعدد ${backendData.updatedCount} طلب (بإجمالي مديونيات ${backendData.totalDebtAmount ? backendData.totalDebtAmount.toLocaleString() : 0} ج.م)`;
+          if (backendData.nonZeroDebtCount !== undefined) {
+            msg += ` — [تم إدخال ${backendData.nonZeroDebtCount} مديونية برصيد فعلي]`;
+          }
+          if (backendData.zeroDebtCount > 0 && backendData.nonZeroDebtCount === 0) {
+            msg += ` (تنبيه: جميع قيم المديونيات في الملف قيمتها صفر 0 ج.م)`;
+          }
+          if (backendData.notFoundCount > 0) {
+            msg += ` (تنبيه: يوجد ${backendData.notFoundCount} رقم عضوية غير مسجل بالمنظومة: ${backendData.notFoundList.slice(0, 5).join(', ')}${backendData.notFoundList.length > 5 ? '...' : ''})`;
+          }
+          setDebtImportSuccess(msg);
+          fetchAllData();
+        } else {
+          alert(backendData.error || 'حدث خطأ أثناء تحديث المديونيات');
+        }
+      } catch (err: any) {
+        alert(`فشل قراءة شيت المديونيات: ${err.message}`);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  // Bulk Excel Migration Loader (For super admin to upload existing records with full exported columns)
+  const handleBulkImportExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = new Uint8Array(event.target?.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        
+        const rows: any[] = XLSX.utils.sheet_to_json(sheet);
+
+        
+        // Which columns actually exist anywhere in this sheet (by header
+        // name) -- lets us tell "column not in this sheet at all" (leave
+        // the field untouched on update) apart from "column exists but
+        // this cell is blank" (fall back to the usual default, same as
+        // before). Without this, uploading a partial sheet (e.g. only up
+        // to "نادي الفرع") would silently overwrite every other field on
+        // an existing record with these defaults.
+        const presentHeaders = new Set(rows.flatMap((r) => Object.keys(r)));
+        const hasCol = (...candidates: string[]) => candidates.some((c) => presentHeaders.has(c));
+
+        // Cell cleaning shared by the whole import: invisible characters
+        // (RTL marks, zero-width, non-breaking spaces) and odd spacing must
+        // not turn a blank-looking cell into a "value" (or hide a real one).
+        const INVISIBLE_CHARS = /[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u00A0]/g;
+        const cleanCell = (v: any) => String(v ?? '').replace(INVISIBLE_CHARS, ' ').replace(/\s+/g, ' ').trim();
+        // First NON-blank cell among the candidate column names ('' if none).
+        // A blank cell therefore means "no value in this sheet" -> the field is
+        // sent as `undefined` and an existing record keeps its current value.
+        const pick = (row: any, ...names: string[]) => {
+          for (const n of names) {
+            const v = cleanCell(row[n]);
+            if (v) return v;
+          }
+          return '';
+        };
+        const numPick = (row: any, ...names: string[]) => {
+          const v = pick(row, ...names);
+          return v === '' ? undefined : parseSmartNumber(v);
+        };
+
+        // Club column lookup: spelling variants of the header
+        // (النادي / النادى / نادي الفرع / Club / الفرع) and duplicated
+        // headers (Excel-read as "النادي_1"); first NON-blank value wins.
+        const normHeader = (h: string) =>
+          cleanCell(h).replace(/[إأآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/_\d+$/, '').toLowerCase();
+        const CLUB_HEADER_NAMES = new Set(['نادي الفرع', 'النادي', 'نادي', 'الفرع', 'فرع', 'club', 'branch']);
+        const clubHeaders = Array.from(presentHeaders).filter((h) => CLUB_HEADER_NAMES.has(normHeader(h)));
+        const hasClubCol = clubHeaders.length > 0;
+
+        // Map excel columns to database fields
+        const mappedRequests = rows.map(r => {
+          // Result mapping
+          let resultVal = 'Pending';
+          const resCol = r['قرار اللجنة'] || r['النتيجة'] || r['Result'];
+          if (resCol) {
+            const sRes = String(resCol).trim();
+            if (sRes.includes('موافق') || sRes === 'Accepted') resultVal = 'Accepted';
+            else if (sRes.includes('مرفوض') || sRes === 'Rejected') resultVal = 'Rejected';
+            else resultVal = 'Pending';
+          }
+
+          // Status mapping
+          let statusVal = 'Pending';
+          const stCol = r['حالة الإلغاء'] || r['الحالة'] || r['Status'];
+          if (stCol) {
+            const sSt = String(stCol).trim();
+            if (sSt.includes('تم الإلغاء') || sSt === 'Cancelled') statusVal = 'Cancelled';
+            else if (sSt.includes('مسترد') || sSt === 'Revoked') statusVal = 'Revoked';
+            else if (sSt.includes('شطب') || sSt === 'Deletion') statusVal = 'Deletion';
+            else if (sSt.includes('مرفوض') || sSt === 'Rejected') statusVal = 'Rejected';
+            else statusVal = 'Pending';
+          }
+
+          // 1. سبب الرفض (Rejection Reason)
+          const rejReasonCol = r['سبب الرفض'] || r['سبب رفض اللجنة'] || r['ملاحظات الرفض'] || r['Rejection Reason'] || '';
+          const rejReasonStr = String(rejReasonCol).trim();
+          if (rejReasonStr && resultVal !== 'Accepted') {
+            resultVal = 'Rejected';
+          }
+
+          // 2. ايصال المقدم (Advance Receipt)
+          const receiptCol = hasCol('ايصال المقدم', 'إيصال المقدم', 'استلام ايصال المقدم', 'استلام إيصال المقدم', 'أصل الإيصال', 'حالة أصل الإيصال', 'Advance Receipt', 'receiptReceived');
+          const rawReceipt = r['ايصال المقدم'] ?? r['إيصال المقدم'] ?? r['استلام ايصال المقدم'] ?? r['استلام إيصال المقدم'] ?? r['أصل الإيصال'] ?? r['حالة أصل الإيصال'] ?? r['Advance Receipt'] ?? r['receiptReceived'];
+          // Not just "column missing -> blank cell" but "column missing
+          // anywhere in this sheet at all": leaves this field untouched on
+          // an update instead of silently resetting it to false, same as
+          // the other partial-update-safe fields above.
+          let receiptReceivedVal: boolean | undefined = undefined;
+          if (rawReceipt !== undefined && rawReceipt !== null && String(rawReceipt).trim() !== '') {
+            receiptReceivedVal = false;
+            if (typeof rawReceipt === 'boolean') {
+              receiptReceivedVal = rawReceipt;
+            } else if (typeof rawReceipt === 'number') {
+              receiptReceivedVal = rawReceipt === 1;
+            } else {
+              const str = String(rawReceipt).trim().toLowerCase();
+              if (['نعم', 'تم', 'تم الاستلام', 'مستلم', 'استلام', 'true', '1', 'yes', '✓', '✓ تم الاستلام'].includes(str) || (str !== 'لا' && str !== '0' && str !== 'false' && str !== 'لم يتم' && str !== 'لم يتم الاستلام')) {
+                receiptReceivedVal = true;
+              }
+            }
+          }
+
+          // 3. المراجعة (Reviewed)
+          const reviewedCol = hasCol('المراجعة', 'تم المراجعة', 'حالة المراجعة', 'مراجعة', 'مُراجع', 'مراجع', 'Reviewed', 'Is Reviewed', 'isReviewed', 'reviewed');
+          const rawReviewed = r['المراجعة'] ?? r['تم المراجعة'] ?? r['حالة المراجعة'] ?? r['مراجعة'] ?? r['مُراجع'] ?? r['مراجع'] ?? r['Reviewed'] ?? r['Is Reviewed'] ?? r['isReviewed'] ?? r['reviewed'];
+          let reviewedVal: boolean | undefined = undefined;
+          if (rawReviewed !== undefined && rawReviewed !== null && String(rawReviewed).trim() !== '') {
+            reviewedVal = false;
+            if (typeof rawReviewed === 'boolean') {
+              reviewedVal = rawReviewed;
+            } else if (typeof rawReviewed === 'number') {
+              reviewedVal = rawReviewed === 1;
+            } else {
+              const str = String(rawReviewed).trim().toLowerCase();
+              if (['نعم', 'تم', 'تم المراجعة', 'مُراجع', 'مراجع', 'راجع', 'true', '1', 'yes', '✓', '✓ تم المراجعة', 'reviewed'].includes(str) || (str !== 'لا' && str !== '0' && str !== 'false' && str !== 'لم يتم' && str !== 'غير مراجع' && str !== 'غير مُراجع')) {
+                reviewedVal = true;
+              }
+            }
+          }
+
+          // 4. تم الارسال (approvalSentToFirstManager)
+          const approvalSentCol = hasCol('تم الارسال', 'تم الإرسال', 'إرسال للمدير الأول', 'ارسال للمدير الاول', 'الارسال للمدير الاول', 'تم تحويله للمدير', 'تم التحويل للمدير الأول', 'approvalSentToFirstManager', 'Approval Sent');
+          const rawSent = r['تم الارسال'] ?? r['تم الإرسال'] ?? r['إرسال للمدير الأول'] ?? r['ارسال للمدير الاول'] ?? r['الارسال للمدير الاول'] ?? r['تم تحويله للمدير'] ?? r['تم التحويل للمدير الأول'] ?? r['approvalSentToFirstManager'] ?? r['Approval Sent'];
+          let approvalSentVal: boolean | undefined = undefined;
+          if (rawSent !== undefined && rawSent !== null && String(rawSent).trim() !== '') {
+            approvalSentVal = false;
+            if (typeof rawSent === 'boolean') {
+              approvalSentVal = rawSent;
+            } else if (typeof rawSent === 'number') {
+              approvalSentVal = rawSent === 1;
+            } else {
+              const str = String(rawSent).trim().toLowerCase();
+              if (['تم', 'نعم', 'تم الارسال', 'تم الإرسال', 'مرسل', 'مُرسل', 'ارسال', 'إرسال', 'true', '1', 'yes', '✓'].includes(str) || (str !== 'لا' && str !== '0' && str !== 'false' && str !== 'لم يتم' && str !== 'غير مرسل' && str !== 'غير مُرسل')) {
+                approvalSentVal = true;
+              }
+            }
+          }
+
+          // 5. قرار المدير الأول (First Manager Approval)
+          const rawFmCol = r['قرار المدير الأول'] || r['اعتماد المدير الأول'] || r['المدير الأول'] || r['First Manager Decision'] || r['firstManagerApproved'];
+          let fmApprovedVal: boolean | undefined = undefined;
+          if (rawFmCol !== undefined && rawFmCol !== null && rawFmCol !== '') {
+            const sFm = String(rawFmCol).trim().toLowerCase();
+            if (sFm.includes('موافق') || sFm.includes('معتمد') || sFm === 'accepted' || sFm === 'true' || sFm === '1') {
+              fmApprovedVal = true;
+            } else if (sFm.includes('مرفوض') || sFm === 'rejected' || sFm === 'false' || sFm === '0') {
+              fmApprovedVal = false;
+            }
+          }
+
+          // 6. تاريخ حالة الإلغاء / الرفض
+          const rawStatusDateCol = r['تاريخ حالة الإلغاء'] || r['تاريخ الرفض'] || r['تاريخ القرار'] || r['تاريخ موافقة اللجنة'] || r['تاريخ الإلغاء'] || r['Status Date'] || r['Rejection Date'] || '';
+          let rawStatusDateFormatted = formatDateCustom(rawStatusDateCol);
+
+          const mNum = String(r['رقم العضوية'] || r['Membership Number'] || '').trim();
+          const mName = String(r['اسم العضو المشترك'] || r['اسم العضو'] || r['Member Name'] || '').trim();
+
+          const parsedApprovalDate = formatDateCustom(r['تاريخ موافقة اللجنة'] || r['Approval Date'] || '') || String(r['تاريخ موافقة اللجنة'] || '').trim();
+
+          return {
+            membershipNumber: mNum,
+            memberName: mName,
+            // No fallback to the member name here: the server falls back to it
+            // only when CREATING a record, so updating other columns never
+            // overwrites an existing, different loan-holder name.
+            loanUnderName: pick(r, 'القرض بإسم', 'القرض باسم', 'Loan Under Name') || undefined,
+            nationalId: String(r['الرقم القومي'] || r['الرقم القومى'] || r['National ID'] || '').trim(),
+            externalId: String(r['رقم العميل'] || r['External Id'] || '').trim(),
+            subscriptionDate: pick(r, 'تاريخ الاشتراك', 'Subscription Date') || undefined,
+            requestDate: pick(r, 'تاريخ الطلب', 'Request Date') || undefined,
+            type: r['تصنيف فترة الاشتراك'] ? String(r['تصنيف فترة الاشتراك']).trim() : undefined,
+            membershipType: pick(r, 'نوع العضوية', 'Membership Type') || undefined,
+            // Note: intentionally no 'Sheraton' (or any) fallback when the
+            // column exists but the specific cell is blank -- club stays
+            // genuinely blank in that case so it surfaces in the
+            // missing-club report below, rather than masking the gap.
+            club: hasClubCol
+              ? (clubHeaders.map((h) => cleanCell(r[h])).find((v) => v) || '')
+              : undefined,
+            paymentMethod: pick(r, 'طريقة الدفع', 'Payment Method') || undefined,
+            accountNumber: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || r['Account Number'] || '').trim(),
+            accountNumberABK: String(r['رقم الحساب لـ ABK'] || r['رقم الحساب'] || '').trim(),
+            documents: pick(r, 'المستندات', 'Documents') || undefined,
+            cancellationReason: pick(r, 'سبب الإلغاء', 'سبب الالغاء', 'سبب طلب الالغاء', 'Cancellation Reason') || undefined,
+            cancellationReasonDetail: String(r['السبب بالتفصيل'] || r['السبب التفصيلي'] || r['Detailed Reason'] || 'بدون أسباب تفصيلية').trim(),
+            firstManagerComments: String(r['ملاحظات المدير الأول'] || r['تعليق المدير الأول'] || '').trim() || undefined,
+            firstManagerApproved: fmApprovedVal,
+            salesPerson: pick(r, 'اسم البائع', 'مسؤول المبيعات', 'Sales Person') || undefined,
+            // Numbers: a BLANK cell = no change (undefined). To set a value to
+            // zero, write 0 explicitly in the sheet.
+            subscriptionValue: numPick(r, 'إجمالي قيمة العضوية', 'قيمة الاشتراك', 'قيمة العضوية', 'إجمالي الاشتراك', 'Subscription Value'),
+            transferValue: numPick(r, 'قيمة التحويلة (قرض)', 'قيمة التحويلة', 'Transfer Value'),
+            cashAmount: numPick(r, 'مقدم نقدي', 'المبلغ نقداً', 'نقدا', 'نقداً', 'Cash Amount'),
+            visaAmount: numPick(r, 'مقدم فيزا', 'المبلغ فيزا', 'فيزا', 'Visa Amount'),
+            checksPaid: numPick(r, 'الشيكات المسددة', 'شيكات مسددة', 'Checks Paid'),
+            checksUnpaid: numPick(r, 'الشيكات غير مسددة', 'الشيكات الغير مسددة', 'شيكات غير مسددة', 'Checks Unpaid'),
+            annualRenewalDue: numPick(r, 'التجديد السنوي المستحق', 'التجديد المستحق'),
+            debtABKCompanies: numPick(r, 'مديونية البنوك/الشركات', 'مديونية البنك / الشركات', 'مديونية ABK+Companies', 'مديونية', 'debtABKCompanies'),
+            refundAmount: r['مبلغ الاسترداد الكلي'] !== undefined || r['مبلغ الاسترداد'] !== undefined || r['صافي الاسترداد'] !== undefined || r['المبلغ المسترد'] !== undefined || r['القيمة المستردة'] !== undefined || r['Refund Amount'] !== undefined
+              ? parseSmartNumber(r['مبلغ الاسترداد الكلي'] || r['مبلغ الاسترداد'] || r['صافي الاسترداد'] || r['المبلغ المسترد'] || r['القيمة المستردة'] || r['Refund Amount'])
+              : undefined,
+            result: resultVal,
+            status: statusVal,
+            committeeNo: String(r['رقم اللجنة'] || '').trim(),
+            committeeYear: hasCol('سنة اللجنة', 'تاريخ موافقة اللجنة')
+              ? formatCommitteeYear(r['سنة اللجنة'] || r['تاريخ موافقة اللجنة'] || '')
+              : undefined,
+            approvalDate: parsedApprovalDate,
+            statusDate: rawStatusDateFormatted || ((resultVal === 'Rejected' || statusVal === 'Rejected' || statusVal === 'Cancelled') ? (parsedApprovalDate || formatDateCustom(r['تاريخ الطلب']) || new Date().toISOString().split('T')[0]) : ''),
+            receiptReceived: receiptReceivedVal,
+            receiptReceivedDate: receiptReceivedVal ? (String(r['تاريخ استلام الأصل'] || '').trim() || new Date().toISOString().split('T')[0]) : null,
+            reviewed: reviewedVal,
+            approvalSentToFirstManager: approvalSentVal,
+            clubNote: String(r['ملاحظات الفرع'] || '').trim(),
+            adminNote: String(r['ملاحظات الادمن'] || r['ملاحظات الأدمن'] || rejReasonStr || '').trim(),
+            mobileNumber: String(r['رقم الموبايل'] || '').trim(),
+            currency: pick(r, 'العملة', 'Currency') || undefined,
+            exceptions: String(r['الاستثناء'] || '').trim(),
+            exceptionType: String(r['نوع الاستثناء'] || '').trim(),
+          };
+        }).filter(r => r.membershipNumber && r.memberName);
+
+        if (mappedRequests.length === 0) {
+          alert('لم يتم العثور على أي بيانات صحيحة في الملف. يرجى التأكد من احتواء الشيت على أعمدة (رقم العضوية) و (اسم العضو المشترك).');
+          return;
+        }
+
+        // Rows where the sheet DOES have a club column but a specific cell
+        // came out blank -- surfaced to the admin right after import so it
+        // gets caught immediately. If the sheet has no club column at all
+        // (a partial/targeted update sheet), club is legitimately
+        // `undefined` for every row and this check is skipped entirely --
+        // that's not a data gap, it's just a sheet that isn't touching club.
+        const missingClubRows = hasClubCol
+          ? mappedRequests.filter(r => !r.club || !r.club.trim())
+          : [];
+
+        // Upload mapped requests to bulk importer
+        const res = await fetch('/api/requests/import', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ rows: mappedRequests })
+        });
+
+        const importRes = await res.json();
+        if (res.ok) {
+          let doneMsg = `تهانينا! تم استيراد ودمج ${importRes.importedCount} سجل بنجاح لقاعدة بيانات التسويات، وتخطي ${importRes.skippedCount} سجلات متكررة أو غير مكتملة!`;
+          if (missingClubRows.length > 0) {
+            const nums = missingClubRows.slice(0, 15).map((m: any) => m.membershipNumber).join('، ');
+            doneMsg += `\n\nتنبيه: ${missingClubRows.length} عضوية خانة النادي فيها فاضية في الشيت نفسه (مش مقروءة من الملف): ${nums}${missingClubRows.length > 15 ? ' ...' : ''}`;
+          }
+          alert(doneMsg);
+          fetchAllData();
+        } else {
+          alert(importRes.error || 'حدث خطأ أثناء استيراد البيانات');
+        }
+      } catch (err: any) {
+        alert(`فشل دمج ملف استيراد الحسابات: ${err.message}`);
+      } finally {
+        // Reset file input
+        e.target.value = '';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  // Custom Report EXCEL Export (With Dynamic Custom Fields)
+  const handleExportExcelReport = (customData?: any[]) => {
+    let listToExport = Array.isArray(customData) ? customData : requests;
+
+    // Security: club users can only ever export their own club's data,
+    // regardless of what's currently shown/filtered on screen.
+    if (currentUser?.role === 'club') {
+      listToExport = listToExport.filter((r) => isSameClub(r.club, currentUser.club));
+    }
+
+    if (!listToExport || listToExport.length === 0) {
+      alert('لا توجد بيانات متاحة للتصدير حالياً طبقاً للتصفية المحددة');
+      return;
+    }
+
+    const exportableCustomFields = [...customFields]
+      .filter(f => f.showInExport)
+      .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+    const exportData = listToExport.map((r, idx) => {
+      const row: Record<string, any> = {
+        'م (تسلسلي)': idx + 1,
+        'رقم العضوية': r.membershipNumber || '',
+        'اسم العضو المشترك': r.memberName || '',
+        'القرض بإسم': r.loanUnderName || r.loanInNameOf || r.memberName || '—',
+        'الرقم القومي': r.nationalId || '',
+        'رقم العميل': r.externalId || '',
+        'تاريخ الاشتراك': r.subscriptionDate || '',
+        'تاريخ الطلب': r.requestDate || '',
+        'فترة الاشتراك باليوم': r.days ?? 0,
+        'تصنيف فترة الاشتراك': r.type || '',
+        'نوع العضوية': r.membershipType || '',
+        'نادي الفرع': r.club || '',
+        'طريقة الدفع': r.paymentMethod || '',
+        'العملة': r.currency || 'جم',
+        'رقم الحساب لـ ABK': r.accountNumberABK || r.accountNumber || '—',
+        'المستندات': r.documents || '',
+        'سبب الإلغاء': r.cancellationReason || r.reasons || '',
+        'السبب بالتفصيل': r.cancellationReasonDetail || r.detailedReason || '',
+        'قرار اللجنة': r.result === 'Accepted' ? 'موافق' : r.result === 'Rejected' ? 'مرفوض' : 'قيد النظر',
+        'سبب الرفض': (r.result === 'Rejected' || r.status === 'Rejected' || r.firstManagerApproved === false || r.sectorManagerApproved === false) ? (getRejectionReason(r) || '—') : '—',
+        'رقم اللجنة': formatCommitteeWithYear(r.committeeNo, r.committeeYear, r.approvalDate || r.requestDate || r.createdAt),
+        'تاريخ موافقة اللجنة': r.approvalDate ? formatDateCustom(r.approvalDate) : '—',
+        'قيمة الاشتراك': r.subscriptionValue ?? 0,
+        'قيمة التحويلة (قرض)': r.transferValue ?? 0,
+        'مقدم نقدي': r.cashAmount ?? 0,
+        'مقدم فيزا': r.visaAmount ?? 0,
+        'مبلغ المقدم': r.advancePaid ?? ((r.cashAmount || 0) + (r.visaAmount || 0)),
+        'ايصال المقدم': r.receiptReceived ? 'تم الاستلام' : 'لم يتم',
+        'الشيكات المسددة': r.checksPaid ?? 0,
+        'الشيكات غير مسددة': r.checksUnpaid ?? 0,
+        'التجديد السنوي المستحق': r.annualRenewalDue ?? 0,
+        'المصاريف الإدارية': r.adminFees ?? 0,
+        'مقابل الانتفاع': r.usageFee ?? 0,
+        'مصاريف الفيزا 2%': r.visaFees2Percent ?? 0,
+        'إجمالي مبلغ الخصم': r.discountAmount ?? 0,
+        'مديونية البنوك/الشركات': r.debtABKCompanies ?? 0,
+        'مبلغ الاسترداد الكلي': r.refundAmount ?? 0,
+        'رد للعميل (Companies)': r.refundToClient ?? 'Not Required',
+        'فرق مديونية ABK': r.abkDebtDifference ?? 'Not Required',
+        'حالة الإلغاء': translateStatus(r.status),
+        'تاريخ حالة الإلغاء': r.statusDate ? formatDateCustom(r.statusDate) : (r.approvalDate ? formatDateCustom(r.approvalDate) : '—'),
+        'المراجعة': r.reviewed ? 'تم المراجعة' : 'لم يتم',
+        'تم الارسال': r.approvalSentToFirstManager ? 'تم' : 'لم يتم',
+        'ملاحظات الفرع': r.clubNote || '—',
+        'ملاحظات الادمن': r.adminNote || '—',
+        'اسم البائع': r.salesPerson || '—',
+        'رقم الموبايل': r.mobileNumber || '—',
+        'الاستثناء': r.isException ? (r.exceptions ? `نعم - ${r.exceptions}` : 'نعم') : (r.exceptions || (r.adminFeesOverride !== undefined || r.usageFeeOverride !== undefined ? 'استثناء يدوي' : 'لا يوجد'))
+      };
+
+      // Dynamic Custom Fields mapping
+      exportableCustomFields.forEach(cf => {
+        const val = r.customValues?.[cf.key];
+        if (val === undefined || val === null || val === '') {
+          row[cf.label] = '—';
+        } else if (typeof val === 'boolean') {
+          row[cf.label] = val ? 'نعم' : 'لا';
+        } else {
+          row[cf.label] = val;
+        }
+      });
+
+      // Ensure 'نوع الاستثناء' is at the absolute end of Excel report
+      row['نوع الاستثناء'] = r.exceptionType || '—';
+
+      return row;
     });
-  } catch (err) {
-    console.error("Fatal error starting server:", err);
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'تسويات العضويات الملغاة');
+    XLSX.writeFile(workbook, `Wadi_Degla_Cancellations_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white font-sans text-right" dir="rtl">
+        <div className="text-center space-y-3">
+          <RefreshCw className="h-10 w-10 animate-spin mx-auto text-amber-400" />
+          <p className="text-sm font-bold">جاري تحميل المنظومة وتدقيق الهوية الآمنة...</p>
+        </div>
+      </div>
+    );
   }
-}
 
-// Only start the HTTP listener if not running in a Serverless environment like Vercel
-if (!process.env.VERCEL) {
-  startServer().catch((e) => console.error("Unhandled rejection in startServer:", e));
-}
+  if (!currentUser) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
 
-export { app };
-export default app;
+  return (
+    <div className="flex h-screen w-full bg-slate-50 font-sans text-slate-800 overflow-hidden text-right" dir="rtl">
+      
+      {/* Sidebar Navigation */}
+      <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-68'} bg-slate-900 text-white flex flex-col shrink-0 no-print transition-all duration-300 ease-in-out border-l border-slate-800 shadow-xl z-30`} dir="rtl">
+        {/* Right Sidebar Header */}
+        <div className={`p-4 flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-3' : 'justify-between'} border-b border-slate-800/80 bg-slate-900/90 backdrop-blur-xs`}>
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 bg-linear-to-br from-amber-400 to-amber-500 rounded-xl flex items-center justify-center font-black text-neutral-950 shrink-0 shadow-md ring-2 ring-amber-400/20">
+              WDC
+            </div>
+            {!isSidebarCollapsed && (
+              <div className="text-right min-w-0">
+                <h1 className="text-xs font-black tracking-wider text-white uppercase truncate">WADI DEGLA CLUBS</h1>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <p className="text-[10px] font-bold text-amber-400/90 truncate">نظام إلغاء العضويات</p>
+                </div>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={toggleSidebar}
+            className="p-2 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded-xl border border-slate-800 hover:border-slate-700 transition-all cursor-pointer shadow-2xs"
+            title={isSidebarCollapsed ? "توسيع القائمة الجانبية" : "طّي القائمة الجانبية"}
+          >
+            {isSidebarCollapsed ? <PanelRightOpen className="w-4 h-4 text-amber-400" /> : <PanelRightClose className="w-4 h-4" />}
+          </button>
+        </div>
+        
+        {/* Navigation Menu */}
+        <nav className="flex-1 p-3 space-y-1 text-right overflow-y-auto custom-scrollbar">
+          
+          {/* 1. لوحة المراقبة والإحصائيات */}
+          <button type="button"
+            onClick={() => { setRequestViewMode('list'); setActiveTab('dashboard'); }}
+            title="لوحة المراقبة والإحصائيات"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'dashboard' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+            }`}
+          >
+            <TrendingUp className={`w-4 h-4 shrink-0 ${activeTab === 'dashboard' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+            {!isSidebarCollapsed && <span>لوحة المراقبة والإحصائيات</span>}
+          </button>
+
+          {/* 2. متابعة طلبات الإلغاء (متاح لجميع المستخدمين بما في ذلك المدير الأول للاطلاع على كافة الطلبات لجميع الأندية) */}
+          <button type="button"
+            onClick={() => { setRequestViewMode('list'); setActiveTab('requests'); }}
+            title="متابعة طلبات الإلغاء"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'requests' && requestViewMode !== 'create' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+            }`}
+          >
+            <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+              <Layers className={`w-4 h-4 shrink-0 ${activeTab === 'requests' && requestViewMode !== 'create' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && (
+                <span>متابعة طلبات الإلغاء</span>
+              )}
+            </div>
+            {requests.length > 0 && (
+              <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
+                activeTab === 'requests' && requestViewMode !== 'create' ? 'bg-neutral-950 text-amber-400' : 'bg-neutral-800 text-amber-400'
+              }`}>
+                {requests.length}
+              </span>
+            )}
+          </button>
+
+          {/* 3. طلبات تم اعتمادها (خاص بالمدير الأول: سجل الطلبات التي اتخذ فيها قرار قبول أو رفض) */}
+          {currentUser.role === 'first_manager' && (
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_decided'); }}
+              title="طلبات تم اعتمادها"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'first_manager_decided' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <FileCheck className={`w-4 h-4 shrink-0 ${activeTab === 'first_manager_decided' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>طلبات تم اعتمادها</span>}
+              </div>
+              {firstManagerDecidedCount > 0 && (
+                <span className={`text-[10px] font-bold font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full ${
+                  activeTab === 'first_manager_decided' ? 'bg-neutral-950 text-amber-400' : 'bg-neutral-800 text-emerald-400'
+                }`} title="إجمالي الطلبات المعتمدة والمرفوضة">
+                  {firstManagerDecidedCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* 4. مراجعة واتخاذ قرار (خاص بالمدير الأول: الطلبات المحالة وفي انتظار اتخاذ القرار) */}
+          {currentUser.role === 'first_manager' && (
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_pending'); }}
+              title="مراجعة واتخاذ قرار"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'first_manager_pending' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <ShieldCheck className={`w-4 h-4 shrink-0 ${activeTab === 'first_manager_pending' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>مراجعة واتخاذ قرار</span>}
+              </div>
+              {firstManagerPendingCount > 0 && (
+                <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات بانتظار قرار المدير الأول">
+                  {firstManagerPendingCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* طلب إلغاء جديد (متاح لجميع المستخدمين والمدير الأول) */}
+          <button type="button"
+            onClick={() => { setRequestViewMode('create'); setActiveTab('requests'); }}
+            title="تسجيل طلب إلغاء جديد"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'requests' && requestViewMode === 'create' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-slate-800 hover:text-amber-400'
+            }`}
+          >
+            <CheckCircle className={`w-4 h-4 shrink-0 ${activeTab === 'requests' && requestViewMode === 'create' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+            {!isSidebarCollapsed && <span>تسجيل طلب إلغاء جديد</span>}
+          </button>
+
+          {/* 4. إيصال المقدم */}
+          {currentUser.role !== 'first_manager' && currentUser.username !== 'manager1' && (
+            <button type="button" onClick={() => setActiveTab('receipts')}
+                            title="إيصال المقدم"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'receipts' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Receipt className={`w-4 h-4 shrink-0 ${activeTab === 'receipts' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>إيصال المقدم</span>}
+            </button>
+          )}
+
+          {/* 4.5 أرشيف المستندات والمرفقات */}
+          <button type="button" onClick={() => setActiveTab('attachments')}
+                        title="أرشيف المستندات والمرفقات"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'attachments' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+            }`}
+          >
+            <Paperclip className={`w-4 h-4 shrink-0 ${activeTab === 'attachments' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+            {!isSidebarCollapsed && <span>أرشيف</span>}
+          </button>
+
+          {/* 4.6 الشيكات (شيك المقدم / الشيكات البنكية / استفسار شيكات) */}
+          <button type="button" onClick={() => setActiveTab('ready_checks')}
+                        title="الشيكات"
+            className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === 'ready_checks' 
+                ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+            }`}
+          >
+            <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+              <CreditCard className={`w-4 h-4 shrink-0 ${activeTab === 'ready_checks' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>الشيكات</span>}
+            </div>
+            {currentUser.role === 'admin' && sendChecksPendingCount > 0 && (
+              <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs animate-pulse`} title="طلبات إرسال شيكات واستفسار شيكات بانتظار القرار">
+                {sendChecksPendingCount}
+              </span>
+            )}
+          </button>
+
+          {/* 5. مديونية الشركات */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('reconcile')}
+                            title="مديونية الشركات"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'reconcile' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <FileSpreadsheet className={`w-4 h-4 shrink-0 ${activeTab === 'reconcile' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>مديونية الشركات</span>}
+            </button>
+          )}
+
+          {/* 5.5 التقارير Reports */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('reports')}
+                            title="التقارير"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'reports'
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <BarChart3 className={`w-4 h-4 shrink-0 ${activeTab === 'reports' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>التقارير</span>}
+            </button>
+          )}
+
+          {/* 6. طباعة المذكرة Memo */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('memo')}
+                            title="طباعة المذكرة (Memo)"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'memo' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Printer className={`w-4 h-4 shrink-0 ${activeTab === 'memo' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>طباعة المذكرة (Memo)</span>}
+            </button>
+          )}
+
+          {/* 7. تحديث وتحديد حالة الإلغاء */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('cancellation_status')}
+                            title="تحديث وتحديد حالة الإلغاء"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'cancellation_status' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <FileCheck2 className={`w-4 h-4 shrink-0 ${activeTab === 'cancellation_status' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>تحديث وتحديد حالة الإلغاء</span>}
+            </button>
+          )}
+
+          {/* 8. متابعة مهام واعتمادات (Admin view) */}
+          {currentUser.role === 'admin' && (
+            <button type="button"
+              onClick={() => { setRequestViewMode('list'); setActiveTab('first_manager_hub'); }}
+              title="متابعة مهام واعتمادات"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'first_manager_hub' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+                <ShieldCheck className={`w-4 h-4 shrink-0 ${activeTab === 'first_manager_hub' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+                {!isSidebarCollapsed && <span>متابعة مهام واعتمادات</span>}
+              </div>
+              {firstManagerPendingCount > 0 && (
+                <span className={`text-[10px] font-black font-mono ${isSidebarCollapsed ? 'absolute -top-1 -right-1 px-1.5 py-0.2' : 'px-2 py-0.5'} rounded-full bg-rose-500 text-white shadow-xs`} title="طلبات بانتظار قرار المدير الأول">
+                  {firstManagerPendingCount}
+                </span>
+              )}
+            </button>
+          )}
+
+          {/* Divider for System Administration & Configurations */}
+          {currentUser.role === 'admin' && (
+            <div className="pt-2 pb-1">
+              <div className="border-t border-neutral-900"></div>
+              {!isSidebarCollapsed && (
+                <span className="px-3 pt-2 text-[10px] font-bold text-neutral-500 uppercase tracking-wider block">
+                  إعدادات النظام والتهيئة
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* 9. المعادلات والقواعد الحسابية */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('formulas')}
+                            title="المعادلات والقواعد الحسابية"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'formulas' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Calculator className={`w-4 h-4 shrink-0 ${activeTab === 'formulas' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>المعادلات والقواعد الحسابية</span>}
+            </button>
+          )}
+
+          {/* 10. قوائم الاختيار (Dropdown lists) */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('dropdowns_lists')}
+                            title="Dropdown lists (قوائم الاختيار)"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'dropdowns_lists' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <ListFilter className={`w-4 h-4 shrink-0 ${activeTab === 'dropdowns_lists' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>Dropdown lists (قوائم الاختيار)</span>}
+            </button>
+          )}
+
+          {/* 11. مركز البريد والرسائل */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('emails')}
+                            title="مركز البريد والرسائل"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'emails' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Mail className={`w-4 h-4 shrink-0 ${activeTab === 'emails' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>مركز البريد والرسائل</span>}
+            </button>
+          )}
+
+          {/* 12. الإعدادات والنسخ الفني */}
+          {currentUser.role === 'admin' && (
+            <button type="button" onClick={() => setActiveTab('settings')}
+                            title="الإعدادات والنسخ الفني"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'settings' 
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10' 
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Settings className={`w-4 h-4 shrink-0 ${activeTab === 'settings' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>الإعدادات والنسخ الفني</span>}
+            </button>
+          )}
+        </nav>
+        
+        {/* User Info & Footer */}
+        <div className="p-3.5 border-t border-slate-800 bg-slate-900/90">
+          <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center flex-col gap-2' : 'justify-between'}`}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-xl bg-amber-400 overflow-hidden border border-amber-300/30 flex items-center justify-center font-black text-[11px] text-neutral-950 shrink-0 shadow-2xs">
+                {userDisplayName ? userDisplayName.substring(0, 2).toUpperCase() : 'WD'}
+              </div>
+              {!isSidebarCollapsed && (
+                <div className="text-right min-w-0">
+                  <p className="text-xs font-bold leading-tight text-white truncate">{userDisplayName}</p>
+                  <button 
+                    onClick={() => setShowProfileModal(true)}
+                    className="text-[10px] text-amber-400 font-bold hover:text-amber-300 hover:underline block text-right mt-0.5 truncate"
+                  >
+                    {translateRole(currentUser.role)}
+                  </button>
+                </div>
+              )}
+            </div>
+            <button
+              onClick={handleLogout}
+              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-950/30 rounded-xl transition-all cursor-pointer"
+              title="تسجيل الخروج"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex flex-col overflow-hidden">
+        {/* Top Header */}
+        <header className="h-16 bg-white border-b border-slate-200/90 flex items-center justify-between px-6 shrink-0 no-print shadow-2xs">
+          <div className="flex items-center gap-3">
+            {/* Collapse/Expand Toggle Button */}
+            <button
+              onClick={toggleSidebar}
+              className="p-2 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors flex items-center justify-center cursor-pointer shadow-2xs"
+              title={isSidebarCollapsed ? "عرض القائمة الجانبية" : "طّي القائمة الجانبية لتوسيع الشاشة"}
+            >
+              <Menu className="w-4 h-4 text-amber-500" />
+            </button>
+            <div className="h-4 w-px bg-slate-200"></div>
+            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500">
+              <span className="text-slate-400">اللجنة الحالية:</span>
+              <span className="text-amber-600 bg-amber-50 px-2.5 py-0.5 rounded-lg border border-amber-200/70 font-mono font-black">
+                {activeCommitteeFormatted}
+              </span>
+            </div>
+            <div className="h-4 w-px bg-slate-200"></div>
+            <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
+              <span className="text-slate-400">مرحباً بك،</span>
+              <span className="font-bold text-slate-800 bg-slate-100 px-3 py-1 rounded-xl border border-slate-200 flex items-center gap-2 shadow-2xs">
+                <User className="w-3.5 h-3.5 text-amber-500" />
+                <span>{userDisplayName}</span>
+                <span className="bg-amber-400 text-neutral-950 text-[10px] font-black px-2 py-0.5 rounded-lg shadow-2xs">
+                  {translateRole(currentUser.role)}
+                </span>
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              onClick={handleManualRefresh}
+              disabled={isManualRefreshing}
+              title="تحديث البيانات (Refresh)"
+              className="p-2 text-slate-600 hover:text-amber-600 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors flex items-center justify-center cursor-pointer shadow-2xs disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <RefreshCw className={`w-4 h-4 text-amber-500 ${isManualRefreshing ? 'animate-spin' : ''}`} />
+            </button>
+            <div className="flex gap-1">
+              <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-400 text-neutral-950 shadow-2xs">AR</span>
+              <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-slate-100 text-slate-400 border border-slate-200">EN</span>
+            </div>
+            {(currentUser.role === 'sector_manager' || currentUser.role === 'admin') && (
+              <button
+                type="button"
+                onClick={handleExportExcelReport}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-neutral-900 text-amber-400 border border-neutral-800 hover:bg-neutral-850 hover:text-amber-300 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-sm active:scale-95"
+              >
+                <Download className="h-3.5 w-3.5 text-amber-400" />
+                <span>تصدير البيانات (Excel)</span>
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Page Content Workspace */}
+        <div ref={mainContentRef} className="flex-1 p-6 md:p-8 overflow-y-auto overflow-x-auto space-y-6">
+        
+        {/* TAB WORKFLOW INJECTION */}
+
+        {/* Tab 1: Dashboard View */}
+        {activeTab === 'dashboard' && (
+          <div className="space-y-6">
+            {currentUser?.role === 'admin' && (
+              <CommitteeManager 
+                user={currentUser}
+                committees={committees}
+                authToken={authToken || ''}
+                onRefresh={fetchAllData}
+                showAsModal={false}
+              />
+            )}
+            <Dashboard 
+              requests={requests} 
+              dropdowns={dropdowns} 
+              user={currentUser} 
+              filters={dashFilters}
+              setFilters={setDashFilters}
+              labelNames={labelNames}
+            />
+          </div>
+        )}
+
+        {/* Tab 2: Requests CRUD Section */}
+        {activeTab === 'requests' && (
+          <>
+            {requestViewMode === 'list' && (
+              <RequestsList 
+                requests={requests} 
+                user={currentUser} 
+                dropdowns={dropdowns} 
+                onEditRequest={(r) => {
+                  setEditingRequest(r);
+                  setRequestViewMode('edit');
+                }}
+                onDeleteRequest={handleDeleteRequestPrompt}
+                onCreateNew={() => setRequestViewMode('create')}
+                onBulkReview={handleBulkReview}
+                onBulkDelete={handleBulkDeleteRequestsPrompt}
+                onRefresh={fetchAllData}
+                onImportExcel={handleBulkImportExcel}
+                onExportExcel={handleExportExcelReport}
+                onClearAll={handleClearAllRequests}
+                labelNames={labelNames}
+                onFirstManagerDecision={handleFirstManagerDecision}
+                onSendToFirstManager={handleSendToFirstManager}
+              />
+            )}
+
+            {requestViewMode === 'create' && (
+              <RequestForm 
+                user={currentUser} 
+                dropdowns={dropdowns} 
+                existingRequests={requests}
+                onSave={handleSaveRequest} 
+                onCancel={() => setRequestViewMode('list')}
+                labelNames={labelNames}
+                customFields={customFields}
+              />
+            )}
+
+            {requestViewMode === 'edit' && (
+              <RequestForm 
+                request={editingRequest}
+                user={currentUser} 
+                dropdowns={dropdowns} 
+                existingRequests={requests}
+                onSave={handleSaveRequest} 
+                onCancel={() => {
+                  setRequestViewMode('list');
+                  setEditingRequest(null);
+                }}
+                labelNames={labelNames}
+                customFields={customFields}
+              />
+            )}
+          </>
+        )}
+
+        {/* Tab: First Manager Decided Requests (طلبات تم اعتمادها) */}
+        {activeTab === 'first_manager_decided' && (
+          <FirstManagerHub
+            mode="decided"
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            labelNames={labelNames}
+            onRefresh={fetchAllData}
+            onExportExcel={handleExportExcelReport}
+            onFirstManagerDecision={handleFirstManagerDecision}
+            onAttachPdf={handleAttachFirstManagerPdf}
+          />
+        )}
+
+        {/* Tab: First Manager Pending Review & Decision (مراجعة واتخاذ قرار) */}
+        {activeTab === 'first_manager_pending' && (
+          <FirstManagerHub
+            mode="pending"
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            labelNames={labelNames}
+            onRefresh={fetchAllData}
+            onExportExcel={handleExportExcelReport}
+            onFirstManagerDecision={handleFirstManagerDecision}
+            onAttachPdf={handleAttachFirstManagerPdf}
+          />
+        )}
+
+        {/* Tab: First Manager Approvals & Tasks Hub (All view / Admin fallback) */}
+        {activeTab === 'first_manager_hub' && (
+          <FirstManagerHub
+            mode="all"
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            labelNames={labelNames}
+            onRefresh={fetchAllData}
+            onExportExcel={handleExportExcelReport}
+            onFirstManagerDecision={handleFirstManagerDecision}
+            onAttachPdf={handleAttachFirstManagerPdf}
+          />
+        )}
+
+        {/* Tab 3: Print Hub View */}
+        {activeTab === 'print' && (
+          <PrintHub 
+            request={editingRequest} 
+            user={currentUser} 
+            onBack={() => {
+              setActiveTab('requests');
+              setRequestViewMode('list');
+              setEditingRequest(null);
+            }}
+            labelNames={labelNames}
+            customFields={customFields}
+          />
+        )}
+
+        {/* Tab: Attachments & Documents Search Archive (All Users & All Clubs) */}
+        {activeTab === 'attachments' && (
+          <AttachmentsArchive 
+            user={currentUser}
+            onRefreshRequests={fetchAllData}
+          />
+        )}
+
+        {/* Tab: Ready Checks (شيكات جاهزة للاستلام) -- Admin uploads/sees all, everyone else sees their own club's rows only */}
+        {activeTab === 'ready_checks' && (
+          <ReadyChecks
+            user={currentUser}
+            authToken={authToken || ''}
+            onDataChanged={fetchAllData}
+          />
+        )}
+
+        {/* Tab Memo: Memo Printing Center (Admin only) */}
+        {activeTab === 'memo' && currentUser.role === 'admin' && (
+          <Memo 
+            requests={requests}
+            request={editingRequest}
+            user={currentUser}
+            onRefresh={fetchAllData}
+            onBack={() => {
+              setActiveTab('requests');
+              setRequestViewMode('list');
+              setEditingRequest(null);
+            }}
+          />
+        )}
+
+        {/* Advance Receipts Center */}
+        {activeTab === 'receipts' && currentUser.role !== 'first_manager' && currentUser.username !== 'manager1' && (
+          <AdvanceReceipts 
+            requests={requests}
+            user={currentUser}
+            onUpdateReceiptStatus={handleUpdateReceiptStatus}
+            labelNames={labelNames}
+            dropdowns={dropdowns}
+            onRefresh={fetchAllData}
+          />
+        )}
+
+        {/* Cancellation Status Management Tab (Admin only) */}
+        {activeTab === 'cancellation_status' && currentUser.role === 'admin' && (
+          <CancellationStatusManager
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            onRefresh={fetchAllData}
+            labelNames={labelNames}
+          />
+        )}
+
+        {/* Tab 4: Simulated Emails Center */}
+        {activeTab === 'emails' && currentUser.role === 'admin' && (
+          <EmailTemplates 
+            request={editingRequest || requests[0]} 
+            user={currentUser}
+            onSendSuccess={fetchAllData}
+          />
+        )}
+
+        {/* Tab 5: System Status Reconciliation & Bank Debts Uploader */}
+        {activeTab === 'reconcile' && currentUser.role === 'admin' && (
+          <CompanyAndABKDebtsManager
+            requests={requests}
+            user={currentUser}
+            dropdowns={dropdowns}
+            authToken={authToken || ''}
+            onRefresh={fetchAllData}
+            onDownloadTemplate={handleDownloadCompanyDebtsTemplate}
+            onImportExcel={handleImportCompanyDebtsExcel}
+            onBulkImportRequests={handleBulkImportExcel}
+            importSuccessMsg={debtImportSuccess}
+          />
+        )}
+
+        {/* Tab 5.5: Reports -- tagged debt import batches (Company + Committee), re-downloadable with extra columns */}
+        {activeTab === 'reports' && currentUser.role === 'admin' && (
+          <Reports
+            requests={requests}
+            dropdowns={dropdowns}
+            committees={committees}
+            authToken={authToken || ''}
+            user={currentUser}
+          />
+        )}
+
+        {/* Formulas Management Tab (Admin only) */}
+        {activeTab === 'formulas' && currentUser.role === 'admin' && (
+          <FormulasManager
+            user={currentUser}
+            authToken={authToken || ''}
+            onRefreshAll={fetchAllData}
+          />
+        )}
+
+        {/* Dropdown Lists Management Tab (Admin only) */}
+        {activeTab === 'dropdowns_lists' && currentUser.role === 'admin' && (
+          <DropdownsManager
+            user={currentUser}
+            dropdowns={dropdowns}
+            dropdownLabels={dropdownLabels}
+            onRefreshDropdowns={fetchAllData}
+          />
+        )}
+
+        {/* Tab 6: Settings panel (Admin only) */}
+        {activeTab === 'settings' && currentUser.role === 'admin' && (
+          <SettingsPanel 
+            user={currentUser} 
+            dropdowns={dropdowns}
+            dropdownLabels={dropdownLabels} 
+            onRefreshDropdowns={fetchAllData}
+          />
+        )}
+
+      </div>
+
+      {/* Bottom Left-Right Scroll Bar */}
+      <footer className="h-9 bg-white border-t border-slate-200 px-4 flex items-center justify-center gap-2 shrink-0 no-print flex-row-reverse">
+        <MoveHorizontal className="w-4 h-4 text-amber-500 shrink-0" />
+        <button
+          type="button"
+          onClick={handleFooterScrollToStart}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى اليمين"
+        >
+          <ChevronsRight className="w-4 h-4 text-amber-600" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollRight}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يميناً"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollLeft}
+          className="p-1.5 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-bold rounded-lg transition-all flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="تحريك يساراً"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <button
+          type="button"
+          onClick={handleFooterScrollToEnd}
+          className="p-1.5 bg-white hover:bg-amber-50 border border-slate-300 rounded-lg text-slate-700 hover:text-amber-700 transition-colors flex items-center justify-center cursor-pointer shadow-2xs shrink-0 active:scale-95"
+          title="الانتقال لأقصى الشمال"
+        >
+          <ChevronsLeft className="w-4 h-4 text-amber-600" />
+        </button>
+      </footer>
+    </main>
+
+      {/* --- PROFILE / PASSWORD CHANGE MODAL --- */}
+      {showProfileModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 text-right no-print" dir="rtl">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-slate-100">
+            <h3 className="font-bold text-slate-800 text-sm border-b pb-2 flex items-center gap-1.5">
+              <Users className="h-5 w-5 text-amber-500" />
+              إدارة ملف المستخدم الحالي والتوقيع
+            </h3>
+
+            {profileSuccess && (
+              <div className="p-3 bg-amber-400/10 text-amber-600 rounded-lg text-xs font-bold">
+                {profileSuccess}
+              </div>
+            )}
+            {profileError && (
+              <div className="p-3 bg-rose-50 text-rose-800 rounded-lg text-xs">
+                {profileError}
+              </div>
+            )}
+
+            {/* Profile Signature Manager (For Sector Manager only) */}
+            {currentUser.role === 'sector_manager' && (
+              <div className="space-y-2.5 border-b pb-4">
+                <span className="block text-xxs font-bold text-slate-500">الختم الإلكتروني والتوقيع الرقمي (PNG شفاف)</span>
+                <p className="text-[10px] text-slate-400 leading-normal">ارفع صورة توقيعك الشخصي باللون الأزرق المفرغ (الخلفية شفافة). سيقوم النظام بلصقها فوراً على أي مذكرة صرف فنية تعتمدها.</p>
+                
+                {signatureFile ? (
+                  <div className="relative border p-2 rounded-xl flex items-center justify-center bg-slate-50">
+                    <img src={signatureFile} alt="Signature Uploaded" className="max-h-16 mix-blend-multiply" />
+                    <button
+                      onClick={() => setSignatureFile(null)}
+                      className="absolute top-1 right-1 p-0.5 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[9px] font-bold"
+                    >
+                      إزالة التوقيع
+                    </button>
+                  </div>
+                ) : (
+                  <label className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer block text-center">
+                    <span>رفع التوقيع الشخصي</span>
+                    <input
+                      type="file"
+                      accept="image/png"
+                      onChange={handleSignatureUpload}
+                      className="hidden"
+                    />
+                  </label>
+                )}
+              </div>
+            )}
+
+            {/* Password Changer */}
+            <form onSubmit={handleProfilePasswordChange} className="space-y-3 text-xs">
+              <span className="block text-xxs font-bold text-slate-500">تعديل وتحديث كلمة المرور الخاصة بك:</span>
+              
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-0.5">كلمة المرور الحالية</label>
+                <input
+                  type="password"
+                  required
+                  value={profileCurrentPassword}
+                  onChange={(e) => setProfileCurrentPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-0.5">كلمة المرور الجديدة</label>
+                <input
+                  type="password"
+                  required
+                  value={profileNewPassword}
+                  onChange={(e) => setProfileNewPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-slate-400 mb-0.5">تأكيد كلمة المرور الجديدة</label>
+                <input
+                  type="password"
+                  required
+                  value={profileConfirmPassword}
+                  onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2"
+                />
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2 bg-amber-400 hover:bg-amber-500 text-neutral-950 font-black rounded-lg cursor-pointer transition-all shadow"
+              >
+                تحديث كلمة المرور
+              </button>
+            </form>
+
+            <button
+              onClick={() => {
+                setShowProfileModal(false);
+                setProfileError('');
+                setProfileSuccess('');
+              }}
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-500 font-bold text-xs rounded-lg cursor-pointer"
+            >
+              إغلاق
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* --- ADMIN LOGIN COMMITTEE APPROVAL PROMPT MODAL --- */}
+      {showLoginCommitteePrompt && currentUser?.role === 'admin' && (
+        <CommitteeManager 
+          user={currentUser}
+          committees={committees}
+          authToken={authToken || ''}
+          onRefresh={fetchAllData}
+          showAsModal={true}
+          onCloseModal={() => setShowLoginCommitteePrompt(false)}
+        />
+      )}
+
+      {/* Request Deletion Confirm Modal */}
+      <ConfirmModal
+        isOpen={deleteModalState.isOpen}
+        title="تأكيد حذف طلب إلغاء العضوية"
+        message={`هل أنت متأكد تماماً من رغبتك في حذف طلب المشترك "${deleteModalState.memberName}" (رقم العضوية: ${deleteModalState.membershipNumber}) نهائياً من قاعدة البيانات والمنظومة؟\n\nتنبيه: لا يمكن التراجع عن هذه العملية بعد إتمامها.`}
+        confirmText="نعم، حذف الطلب نهائياً"
+        cancelText="إلغاء الأمر"
+        type="danger"
+        icon="trash"
+        isLoading={deleteModalState.isLoading}
+        onConfirm={executeDeleteRequest}
+        onClose={() => setDeleteModalState({ isOpen: false, requestId: null, memberName: '', membershipNumber: '', isLoading: false })}
+      />
+
+      {/* Bulk Requests Deletion Confirm Modal */}
+      <ConfirmModal
+        isOpen={bulkDeleteModalState.isOpen}
+        title={`تأكيد مسح (${bulkDeleteModalState.ids.length}) طلبات محددة`}
+        message={`هل أنت متأكد تماماً من رغبتك في حذف عدد (${bulkDeleteModalState.ids.length}) طلب/طلبات من التحديد نهائياً من قاعدة البيانات والمنظومة؟\n\nتنبيه: لا يمكن التراجع عن هذه العملية بعد إتمامها.`}
+        confirmText={`نعم، مسح ${bulkDeleteModalState.ids.length} طلبات نهائياً`}
+        cancelText="إلغاء الأمر"
+        type="danger"
+        icon="trash"
+        isLoading={bulkDeleteModalState.isLoading}
+        onConfirm={executeBulkDeleteRequest}
+        onClose={() => setBulkDeleteModalState({ isOpen: false, ids: [], isLoading: false })}
+      />
+
+      {/* First Manager Decision Modal */}
+      <FirstManagerDecisionModal
+        isOpen={!!firstManagerModalRequest}
+        request={firstManagerModalRequest}
+        onClose={() => setFirstManagerModalRequest(null)}
+        onDecision={handleFirstManagerDecision}
+        onOpenStatement={(req) => setStatementModalRequest(req)}
+        onOpenPDF={(req) => setFirstManagerPdfModalRequest(req)}
+        isSubmitting={isSubmittingFirstManagerModal}
+      />
+
+      {/* Statement Modal */}
+      <SettlementStatementModal
+        isOpen={!!statementModalRequest}
+        request={statementModalRequest}
+        onClose={() => setStatementModalRequest(null)}
+      />
+
+      {/* First Manager PDF Documents & Review Modal */}
+      <FirstManagerPDFModal
+        isOpen={!!firstManagerPdfModalRequest}
+        request={firstManagerPdfModalRequest}
+        user={currentUser}
+        onClose={() => setFirstManagerPdfModalRequest(null)}
+        onOpenStatement={(req) => setStatementModalRequest(req)}
+        onOpenDecision={(req) => setFirstManagerModalRequest(req)}
+        onAttachPdf={handleAttachFirstManagerPdf}
+      />
+
+      {/* Send / Upload PDF to First Manager Modal (Admin) */}
+      <SendToFirstManagerModal
+        isOpen={!!sendToFirstManagerTarget}
+        request={sendToFirstManagerTarget}
+        onClose={() => setSendToFirstManagerTarget(null)}
+        onSend={handleExecuteSendToFirstManager}
+        isSubmitting={isSendingToFirstManager}
+      />
+    </div>
+  );
+}
