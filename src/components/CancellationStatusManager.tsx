@@ -487,16 +487,6 @@ export default function CancellationStatusManager({
       </div>
 
       {/* Advanced Multi-Field Search Panel */}
-
-
-
-
-
-
-
-
-
-
       <div className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">

@@ -3,7 +3,7 @@ import {
   Search, Eye, Edit3, Trash2, Calendar, CreditCard, Layers, Tag, Plus, CheckSquare, AlertTriangle, RotateCcw, RefreshCw, Upload, Download, FileText, Check,
   CheckCircle2, XCircle, ShieldCheck, Clock, FileCheck, FileUp, X, Paperclip, Filter, Pin
 } from 'lucide-react';
-import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode } from '../utils';
+import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -220,43 +220,9 @@ export default function RequestsList({
     }
   };
 
-  // Display-only rename: the underlying computed sub-status value from
-  // getPendingSubStatus() stays "(الشيك تحت الاصدار)" (used for the color
-  // logic), but what's shown to the user for that state depends on whether
-  // the finance memo has actually been sent yet:
-  //   - Not sent yet: "(جارى تجهيز المذكرة)"
-  //   - Sent: "تم ارسال المذكرة الى الادارة المالية", with
-  //     "(الشيك تحت الاصدار)" as a secondary line underneath -- except for
-  //     international memberships, which just show the "sent" line alone.
-  // The interactive "sent to finance" Check lives only on the Memo (print)
-  // screen and the Cancellation Status Manager page -- this page just
-  // reflects the read-only status text.
-  const getDisplaySubStatus = (r: any) => {
-    const raw = getPendingSubStatus(r);
-    if (raw === '(الشيك تحت الاصدار)') {
-      if (r.checkReadyForPickup) return 'الشيك جاهز للاستلام';
-      return r.financeMemoSentDate ? 'تم ارسال المذكرة الى الادارة المالية' : '(جارى تجهيز المذكرة)';
-    }
-    return raw;
-  };
-
-  // While the memo is being prepared ("جارى تجهيز المذكرة"), show the date
-  // that actually started this stage instead of the generic status date:
-  // the receipt-received date (cash/checks/Al Mashreq/international) or
-  // the debt-entered date (ABK/Companies) -- whichever of the two is
-  // actually populated on this request. Once the finance memo has been
-  // sent, the status date becomes the date it was sent, and only changes
-  // again when the overall request status itself changes.
-  const getStatusDateDisplay = (r: any) => {
-    if (getPendingSubStatus(r) === '(الشيك تحت الاصدار)') {
-      if (r.financeMemoSentDate) return formatDateCustom(r.financeMemoSentDate);
-      const prepDate = r.receiptReceivedDate || r.debtEnteredDate;
-      if (prepDate) return formatDateCustom(prepDate);
-    }
-    return r.statusDate ? formatDateCustom(r.statusDate)
-      : (r.approvalDate ? formatDateCustom(r.approvalDate)
-      : (r.requestDate ? formatDateCustom(r.requestDate) : '—'));
-  };
+  // Status text / date come from the shared helpers in utils.ts so every
+  // page shows exactly the same thing.
+  const getStatusDateDisplay = (r: any) => getStatusDateText(r);
 
   const handleFirstManagerModalDecision = async (reqId: number, approve: boolean, comments: string) => {
     setIsSubmittingFirstManager(true);
@@ -725,25 +691,14 @@ export default function RequestsList({
                         }`}>
                           {r.status === 'Rejected' ? 'Rejected' : (translateStatus(r.status) || 'Pending')}
                         </span>
-                        {getPendingSubStatus(r) && (
+                        {getStatusDisplay(r).main && (
                           <>
-                            <span className={`block text-[10px] font-bold mt-1 whitespace-nowrap ${
-                              getPendingSubStatus(r) === '(الشيك تحت الاصدار)' ? 'text-emerald-600 font-black' :
-                              getPendingSubStatus(r) === '(فى انتظار المديونية)' ? 'text-purple-600 font-bold' :
-                              getPendingSubStatus(r) === '(فى انتظار اصل الايصال)' ? 'text-amber-600 font-bold' :
-                              getPendingSubStatus(r) === '(فى انتظار الموافقة المبدئية)' ? 'text-indigo-600 font-bold' :
-                              getPendingSubStatus(r) === '(قيد المراجعة)' ? 'text-slate-400 font-medium' :
-                              'text-slate-500 font-medium'
-                            }`}>
-                              {getDisplaySubStatus(r)}
+                            <span className={`block text-[10px] mt-1 whitespace-nowrap ${getStatusDisplay(r).colorClass}`}>
+                              {getStatusDisplay(r).main}
                             </span>
-                            {/* Once the finance memo has been sent, show
-                                "(الشيك تحت الاصدار)" as a secondary line --
-                                except for international memberships, which
-                                just show the "sent" line above alone. */}
-                            {getPendingSubStatus(r) === '(الشيك تحت الاصدار)' && r.financeMemoSentDate && !isInternationalRequest(r) && (
+                            {getStatusDisplay(r).secondary && (
                               <span className="block text-[9px] font-bold text-slate-500 mt-0.5">
-                                (الشيك تحت الاصدار)
+                                {getStatusDisplay(r).secondary}
                               </span>
                             )}
                           </>
