@@ -4,6 +4,7 @@ import {
   Layers, CheckCircle2, ShieldCheck, Loader2
 } from 'lucide-react';
 import { RequestAttachment } from '../types';
+import { isDocumentFileRequired, DocumentRequirements } from '../documentRequirements';
 
 interface UploadDocumentModalProps {
   request: any;
@@ -58,6 +59,34 @@ export default function UploadDocumentModal({
     const rest = base.filter((c: string) => !priority.includes(c));
     return [...priority, ...rest];
   })();
+  // The document type is chosen FIRST (before attaching anything): some types
+  // (e.g. "Online") need no uploaded file at all, and the admin decides which
+  // types do (Dropdown Lists page -> "نوع المستند").
+  const initialCategory: string =
+    defaultCategory && documentCategoryOptions.includes(defaultCategory)
+      ? defaultCategory
+      : (documentCategoryOptions.includes('طلب الإلغاء الموقع') ? 'طلب الإلغاء الموقع' : (documentCategoryOptions[0] || 'أخرى'));
+  const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory);
+  const [requirements, setRequirements] = useState<DocumentRequirements>({});
+  const [noFileNote, setNoFileNote] = useState('');
+  const fileRequired = isDocumentFileRequired(selectedCategory, requirements);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = localStorage.getItem('wd_token') || '';
+        const res = await fetch('/api/document-requirements', { headers: { 'Authorization': `Bearer ${token}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data && typeof data === 'object') setRequirements(data);
+      } catch (err) {
+        console.error('Could not load document requirements', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const [existingAttachments, setExistingAttachments] = useState<any[]>(request.attachments || []);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [filesToUpload, setFilesToUpload] = useState<Array<{
@@ -162,7 +191,7 @@ export default function UploadDocumentModal({
           fileType: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'image/jpeg'),
           fileSize: file.size,
           fileData,
-          category: defaultCategory && documentCategoryOptions.includes(defaultCategory) ? defaultCategory : 'طلب الإلغاء الموقع',
+          category: selectedCategory,
           notes: ''
         });
       } catch (err) {
@@ -201,8 +230,8 @@ export default function UploadDocumentModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (filesToUpload.length === 0) {
-      setErrorMessage('يرجى اختيار ملف واحد على الأقل للرفع');
+    if (filesToUpload.length === 0 && fileRequired) {
+      setErrorMessage(`نوع المستند "${selectedCategory}" لازم يتم رفع ملف له. اختاري ملف واحد على الأقل.`);
       return;
     }
 
@@ -211,7 +240,20 @@ export default function UploadDocumentModal({
 
     try {
       const token = localStorage.getItem('wd_token') || '';
-      const payloadAttachments = filesToUpload.map(f => ({
+      // A type that needs no file (e.g. "Online") is saved as a record with no
+      // file, so it still shows up on the request as a registered document.
+      const itemsToSave = filesToUpload.length > 0
+        ? filesToUpload
+        : [{
+            id: `att-${Date.now()}-${Math.floor(Math.random() * 1000000)}`,
+            fileName: selectedCategory,
+            fileType: '',
+            fileSize: 0,
+            fileData: '',
+            category: selectedCategory,
+            notes: noFileNote
+          }];
+      const payloadAttachments = itemsToSave.map(f => ({
         id: f.id,
         fileName: f.fileName,
         fileType: f.fileType,
@@ -345,14 +387,20 @@ export default function UploadDocumentModal({
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <a
-                          href={att.fileData}
-                          download={att.fileName || 'مستند'}
-                          className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold rounded-lg text-xxs transition-colors"
-                          title="تحميل / فتح المستند"
-                        >
-                          معاينة
-                        </a>
+                        {att.fileData ? (
+                          <a
+                            href={att.fileData}
+                            download={att.fileName || 'مستند'}
+                            className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold rounded-lg text-xxs transition-colors"
+                            title="تحميل / فتح المستند"
+                          >
+                            معاينة
+                          </a>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-500 font-bold rounded-lg text-xxs" title="مستند مسجّل من غير ملف">
+                            بدون ملف
+                          </span>
+                        )}
 
                         {canDeleteAtt ? (
                           <button
@@ -390,6 +438,34 @@ export default function UploadDocumentModal({
             </div>
           )}
 
+          {/* Document type FIRST: it decides whether a file is needed at all */}
+          <div className="bg-amber-50/60 border border-amber-200 rounded-2xl p-4 space-y-2">
+            <label className="block text-xs font-black text-slate-800">نوع المستند:</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full text-sm bg-white border border-slate-300 rounded-xl p-2.5 font-bold text-slate-900 focus:outline-none focus:border-amber-400"
+            >
+              {documentCategoryOptions.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+            {fileRequired ? (
+              <p className="text-xs font-bold text-slate-600">النوع ده لازم يتم رفع ملف له (صورة أو PDF).</p>
+            ) : (
+              <>
+                <p className="text-xs font-bold text-emerald-700">النوع ده مش محتاج رفع ملف — تقدري تحفظي مباشرة، أو ترفقي ملف لو حابة (اختياري).</p>
+                <input
+                  type="text"
+                  value={noFileNote}
+                  onChange={(e) => setNoFileNote(e.target.value)}
+                  placeholder="ملاحظة (اختياري)..."
+                  className="w-full text-xs bg-white border border-slate-200 rounded-lg p-2 text-slate-800 focus:outline-none focus:border-amber-400"
+                />
+              </>
+            )}
+          </div>
+
           {/* Dropzone */}
           <div
             onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
@@ -415,7 +491,7 @@ export default function UploadDocumentModal({
             </div>
             <div>
               <span className="text-sm font-bold text-slate-800 block">
-                اسحب وأفلت الملفات هنا أو انقر للاختيار من جهازك
+                {fileRequired ? 'اسحب وأفلت الملفات هنا أو انقر للاختيار من جهازك' : 'إرفاق ملف (اختياري) — اسحب وأفلت أو انقر للاختيار'}
               </span>
               <span className="text-xs text-slate-500 mt-1 block">
                 يدعم صيغ الصور (JPG, PNG, WEBP) وملفات الـ PDF (يمكن رفع أكثر من ملف دفعة واحدة)
@@ -510,7 +586,7 @@ export default function UploadDocumentModal({
 
             <button
               type="submit"
-              disabled={isUploading || filesToUpload.length === 0}
+              disabled={isUploading || (filesToUpload.length === 0 && fileRequired)}
               className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 text-xs font-black rounded-xl transition-all shadow-md cursor-pointer"
             >
               {isUploading ? (
@@ -521,7 +597,11 @@ export default function UploadDocumentModal({
               ) : (
                 <>
                   <Check className="w-4 h-4" />
-                  <span>حفظ ورفع ({filesToUpload.length}) مستند</span>
+                  <span>
+                    {filesToUpload.length > 0
+                      ? `حفظ ورفع (${filesToUpload.length}) مستند`
+                      : `حفظ "${selectedCategory}" بدون ملف`}
+                  </span>
                 </>
               )}
             </button>

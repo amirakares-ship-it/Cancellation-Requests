@@ -366,6 +366,10 @@ const DEFAULT_DB = {
   // status change to "Cancelled" hits one or more company-payment-method
   // requests -- one batch per company involved in that bulk action.
   cancellationSettlementBatches: [] as any[],
+  // Which "نوع المستند" options REQUIRE an uploaded file (type -> true/false).
+  // A type that is not listed here is required, except names that look like
+  // "Online" (nothing to upload) -- see src/documentRequirements.ts.
+  documentRequirements: {} as Record<string, boolean>,
   auditLogs: [
     {
       id: "log-1",
@@ -627,6 +631,7 @@ async function loadDb(opts?: { keepCurrentOnFailure?: boolean }): Promise<boolea
     if (!db.requests || !Array.isArray(db.requests)) db.requests = DEFAULT_DB.requests;
     if (!db.committees || !Array.isArray(db.committees)) db.committees = DEFAULT_DB.committees;
     if (!db.auditLogs || !Array.isArray(db.auditLogs)) db.auditLogs = DEFAULT_DB.auditLogs;
+    if (!db.documentRequirements || typeof db.documentRequirements !== "object" || Array.isArray(db.documentRequirements)) db.documentRequirements = {};
     if (!db.debtImportBatches || !Array.isArray(db.debtImportBatches)) db.debtImportBatches = [];
     if (!db.cancellationSettlementBatches || !Array.isArray(db.cancellationSettlementBatches)) db.cancellationSettlementBatches = [];
     if (!db.emailLogs || !Array.isArray(db.emailLogs)) db.emailLogs = DEFAULT_DB.emailLogs;
@@ -1584,6 +1589,10 @@ app.put("/api/dropdowns/:category/rename", requireAuth, async (req, res) => {
   }
 
   list[index] = newOption.trim();
+  if (category === "documentTypes" && db.documentRequirements && Object.prototype.hasOwnProperty.call(db.documentRequirements, oldOption)) {
+    db.documentRequirements[newOption.trim()] = db.documentRequirements[oldOption];
+    delete db.documentRequirements[oldOption];
+  }
   await saveDb();
 
   logAudit(reqUser.username, reqUser.name, reqUser.role, "تعديل خيار لقائمة", `تم تعديل الاسم من "${oldOption}" إلى "${newOption.trim()}" في قائمة ${category}`);
@@ -2281,11 +2290,21 @@ function calculateRequestFields(reqData: any, customFormulas?: any): any {
   if (isNoRefundException) {
     refundAmount = 0;
   } else {
-    // Explicit or calculated non-zero fallback
-    if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
-      refundAmount = rawRefundInput;
-    } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
-      refundAmount = Math.max(0, subscriptionValue - discountAmount);
+    // Fallback for records where the formula gave 0 -- use the explicit
+    // refund / subscription minus discount. EXCEPT for checks ("شيكات"): for
+    // checks the configured formula is the whole answer, and 0 is a real
+    // answer (e.g. checks that were never paid -> nothing to refund). It must
+    // NOT be replaced by a stale stored refund or by
+    // subscriptionValue - discountAmount -- that override is what made the
+    // memo and the requests list show an amount while the statement and the
+    // calculator correctly showed 0. Other payment methods keep the previous
+    // behaviour untouched.
+    if (reqData.paymentMethod !== "شيكات") {
+      if (refundAmount === 0 && rawRefundInput !== undefined && !isNaN(rawRefundInput) && rawRefundInput > 0 && !isCompany) {
+        refundAmount = rawRefundInput;
+      } else if (refundAmount === 0 && subscriptionValue > discountAmount && !isCompany) {
+        refundAmount = Math.max(0, subscriptionValue - discountAmount);
+      }
     }
   }
 
@@ -2839,11 +2858,16 @@ app.put("/api/requests/:id", requireAuth, async (req, res) => {
   // admin to review, same accept/reject flow as "إرسال شيكات". Only fires
   // on the false->true transition (not on every unrelated save), and never
   // duplicates a pending inquiry already raised for this request.
+  // All of these must hold at the moment the receipt is ticked: payment by
+  // cheque, committee approved (result Accepted), the request still Pending
+  // (not cancelled / rejected / revoked), and it was waiting for the original
+  // receipt (receiptReceived was false until now).
   if (
     req.body.receiptReceived === true &&
     !existingRequest.receiptReceived &&
     updatedRequest.paymentMethod === "شيكات" &&
-    updatedRequest.result === "Accepted"
+    updatedRequest.result === "Accepted" &&
+    updatedRequest.status === "Pending"
   ) {
     if (!Array.isArray(db.sendChecksRequests)) db.sendChecksRequests = [];
     const alreadyPending = db.sendChecksRequests.some(
@@ -3528,24 +3552,120 @@ app.post("/api/requests/:id/sector-manager-action", requireAuth, async (req, res
   res.json({ success: true, request });
 });
 
+// --- Document type requirements (which types need an uploaded file) ---
+app.get("/api/document-requirements", requireAuth, async (req, res) => {
+  res.json(db.documentRequirements || {});
+});
+
+app.put("/api/document-requirements", requireAuth, async (req, res) => {
+  const user = (req as any).user;
+  if (user.role !== "admin") {
+    return res.status(403).json({ error: "الأدمن فقط لديه صلاحية تحديد المستندات الإجبارية" });
+  }
+  const { type, requireFile } = req.body || {};
+  if (typeof type !== "string" || !type.trim() || type.length > 200 || typeof requireFile !== "boolean") {
+    return res.status(400).json({ error: "بيانات غير صحيحة: لازم نوع المستند وقيمة true/false" });
+  }
+  if (!db.documentRequirements || typeof db.documentRequirements !== "object") db.documentRequirements = {};
+  db.documentRequirements[type.trim()] = requireFile;
+  await saveDb();
+  logAudit(
+    user.username,
+    user.name,
+    user.role,
+    "تعديل إلزامية رفع مستند",
+    `نوع المستند "${type.trim()}": ${requireFile ? "رفع الملف إجباري" : "رفع الملف غير إجباري"}`
+  );
+  res.json(db.documentRequirements);
+});
+
 // --- Emails Simulation ---
 app.get("/api/emails", requireAuth, async (req, res) => {
   res.json(db.emailLogs);
 });
 
+// Splits "a@x.com, b@y.com; c@z.com" (comma / semicolon / new line, Arabic
+// comma too) into a de-duplicated list of addresses, reporting invalid ones.
+function parseEmailList(value: any): { list: string[]; invalid: string[] } {
+  const raw = Array.isArray(value) ? value.join(",") : String(value ?? "");
+  const seen = new Set<string>();
+  const list: string[] = [];
+  const invalid: string[] = [];
+  for (const part of raw.split(/[,;\n\r،؛]+/)) {
+    const addr = part.trim();
+    if (!addr) continue;
+    if (!/^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/.test(addr)) {
+      invalid.push(addr);
+      continue;
+    }
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(addr);
+  }
+  return { list, invalid };
+}
+
+const EMAIL_MAX_RECIPIENTS = 20;
+const EMAIL_MAX_ATTACHMENTS = 10;
+const EMAIL_MAX_TOTAL_ATTACHMENT_BYTES = 20 * 1024 * 1024; // 20 MB decoded
+
 app.post("/api/emails/send", requireAuth, async (req, res) => {
   const user = (req as any).user;
-  const { requestId, type, recipient, subject, body } = req.body;
+  const { requestId, type, recipient, cc, subject, body, attachments } = req.body;
 
-  if (!recipient) {
+  // "To" may hold several addresses separated by commas; "CC" is optional.
+  const to = parseEmailList(recipient);
+  const ccParsed = parseEmailList(cc);
+  if (to.list.length === 0 && to.invalid.length === 0) {
     return res.status(400).json({ error: "البريد الإلكتروني للمستلم مطلوب" });
+  }
+  if (to.invalid.length > 0 || ccParsed.invalid.length > 0) {
+    const bad = [...to.invalid.map((a) => `إلى: ${a}`), ...ccParsed.invalid.map((a) => `CC: ${a}`)];
+    return res.status(400).json({ error: `عناوين بريد غير صحيحة: ${bad.join("، ")}` });
+  }
+  if (to.list.length > EMAIL_MAX_RECIPIENTS || ccParsed.list.length > EMAIL_MAX_RECIPIENTS) {
+    return res.status(400).json({ error: `الحد الأقصى ${EMAIL_MAX_RECIPIENTS} عنوان في كل خانة (إلى / CC)` });
+  }
+
+  // Attachments arrive as base64 inside the JSON body.
+  const mailAttachments: { filename: string; content: Buffer; contentType?: string }[] = [];
+  if (attachments !== undefined && attachments !== null) {
+    if (!Array.isArray(attachments)) {
+      return res.status(400).json({ error: "المرفقات بصيغة غير صحيحة" });
+    }
+    if (attachments.length > EMAIL_MAX_ATTACHMENTS) {
+      return res.status(400).json({ error: `الحد الأقصى ${EMAIL_MAX_ATTACHMENTS} مرفقات في الرسالة الواحدة` });
+    }
+    let totalBytes = 0;
+    for (const att of attachments) {
+      const rawName = typeof att?.filename === "string" ? att.filename : "";
+      const safeName = rawName.replace(/[\u0000-\u001f]/g, "").split(/[\\/]/).pop()!.trim().slice(0, 150);
+      const b64 = typeof att?.content === "string" ? att.content.replace(/^data:[^;]*;base64,/, "") : "";
+      if (!safeName || !b64) {
+        return res.status(400).json({ error: "أحد المرفقات ناقص (اسم الملف أو محتواه)" });
+      }
+      const buf = Buffer.from(b64, "base64");
+      if (buf.length === 0) {
+        return res.status(400).json({ error: `المرفق "${safeName}" فاضي` });
+      }
+      totalBytes += buf.length;
+      if (totalBytes > EMAIL_MAX_TOTAL_ATTACHMENT_BYTES) {
+        return res.status(413).json({ error: `حجم المرفقات أكبر من الحد المسموح (${EMAIL_MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024} ميجا)` });
+      }
+      mailAttachments.push({
+        filename: safeName,
+        content: buf,
+        contentType: typeof att?.contentType === "string" && att.contentType ? att.contentType : undefined,
+      });
+    }
   }
 
   const senderAddress = db.smtpSettings?.username || "cancellations@wadidegla.com";
   const newEmail: any = {
     id: "mail-" + Date.now(),
     sender: `Wadi Degla Cancellation Hub <${senderAddress}>`,
-    recipient,
+    recipient: to.list.join(", "),
     subject,
     body,
     sentAt: new Date().toISOString(),
@@ -3554,6 +3674,11 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
     deliveryStatus: "failed",
     deliveryError: undefined as string | undefined,
   };
+  if (ccParsed.list.length > 0) newEmail.cc = ccParsed.list.join(", ");
+  if (mailAttachments.length > 0) {
+    // Only names and sizes are kept in the log, never the file contents.
+    newEmail.attachments = mailAttachments.map((a) => ({ fileName: a.filename, size: a.content.length }));
+  }
 
   const transporter = getMailer();
   if (!transporter) {
@@ -3569,9 +3694,11 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
   try {
     await transporter.sendMail({
       from: newEmail.sender,
-      to: recipient,
+      to: to.list.join(", "),
+      ...(ccParsed.list.length > 0 ? { cc: ccParsed.list.join(", ") } : {}),
       subject,
       html: body,
+      ...(mailAttachments.length > 0 ? { attachments: mailAttachments } : {}),
     });
     newEmail.deliveryStatus = "sent";
   } catch (err: any) {
@@ -3587,7 +3714,7 @@ app.post("/api/emails/send", requireAuth, async (req, res) => {
   db.emailLogs.unshift(newEmail);
 
   await saveDb();
-  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني فعليًا إلى ${recipient} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
+  logAudit(user.username, user.name, user.role, `إرسال بريد الكتروني - ${type}`, `تم إرسال بريد إلكتروني فعليًا إلى ${newEmail.recipient}${newEmail.cc ? ` (نسخة CC: ${newEmail.cc})` : ""}${newEmail.attachments ? ` مع ${newEmail.attachments.length} مرفق` : ""} بخصوص الطلب رقم ${requestId || "عام"}`, requestId);
   res.json({ success: true, email: newEmail });
 });
 

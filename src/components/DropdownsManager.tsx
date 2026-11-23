@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ListFilter, Plus, Edit2, Trash2, Check, AlertCircle, RefreshCw, Layers, Sparkles
 } from 'lucide-react';
 import { ConfirmModal } from './ConfirmModal';
+import { isDocumentFileRequired, DocumentRequirements } from '../documentRequirements';
 
 interface DropdownsManagerProps {
   user: any;
@@ -36,6 +37,45 @@ export default function DropdownsManager({
     isLoading: false,
     onConfirm: async () => {},
   });
+
+  // "نوع المستند": which document types REQUIRE an uploaded file (admin only).
+  const [docRequirements, setDocRequirements] = useState<DocumentRequirements>({});
+  const [docRequirementsError, setDocRequirementsError] = useState('');
+
+  useEffect(() => {
+    if (selectedCategory !== 'documentTypes') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/document-requirements', { headers: { 'Authorization': `Bearer ${authToken}` } });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled && data && typeof data === 'object') setDocRequirements(data);
+      } catch (err) {
+        console.error('Could not load document requirements', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedCategory, authToken]);
+
+  const handleToggleRequireFile = async (type: string, requireFile: boolean) => {
+    setDocRequirementsError('');
+    const previous = docRequirements;
+    setDocRequirements({ ...docRequirements, [type]: requireFile }); // optimistic
+    try {
+      const res = await fetch('/api/document-requirements', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
+        body: JSON.stringify({ type, requireFile })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'تعذر حفظ الإعداد');
+      setDocRequirements(data);
+    } catch (err: any) {
+      setDocRequirements(previous);
+      setDocRequirementsError(err.message || 'تعذر حفظ الإعداد');
+    }
+  };
 
   // New option & rename states
   const [newOption, setNewOption] = useState('');
@@ -410,6 +450,13 @@ export default function DropdownsManager({
             </span>
           </div>
 
+          {selectedCategory === 'documentTypes' && user?.role === 'admin' && (
+            <div className="text-[11px] font-bold text-slate-600 bg-amber-50 border border-amber-200 rounded-2xl p-3 space-y-1">
+              <p>علّمي على النوع اللي <span className="text-emerald-700">يتطلب رفع ملف</span>. النوع اللي مش معلَّم (زي Online) يتحفظ من غير ما حد يرفع مستند.</p>
+              {docRequirementsError && <p className="text-rose-600">{docRequirementsError}</p>}
+            </div>
+          )}
+
           <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
             {dropdowns[selectedCategory]?.map((opt: string) => (
               <div 
@@ -417,6 +464,17 @@ export default function DropdownsManager({
                 className="flex items-center justify-between text-xs bg-slate-50 p-3 rounded-2xl border border-slate-200/60 hover:border-slate-300 transition-colors"
               >
                 <span className="font-bold text-slate-800">{opt}</span>
+                {selectedCategory === 'documentTypes' && user?.role === 'admin' && (
+                  <label className="flex items-center gap-1.5 mx-3 cursor-pointer select-none shrink-0" title="هل رفع ملف إجباري لهذا النوع؟">
+                    <input
+                      type="checkbox"
+                      checked={isDocumentFileRequired(opt, docRequirements)}
+                      onChange={(e) => handleToggleRequireFile(opt, e.target.checked)}
+                      className="rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                    />
+                    <span className="text-[11px] font-bold text-slate-600">يتطلب رفع ملف</span>
+                  </label>
+                )}
                 <button
                   type="button"
                   onClick={() => handleDeleteOption(opt)}

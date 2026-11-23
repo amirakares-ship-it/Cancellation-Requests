@@ -38,7 +38,7 @@ interface CheckRow {
 }
 
 function StatusBadge({ status }: { status: string | null }) {
-  if (!status) return <span className="text-slate-300">Not found</span>;
+  if (!status) return <span className="text-slate-300">غير مربوط</span>;
   const cls =
     status === 'Cancelled' ? 'bg-amber-100 text-amber-800 border-amber-200' :
     status === 'Revoked' ? 'bg-sky-100 text-sky-800 border-sky-200' :
@@ -106,7 +106,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         const parsedRows = parseReadyChecksWorkbook(data);
 
         if (parsedRows.length === 0) {
-          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكد من وجود عمود "رقم العميل" على الأقل.' });
+          setMessage({ type: 'error', text: 'ملف الإكسل لا يحتوي على بيانات صحيحة. تأكدي من وجود عمود "رقم العميل" على الأقل.' });
           return;
         }
 
@@ -277,7 +277,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
         'رقم العضوية': r.membershipNumber || '',
         'طريقة الدفع': r.paymentMethod || '',
         'رقم الموبايل': r.mobileNumber || '',
-        'حالة الطلب': r.requestStatus ? translateStatus(r.requestStatus) : 'Not found',
+        'حالة الطلب': r.requestStatus ? translateStatus(r.requestStatus) : 'غير مربوط',
       };
       if (checkType === 'advance') {
         base['تاريخ استحقاق الشيك'] = r.checkDueDate ? formatDateCustom(r.checkDueDate) : '';
@@ -316,10 +316,10 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
       <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm space-y-4">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-100 pb-3">
           <div>
-             <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-slate-400 mt-0.5">
               {isAdmin
-                ? 'ارفع شيت الشيكات وهيترابط تلقائيًا بالطلبات عن طريق رقم العميل.'
-                : 'الشيكات الخاصة بنادي فرعك فقط.'}
+                ? 'ارفعي شيت الشيكات وهيترابط تلقائيًا بالطلبات عن طريق رقم العميل.'
+                : 'الشيكات الخاصة بنادي فرعك بس.'}
             </p>
           </div>
 
@@ -338,10 +338,10 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
               onClick={handleDownloadData}
               disabled={filteredRows.length === 0}
               className="flex items-center gap-1.5 px-4 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 font-bold text-xs rounded-xl border border-sky-200 transition-all shrink-0 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-              title="Download data الظاهرة في الجدول كملف Excel"
+              title="تنزيل البيانات الظاهرة في الجدول كملف Excel"
             >
               <Download className="h-4 w-4" />
-              <span>Download data (Excel)</span>
+              <span>تنزيل البيانات (Excel)</span>
             </button>
             {isAdmin && (
               <button
@@ -351,7 +351,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                 title="تحميل شيت فاضي بالأعمدة المطلوبة للرفع"
               >
                 <FileSpreadsheet className="h-4 w-4" />
-                <span>Download (Template)</span>
+                <span>تحميل القالب (Template)</span>
               </button>
             )}
             {isAdmin && (
@@ -389,7 +389,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     <div className="bg-white p-2 rounded border border-slate-200 text-slate-700">3. البنك</div>
                     <div className="bg-amber-50 p-2 rounded border border-amber-300 text-amber-900">4. رقم العميل *</div>
                   </div>
-                  <p className="text-xxs text-slate-500 mt-2">.</p>
+                  <p className="text-xxs text-slate-500 mt-2">الاسم والنادي بيتجابوا تلقائيًا من الطلب عن طريق رقم العميل، فمش محتاجين يتكتبوا في الشيت.</p>
                 </>
               )}
             </div>
@@ -565,7 +565,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                     {filteredRows.map((r, idx) => (
                       <tr key={r.id} className="hover:bg-slate-50/50">
                         <td className="py-2.5 px-3 text-center font-mono">{idx + 1}</td>
-                        <td className="py-2.5 px-3 font-bold">{r.name || <span className="text-slate-300 font-normal">Not found</span>}</td>
+                        <td className="py-2.5 px-3 font-bold">{r.name || <span className="text-slate-300 font-normal">غير مربوط</span>}</td>
                         <td className="py-2.5 px-3 text-center">{r.club || '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkDueDate ? formatDateCustom(r.checkDueDate) : '—'}</td>
                         <td className="py-2.5 px-3 text-center font-mono">{r.checkAmount?.toLocaleString('en-US') || 0}</td>
@@ -619,7 +619,7 @@ export default function ChecksTypeList({ user, authToken, checkType, onDataChang
                               onClick={() => handleToggleReceived(r)}
                               disabled={receivingId === r.id}
                               className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50 ${r.receivedDate ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100' : 'bg-slate-50 text-slate-500 border border-slate-200 hover:bg-slate-100'}`}
-                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغط للتراجع` : 'تسجيل استلام ال'}
+                              title={r.receivedDate ? `تم الاستلام بتاريخ ${formatDateCustom(r.receivedDate)} -- اضغطي للتراجع` : 'تسجيل استلام الشيك'}
                             >
                               {receivingId === r.id ? <RefreshCw className="w-3 h-3 animate-spin" /> : <PackageCheck className="w-3 h-3" />}
                               {r.receivedDate ? formatDateCustom(r.receivedDate) : 'تم الاستلام؟'}

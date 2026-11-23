@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Mail, Send, Eye, RefreshCw, FileText, Check, ListFilter, Trash2 
+  Mail, Send, Eye, RefreshCw, FileText, Check, ListFilter, Trash2, Paperclip, X 
 } from 'lucide-react';
 
 interface EmailTemplatesProps {
@@ -12,6 +12,9 @@ interface EmailTemplatesProps {
 export default function EmailTemplates({ request, user, onSendSuccess }: EmailTemplatesProps) {
   const [activeTemplate, setActiveTemplate] = useState<'club' | 'abk' | 'company' | 'data_admin'>('club');
   const [recipient, setRecipient] = useState('');
+  const [cc, setCc] = useState('');
+  const [attachments, setAttachments] = useState<{ name: string; size: number; type: string; content: string }[]>([]);
+  const [attachError, setAttachError] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
   const [logs, setLogs] = useState<any[]>([]);
@@ -122,10 +125,68 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
     }
   }, [activeTemplate, request]);
 
+  // Same limits as the server (it re-checks everything).
+  const MAX_ATTACHMENTS = 10;
+  const MAX_TOTAL_BYTES = 20 * 1024 * 1024;
+
+  const splitEmails = (value: string) =>
+    value.split(/[,;\n\r،؛]+/).map(v => v.trim()).filter(Boolean);
+  const isValidEmail = (v: string) => /^[^\s@<>"',;]+@[^\s@<>"',;]+\.[^\s@<>"',;]+$/.test(v);
+  const formatSize = (bytes: number) =>
+    bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
+  const readFileAsBase64 = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || '').replace(/^data:[^;]*;base64,/, ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+
+  const handleAddAttachments = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (picked.length === 0) return;
+    setAttachError('');
+
+    if (attachments.length + picked.length > MAX_ATTACHMENTS) {
+      setAttachError(`الحد الأقصى ${MAX_ATTACHMENTS} مرفقات في الرسالة الواحدة.`);
+      return;
+    }
+    const currentTotal = attachments.reduce((sum, a) => sum + a.size, 0);
+    const newTotal = picked.reduce((sum, f) => sum + f.size, 0);
+    if (currentTotal + newTotal > MAX_TOTAL_BYTES) {
+      setAttachError(`إجمالي حجم المرفقات لازم يكون أقل من ${MAX_TOTAL_BYTES / 1024 / 1024} ميجا.`);
+      return;
+    }
+    try {
+      const added = await Promise.all(
+        picked.map(async f => ({
+          name: f.name,
+          size: f.size,
+          type: f.type || 'application/octet-stream',
+          content: await readFileAsBase64(f),
+        }))
+      );
+      setAttachments(prev => [...prev, ...added]);
+    } catch (err) {
+      console.error(err);
+      setAttachError('تعذر قراءة أحد الملفات، جربي تاني.');
+    }
+  };
+
   const handleSendEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!recipient || !subject || !body) {
       alert('يرجى تعبئة كافة حقول البريد لتوليد الإرسال');
+      return;
+    }
+
+    const toList = splitEmails(recipient);
+    const ccList = splitEmails(cc);
+    const badAddresses = [...toList.filter(a => !isValidEmail(a)), ...ccList.filter(a => !isValidEmail(a))];
+    if (toList.length === 0 || badAddresses.length > 0) {
+      alert(`عناوين بريد غير صحيحة: ${badAddresses.join('، ') || 'مفيش عنوان في خانة إلى'}`);
       return;
     }
 
@@ -145,15 +206,19 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
           type: activeTemplate === 'club' ? 'Club Notification' : 
                 activeTemplate === 'abk' ? 'ABK Difference' :
                 activeTemplate === 'company' ? 'Company Notification' : 'Data Admin Notification',
-          recipient,
+          recipient: toList.join(', '),
+          cc: ccList.join(', '),
           subject,
-          body
+          body,
+          attachments: attachments.map(a => ({ filename: a.name, contentType: a.type, content: a.content }))
         })
       });
 
       const data = await res.json();
       if (res.ok) {
         setSuccessMsg('تم إرسال البريد الإلكتروني فعليًا بنجاح، وتم قيد هذه الحركة في سجل مراسلات المنظومة المعتمد!');
+        setAttachments([]);
+        setAttachError('');
         onSendSuccess();
         fetchEmailLogs();
       } else {
@@ -230,13 +295,30 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
         <form onSubmit={handleSendEmail} className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
             <div>
-              <label className="block text-xxs font-bold text-slate-500 mb-1">البريد الإلكتروني للمستلم</label>
+              <label className="block text-xxs font-bold text-slate-500 mb-1">
+                البريد الإلكتروني للمستلم (إلى) <span className="font-medium text-slate-400">— ممكن أكتر من إيميل، افصلي بينهم بفاصلة ( , )</span>
+              </label>
               <input
                 type="text"
                 required
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
+                placeholder="a@wadidegla.com, b@wadidegla.com"
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono text-left"
+                dir="ltr"
+              />
+            </div>
+            <div>
+              <label className="block text-xxs font-bold text-slate-500 mb-1">
+                نسخة كربونية (CC) <span className="font-medium text-slate-400">— اختياري، ممكن أكتر من إيميل مفصولين بفاصلة</span>
+              </label>
+              <input
+                type="text"
+                value={cc}
+                onChange={(e) => setCc(e.target.value)}
+                placeholder="manager@wadidegla.com"
+                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono text-left"
+                dir="ltr"
               />
             </div>
             <div>
@@ -258,6 +340,37 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
                 onChange={(e) => setBody(e.target.value)}
                 className="w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 font-medium leading-relaxed"
               />
+            </div>
+
+            {/* Attachments */}
+            <div className="space-y-2">
+              <label className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 font-bold text-xs rounded-lg cursor-pointer">
+                <Paperclip className="h-4 w-4 text-amber-500" />
+                <span>إرفاق ملفات (Attachments)</span>
+                <input type="file" multiple onChange={handleAddAttachments} className="hidden" />
+              </label>
+              <span className="text-xxs text-slate-400 mr-2">حتى {MAX_ATTACHMENTS} ملفات، إجمالي الحجم لحد {MAX_TOTAL_BYTES / 1024 / 1024} ميجا</span>
+              {attachError && <p className="text-xxs font-bold text-rose-600">{attachError}</p>}
+              {attachments.length > 0 && (
+                <ul className="border border-slate-100 rounded-lg divide-y divide-slate-50 bg-white">
+                  {attachments.map((a, idx) => (
+                    <li key={`${a.name}-${idx}`} className="flex items-center justify-between gap-2 px-3 py-1.5 text-xs">
+                      <span className="font-bold text-slate-700 truncate">{a.name}</span>
+                      <span className="flex items-center gap-2 shrink-0">
+                        <span className="text-slate-400 font-mono text-[10px]">{formatSize(a.size)}</span>
+                        <button
+                          type="button"
+                          onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))}
+                          className="p-0.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded cursor-pointer"
+                          title="إزالة المرفق"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             <button
@@ -283,7 +396,14 @@ export default function EmailTemplates({ request, user, onSendSuccess }: EmailTe
                       <span className="bg-amber-400/20 text-amber-600 px-1.5 py-0.5 rounded text-[8px] font-bold">{log.type}</span>
                       <span className="text-slate-400 font-mono text-[9px]">{new Date(log.sentAt).toLocaleTimeString('ar-EG')}</span>
                     </div>
-                    <div className="text-slate-500 font-bold">إلى: {log.recipient}</div>
+                    <div className="text-slate-500 font-bold break-words">إلى: {log.recipient}</div>
+                    {log.cc && <div className="text-slate-500 font-bold break-words">CC: {log.cc}</div>}
+                    {Array.isArray(log.attachments) && log.attachments.length > 0 && (
+                      <div className="text-slate-400 text-[10px] flex items-center gap-1 break-words">
+                        <Paperclip className="h-3 w-3 shrink-0" />
+                        {log.attachments.map((a: any) => a.fileName).join('، ')}
+                      </div>
+                    )}
                     <div className="text-slate-700 font-black text-right truncate">{log.subject}</div>
                     <div className="text-slate-500 text-[10px] line-clamp-3 leading-relaxed whitespace-pre-line text-right">{log.body}</div>
                   </div>

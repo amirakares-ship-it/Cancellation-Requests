@@ -34,7 +34,7 @@ import FirstManagerHub from './components/FirstManagerHub';
 import SendToFirstManagerModal from './components/SendToFirstManagerModal';
 
 import { CustomField } from './types';
-import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason } from './utils';
+import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig } from './utils';
 
 type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports';
 
@@ -248,6 +248,17 @@ export default function App() {
           return null;
         }
       };
+
+      // Formulas config FIRST: every amount calculated in the browser
+      // (calculator, settlement statement, memo) must use the same saved
+      // formulas the server uses, before the requests are rendered.
+      try {
+        const resFormulas = await fetch('/api/formulas', { headers });
+        const dataFormulas = await safeJson(resFormulas);
+        if (dataFormulas) setActiveFormulasConfig(dataFormulas);
+      } catch (e) {
+        console.error('Failed to load formulas config', e);
+      }
 
       // Requests
       const resRequests = await fetch('/api/requests', { headers });
