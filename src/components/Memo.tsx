@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Printer, Save, RefreshCw, Search, ArrowRight, Building2, Globe, FileText, FileCheck, Layers, Bold, Italic, Underline, AlignRight, AlignCenter, AlignLeft, Table, Plus, Minus, Grid, Merge, Split, Type, Move, Sliders, CheckCircle2, RotateCcw, Calendar, Edit3, AlertCircle } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, toInputDateStr } from '../utils';
+import { formatDateCustom, formatDateNumeric, calculateAllFields, parseNum, isCompanyPaymentMethod, isBankPaymentMethod, printElement, isSameClub, isInternationalRequest, toInputDateStr, formatCommitteeYear, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
+import MultiSelect from './MultiSelect';
 import { WadiDeglaLogo } from './WadiDeglaLogo';
 
 interface MemoProps {
@@ -1657,6 +1658,35 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   const [bulkMessage, setBulkMessage] = useState('');
 
+  // Bulk Print filters (apply on top of the search box above)
+  const [bulkCommittees, setBulkCommittees] = useState<string[]>([]);
+  const [bulkYears, setBulkYears] = useState<string[]>([]);
+  const [bulkStatuses, setBulkStatuses] = useState<string[]>([]);
+  const [bulkPayments, setBulkPayments] = useState<string[]>([]);
+
+  const reqYear = (r: any) => formatCommitteeYear(r.committeeYear || r.approvalDate || r.requestDate || (r as any).createdAt);
+  const bulkSource = filteredRequests; // already limited by role + search
+  const uniq = (arr: string[]) => Array.from(new Set(arr.filter(Boolean)));
+  const bulkCommitteeOptions = uniq(bulkSource.map(r => (r.committeeNo ? String(r.committeeNo).trim() : ''))).sort((a, b) => (parseInt(a) || 0) - (parseInt(b) || 0) || a.localeCompare(b));
+  const bulkYearOptions = uniq(bulkSource.filter(r => r.committeeNo).map(r => reqYear(r))).sort((a, b) => Number(b) - Number(a));
+  const bulkPaymentOptions = uniq(bulkSource.map(r => String(r.paymentMethod || '').trim())).sort();
+  const bulkStatusOptions = (() => {
+    const present = uniq(bulkSource.map(r => getDetailedStatus(r)));
+    const known = DETAILED_STATUS_ORDER.filter(x => present.includes(x));
+    const rest = present.filter(x => !DETAILED_STATUS_ORDER.includes(x)).sort();
+    return [...known, ...rest];
+  })();
+
+  const bulkList = bulkSource.filter(r => {
+    if (bulkCommittees.length && !bulkCommittees.includes(String(r.committeeNo || '').trim())) return false;
+    if (bulkYears.length && !(r.committeeNo && bulkYears.includes(reqYear(r)))) return false;
+    if (bulkStatuses.length && !bulkStatuses.includes(getDetailedStatus(r))) return false;
+    if (bulkPayments.length && !bulkPayments.includes(String(r.paymentMethod || '').trim())) return false;
+    return true;
+  });
+  const bulkFiltersActive = bulkCommittees.length + bulkYears.length + bulkStatuses.length + bulkPayments.length > 0;
+  const clearBulkFilters = () => { setBulkCommittees([]); setBulkYears([]); setBulkStatuses([]); setBulkPayments([]); };
+
   const isBulkSelected = (id: number | string) => bulkIds.some(x => String(x) === String(id));
   const toggleBulkId = (id: number | string) =>
     setBulkIds(prev => (prev.some(x => String(x) === String(id)) ? prev.filter(x => String(x) !== String(id)) : [...prev, id]));
@@ -2011,23 +2041,53 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
           className="flex items-center gap-2 text-sm font-black text-slate-800 cursor-pointer"
         >
           <Printer className="h-4 w-4 text-amber-500" />
-          <span>طباعة مذكرات بالجملة</span>
+          <span>Bulk Print</span>
           <span className="text-xs font-bold text-slate-400">{bulkOpen ? '▲' : '▼'}</span>
         </button>
 
         {bulkOpen && (
           <>
             <p className="text-xs text-slate-500">
-              علّمي على العضويات اللي عايزة تطبعي مذكراتها (استخدمي مربع البحث فوق عشان تضيّقي القايمة)، وبعدين دوسي طباعة. كل مذكرة هتطلع في ورقة A4 لوحدها ورا بعض.
+              علّمي على العضويات اللي عايزة تطبعي مذكراتها (استخدمي الفلاتر أو مربع البحث فوق عشان تضيّقي القايمة)، وبعدين دوسي طباعة. كل مذكرة هتطلع في ورقة A4 لوحدها ورا بعض.
             </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 mb-1">رقم اللجنة</label>
+                <MultiSelect options={bulkCommitteeOptions.map(n => ({ label: `لجنة ${n}`, value: n }))} selected={bulkCommittees} onChange={setBulkCommittees} placeholder="كل اللجان" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 mb-1">سنة اللجنة</label>
+                <MultiSelect options={bulkYearOptions} selected={bulkYears} onChange={setBulkYears} placeholder="كل السنوات" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 mb-1">حالة الطلب</label>
+                <MultiSelect
+                  options={bulkStatusOptions}
+                  selected={bulkStatuses}
+                  onChange={setBulkStatuses}
+                  placeholder="كل الحالات"
+                  groups={[{ label: 'كل الـ Pending', values: bulkStatusOptions.filter(o => o.startsWith('Pending')) }]}
+                  wide
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-black text-slate-500 mb-1">طريقة الدفع</label>
+                <MultiSelect options={bulkPaymentOptions} selected={bulkPayments} onChange={setBulkPayments} placeholder="كل الطرق" />
+              </div>
+              {bulkFiltersActive && (
+                <div className="sm:col-span-2 lg:col-span-4 text-left">
+                  <button type="button" onClick={clearBulkFilters} className="text-[11px] font-bold text-rose-600 hover:underline cursor-pointer">مسح الفلاتر</button>
+                </div>
+              )}
+            </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setBulkIds(prev => Array.from(new Set([...prev, ...filteredRequests.map(r => r.id)])))}
+                onClick={() => setBulkIds(prev => Array.from(new Set([...prev, ...bulkList.map(r => r.id)])))}
                 disabled={!!bulkProgress}
                 className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-lg cursor-pointer disabled:opacity-40"
               >
-                تحديد كل المعروض ({filteredRequests.length})
+                تحديد كل المعروض ({bulkList.length})
               </button>
               <button
                 type="button"
@@ -2054,10 +2114,10 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
             </div>
             {bulkMessage && <p className="text-xs font-bold text-rose-600">{bulkMessage}</p>}
             <div className="max-h-56 overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-50">
-              {filteredRequests.length === 0 ? (
-                <p className="text-center text-xs text-slate-400 py-4">مفيش عضويات مطابقة للبحث.</p>
+              {bulkList.length === 0 ? (
+                <p className="text-center text-xs text-slate-400 py-4">مفيش عضويات مطابقة للبحث أو الفلاتر.</p>
               ) : (
-                filteredRequests.map(r => (
+                bulkList.map(r => (
                   <label key={r.id} className="flex items-center gap-2 px-3 py-1.5 text-xs cursor-pointer hover:bg-slate-50">
                     <input
                       type="checkbox"
@@ -2069,6 +2129,8 @@ const getDefaultTemplateState = (form: 'companies' | 'international' | 'normal' 
                     <span className="font-black text-slate-800">{r.membershipNumber}</span>
                     <span className="text-slate-700">{r.memberName}</span>
                     <span className="text-slate-400">({r.paymentMethod})</span>
+                    {r.committeeNo && <span className="text-[10px] font-bold text-slate-500 bg-slate-100 rounded px-1.5 py-0.5">لجنة {r.committeeNo} ({reqYear(r)})</span>}
+                    <span className="text-[10px] font-bold text-amber-700 mr-auto">{getDetailedStatus(r)}</span>
                   </label>
                 ))
               )}
