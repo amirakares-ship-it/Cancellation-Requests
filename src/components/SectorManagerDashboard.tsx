@@ -312,7 +312,7 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
           </div>
           <div>
             <label className={labelCls}>الحالة</label>
-            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" />
+            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" groups={[{ label: 'كل الـ Pending', values: statusOptions.filter((o) => o.startsWith('Pending')) }]} wide />
           </div>
           <div>
             <label className={labelCls}>تاريخ الطلب من</label>
@@ -671,7 +671,7 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
           </div>
           <div>
             <label className={labelCls}>الحالة</label>
-            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" />
+            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" groups={[{ label: 'كل الـ Pending', values: statusOptions.filter((o) => o.startsWith('Pending')) }]} wide />
           </div>
           <div>
             <label className={labelCls}>تاريخ الطلب من</label>

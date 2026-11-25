@@ -463,6 +463,8 @@ export default function RequestsList({
             <label className="block text-xs text-slate-400 mb-1">حالة الطلب</label>
             <MultiSelect
               options={statusFilterOptions}
+              groups={[{ label: 'كل الـ Pending', values: statusFilterOptions.filter((o) => o.value.startsWith('Pending')).map((o) => o.value) }]}
+              wide
               selected={selectedStatuses}
               onChange={setSelectedStatuses}
               placeholder="كل الحالات"
