@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell
+  PieChart, Pie, Cell, AreaChart, Area, LabelList
 } from 'recharts';
 import {
-  Layers, Users, CheckCircle2, XCircle, Clock, Gauge, FilterX, Search, Download, Eye, CalendarRange
+  Layers, Users, CheckCircle2, XCircle, Clock, Gauge, FilterX, Search, Download, Eye, CalendarRange, Maximize2, X, Banknote, Globe, Filter
 } from 'lucide-react';
-import { formatCommitteeYear, formatDateCustom, isSameClub, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
+import { formatCommitteeYear, formatDateCustom, isSameClub, isInternationalRequest, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 
@@ -190,55 +190,234 @@ export default function SectorManagerDashboard(props: Props) {
 }
 
 // ---------------------------------------------------------------------------
+// Reusable pieces for the overview dashboard
+// ---------------------------------------------------------------------------
+
+const toNum = (v: any): number => {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/,/g, '').trim());
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+};
+
+const fmtNum = (n: number) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+const isSarCurrency = (c: any) => {
+  const s = String(c || '').toLowerCase().trim();
+  return s === '' || /sar|ريال|سعود/.test(s);
+};
+
+// The statuses whose money is counted as "refund / fees": Cancelled + the two
+// Pending sub-statuses that mean the memo reached Finance.
+const MONEY_STATUSES = [
+  'Cancelled',
+  'Pending (تم ارسال المذكرة الى الادارة المالية)',
+  'Pending (الشيك جاهز للاستلام)',
+];
+
+const CHART_COLORS = ['#eab308', '#171717', '#10b981', '#f43f5e', '#6366f1', '#d97706', '#0ea5e9', '#a16207', '#737373'];
+
+/** Chart container with a "full screen" button. */
+function ChartCard({ title, children, height = 260, className = '' }: {
+  title: string;
+  children: (height: number | string) => React.ReactNode;
+  height?: number;
+  className?: string;
+}) {
+  const [full, setFull] = useState(false);
+
+  React.useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [full]);
+
+  const header = (isFull: boolean) => (
+    <div className="flex items-center justify-between mb-3">
+      <button
+        type="button"
+        onClick={() => setFull(!isFull)}
+        title={isFull ? 'إغلاق ملء الشاشة' : 'عرض بملء الشاشة'}
+        className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:text-amber-600 hover:border-amber-300 hover:bg-amber-50 cursor-pointer"
+      >
+        {isFull ? <X className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+      </button>
+      <h3 className={`${isFull ? 'text-base' : 'text-sm'} font-black text-slate-800 text-right`}>{title}</h3>
+    </div>
+  );
+
+  return (
+    <>
+      <div className={`bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs ${className}`}>
+        {header(false)}
+        <div style={{ height }}>{children('100%')}</div>
+      </div>
+      {full && (
+        <div className="fixed inset-0 z-[100] bg-black/60 flex items-center justify-center p-4 md:p-8" onClick={() => setFull(false)} dir="rtl">
+          <div className="bg-white rounded-3xl shadow-2xl w-full h-full max-w-[1400px] p-5 md:p-7 flex flex-col" onClick={(e) => e.stopPropagation()}>
+            {header(true)}
+            <div className="flex-1 min-h-0">{children('100%')}</div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+const Section = ({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) => (
+  <section className="space-y-3">
+    <div className="text-right border-r-4 border-amber-400 pr-3">
+      <h3 className="text-sm font-black text-slate-900">{title}</h3>
+      {subtitle && <p className="text-[11px] text-slate-500 mt-0.5">{subtitle}</p>}
+    </div>
+    {children}
+  </section>
+);
+
+const MoneyCard = ({ icon: Icon, label, amount, currency, tone, hint }: {
+  icon: any; label: string; amount: number; currency: string; tone: string; hint?: string;
+}) => (
+  <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
+    <div className="flex items-center justify-between">
+      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-4 h-4" /></div>
+      <p className="text-[11px] font-bold text-slate-500 text-right">{label}</p>
+    </div>
+    <p className="mt-3 text-right text-xl font-black text-slate-900 leading-tight">
+      {fmtNum(amount)} <span className="text-xs font-bold text-slate-400">{currency}</span>
+    </p>
+    {hint && <p className="text-[10px] text-slate-400 mt-1 text-right">{hint}</p>}
+  </div>
+);
+
+const FilterGroup = ({ title, children }: { title: string; children: React.ReactNode }) => (
+  <div>
+    <p className="text-[11px] font-black text-amber-600 mb-2 text-right">{title}</p>
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">{children}</div>
+  </div>
+);
+
+const countBy = (list: any[], pick: (r: any) => string) => {
+  const m: Record<string, number> = {};
+  list.forEach((r) => {
+    const k = (pick(r) || '').toString().trim() || 'غير محدد';
+    m[k] = (m[k] || 0) + 1;
+  });
+  return Object.entries(m).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+};
+
+const hideZero = (v: any) => (v ? v : '');
+const labelStyle = { fontSize: 11, fontWeight: 700, fill: '#334155' } as const;
+
+function PieBlock({ data }: { data: { name: string; value: number; color?: string }[] }) {
+  const rows = data.filter((d) => d.value > 0);
+  if (!rows.length) return <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div>;
+  const total = rows.reduce((a, d) => a + d.value, 0);
+  return (
+    <div className="h-full flex flex-col">
+      <div className="flex-1 min-h-0">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={rows} dataKey="value" nameKey="name" innerRadius="35%" outerRadius="68%" paddingAngle={2}
+              label={(p: any) => `${p.value}`} labelLine={false}>
+              {rows.map((d, i) => <Cell key={i} fill={d.color || CHART_COLORS[i % CHART_COLORS.length]} />)}
+            </Pie>
+            <Tooltip />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-2 max-h-24 overflow-y-auto text-[11px] text-slate-600">
+        {rows.map((d, i) => (
+          <div key={d.name} className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: d.color || CHART_COLORS[i % CHART_COLORS.length] }} />
+            <span className="truncate">{d.name}: <b>{d.value}</b> <span className="text-slate-400">({((d.value / total) * 100).toFixed(0)}%)</span></span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // View 1: Dashboard (overview with filters)
 // ---------------------------------------------------------------------------
 
-function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Props) {
+type IntlMode = 'all' | 'only' | 'exclude';
+type AmountScope = 'finance' | 'all';
+
+function OverviewView({ requests, committees, onOpenCommittee }: Props) {
+  // ---- filters ----
   const [years, setYears] = useState<string[]>([]);
   const [committeeKeys, setCommitteeKeys] = useState<string[]>([]);
-  const [clubs, setClubs] = useState<string[]>([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [clubs, setClubs] = useState<string[]>([]);
+  const [payments, setPayments] = useState<string[]>([]);
+  const [membershipTypes, setMembershipTypes] = useState<string[]>([]);
+  const [intl, setIntl] = useState<IntlMode>('all');
+  const [reasons, setReasons] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
   const [result, setResult] = useState('');
   const [duration, setDuration] = useState('');
-  const [statuses, setStatuses] = useState<string[]>([]);
+  const [amountScope, setAmountScope] = useState<AmountScope>('finance');
+  const [showFilters, setShowFilters] = useState(true);
 
+  const hasCommittee = (r: any) => !!r.committeeNo && r.committeeNo !== '—';
+
+  // ---- filter options (built from the data itself) ----
   const allStats = useMemo(() => buildCommitteeStats(requests, committees), [requests, committees]);
-  const statusOptions = useMemo(() => buildStatusOptions(requests), [requests]);
-  const yearOptions = useMemo(
-    () => Array.from(new Set(allStats.map((s) => s.year))).sort((a, b) => Number(b) - Number(a)),
-    [allStats]
-  );
+  const yearOptions = useMemo(() => Array.from(new Set(allStats.map((s) => s.year))).sort((a, b) => Number(b) - Number(a)), [allStats]);
   const committeeOptions = useMemo(
-    () => allStats
-      .filter((s) => years.length === 0 || years.includes(s.year))
-      .map((s) => ({ label: committeeLabel(s.key), value: s.key })),
+    () => allStats.filter((s) => years.length === 0 || years.includes(s.year)).map((s) => ({ label: committeeLabel(s.key), value: s.key })),
     [allStats, years]
   );
-  const clubOptions: string[] = dropdowns?.clubs || [];
+  const distinct = (pick: (r: any) => any) =>
+    Array.from(new Set(requests.map((r) => String(pick(r) || '').trim()).filter(Boolean))).sort();
+  const clubOptions = useMemo(() => distinct((r) => r.club), [requests]);
+  const paymentOptions = useMemo(() => distinct((r) => r.paymentMethod), [requests]);
+  const membershipOptions = useMemo(() => distinct((r) => r.membershipType), [requests]);
+  const reasonOptions = useMemo(() => distinct((r) => r.cancellationReason), [requests]);
+  const statusOptions = useMemo(() => buildStatusOptions(requests), [requests]);
 
+  // ---- filtering ----
   const filtered = useMemo(() => requests.filter((r) => {
-    if (!r.committeeNo || r.committeeNo === '—') return false;
-    const key = committeeKey(r.committeeNo, getYear(r));
-    if (years.length && !years.includes(getYear(r))) return false;
-    if (committeeKeys.length && !committeeKeys.includes(key)) return false;
+    const yr = getYear(r);
+    if (years.length && !years.includes(yr)) return false;
+    if (committeeKeys.length && !(hasCommittee(r) && committeeKeys.includes(committeeKey(r.committeeNo, yr)))) return false;
     if (clubs.length && !clubs.some((c) => isSameClub(c, r.club))) return false;
+    if (payments.length && !payments.includes(String(r.paymentMethod || '').trim())) return false;
+    if (membershipTypes.length && !membershipTypes.includes(String(r.membershipType || '').trim())) return false;
+    if (intl === 'only' && !isInternationalRequest(r)) return false;
+    if (intl === 'exclude' && isInternationalRequest(r)) return false;
+    if (reasons.length && !reasons.includes(String(r.cancellationReason || '').trim())) return false;
     if (startDate && (r.requestDate || '') < startDate) return false;
     if (endDate && (r.requestDate || '') > endDate) return false;
     if (result && getResultKey(r) !== result) return false;
     if (duration && getDurationKey(r) !== duration) return false;
     if (statuses.length && !statuses.includes(getDetailedStatus(r))) return false;
     return true;
-  }), [requests, years, committeeKeys, clubs, startDate, endDate, result, duration, statuses]);
+  }), [requests, years, committeeKeys, clubs, payments, membershipTypes, intl, reasons, startDate, endDate, result, duration, statuses]);
 
-  // Per-committee stats, computed from the filtered requests. Committees with
-  // no matching requests are dropped when any filter is active.
-  const anyFilter = !!(years.length || committeeKeys.length || clubs.length || startDate || endDate || result || duration || statuses.length);
+  const activeFilters = [years, committeeKeys, clubs, payments, membershipTypes, reasons, statuses].filter((a) => a.length).length
+    + [startDate, endDate, result, duration].filter(Boolean).length + (intl !== 'all' ? 1 : 0);
+
+  const reset = () => {
+    setYears([]); setCommitteeKeys([]); setClubs([]); setPayments([]); setMembershipTypes([]); setIntl('all');
+    setReasons([]); setStatuses([]); setStartDate(''); setEndDate(''); setResult(''); setDuration('');
+  };
+
+  // ---- committees ----
+  const withCommittee = useMemo(() => filtered.filter(hasCommittee), [filtered]);
   const stats = useMemo(() => {
-    const s = buildCommitteeStats(filtered, anyFilter ? [] : committees);
+    const s = buildCommitteeStats(withCommittee, activeFilters ? [] : committees);
     return s.filter((x) => (years.length === 0 || years.includes(x.year)) && (committeeKeys.length === 0 || committeeKeys.includes(x.key)));
-  }, [filtered, committees, anyFilter, years, committeeKeys]);
+  }, [withCommittee, committees, activeFilters, years, committeeKeys]);
+  const committeeCount = stats.length;
+  const average = committeeCount ? withCommittee.length / committeeCount : 0;
 
+  // ---- counts ----
   const totals = useMemo(() => {
     const t = { total: filtered.length, accepted: 0, rejected: 0, pending: 0, lt1m: 0, m1to3: 0, gt3m: 0 };
     filtered.forEach((r) => {
@@ -249,15 +428,49 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
     return t;
   }, [filtered]);
 
-  const committeeCount = stats.length;
-  const average = committeeCount ? totals.total / committeeCount : 0;
+  // ---- money ----
+  const money = useMemo(() => {
+    const inScope = (r: any) => amountScope === 'all' || MONEY_STATUSES.includes(getDetailedStatus(r));
+    const local = filtered.filter((r) => !isInternationalRequest(r) && inScope(r));
+    const sum = (list: any[], pick: (r: any) => any) => list.reduce((a, r) => a + toNum(pick(r)), 0);
+    // مبلغ الاسترداد = Refund Amount + رد للعميل (الشركات)
+    const refundOf = (r: any) => toNum(r.refundAmount) + toNum(r.refundToClient);
 
-  const reset = () => {
-    setYears([]); setCommitteeKeys([]); setClubs([]); setStartDate(''); setEndDate(''); setResult(''); setDuration(''); setStatuses([]);
-  };
+    const intlAll = filtered.filter((r) => isInternationalRequest(r));
+    const intlScope = intlAll.filter(inScope);
+    const intlSar = intlScope.filter((r) => isSarCurrency(r.currency));
+    return {
+      localCount: local.length,
+      refund: sum(local, refundOf),
+      usage: sum(local, (r) => r.usageFee),
+      admin: sum(local, (r) => r.adminFees),
+      visa: sum(local, (r) => r.visaFees2Percent),
+      intlCount: intlAll.length,
+      intlScopeCount: intlScope.length,
+      intlRefundSar: sum(intlSar, refundOf),
+      intlOtherCurrency: intlScope.length - intlSar.length,
+    };
+  }, [filtered, amountScope]);
+
+  // ---- chart data ----
+  const monthlyData = useMemo(() => {
+    const months = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
+    const rows = months.map((name) => ({ name, 'الطلبات المقدمة': 0, 'تم إلغاؤها': 0 }));
+    filtered.forEach((r) => {
+      const d = new Date(r.requestDate);
+      if (isNaN(d.getTime())) return;
+      rows[d.getMonth()]['الطلبات المقدمة']++;
+      if (r.status === 'Cancelled') rows[d.getMonth()]['تم إلغاؤها']++;
+    });
+    return rows;
+  }, [filtered]);
+  const paymentData = useMemo(() => countBy(filtered, (r) => r.paymentMethod), [filtered]);
+  const clubData = useMemo(() => countBy(filtered, (r) => r.club), [filtered]);
+  const reasonData = useMemo(() => countBy(filtered, (r) => r.cancellationReason).slice(0, 8), [filtered]);
+  const statusData = useMemo(() => countBy(filtered, (r) => getDetailedStatus(r)), [filtered]);
 
   const barData = stats.slice().reverse().map((s) => ({
-    name: `${s.no} (${s.year})`, key: s.key, Accepted: s.accepted, Rejected: s.rejected, Pending: s.pending,
+    name: `${s.no} (${s.year})`, Accepted: s.accepted, Rejected: s.rejected, Pending: s.pending,
   }));
   const durationPie = [
     { name: DURATION_LABELS.lt1m, value: totals.lt1m, color: DURATION_COLORS.lt1m },
@@ -270,190 +483,285 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
     { name: 'Pending', value: totals.pending, color: RESULT_COLORS.pending },
   ];
 
+  const tickAngle = (n: number) => (n > 6 ? { angle: -30, textAnchor: 'end' as const, height: 55 } : {});
+
   return (
     <>
-      <div>
-        <h2 className="text-xl font-black text-slate-900 text-right">لوحة رئيس القطاع</h2>
-        <p className="text-xs text-slate-500 mt-1 text-right">نظرة عامة على اللجان وطلبات الإلغاء، مع إمكانية التصفية والدخول لأي لجنة.</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="text-right">
+          <h2 className="text-xl font-black text-slate-900">لوحة رئيس القطاع</h2>
+          <p className="text-xs text-slate-500 mt-1">كل الأرقام والرسومات تتغير حسب الفلاتر المختارة.</p>
+        </div>
+        <button type="button" onClick={() => setShowFilters(!showFilters)}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-700 hover:bg-slate-50 cursor-pointer">
+          <Filter className="w-3.5 h-3.5 text-amber-500" />
+          الفلاتر
+          {activeFilters > 0 && <span className="bg-amber-400 text-neutral-950 text-[10px] font-black px-1.5 rounded-md">{activeFilters}</span>}
+        </button>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <div>
-            <label className={labelCls}>سنة اللجنة</label>
-            <MultiSelect options={yearOptions} selected={years} onChange={(v) => { setYears(v); setCommitteeKeys([]); }} placeholder="كل السنوات" />
-          </div>
-          <div>
-            <label className={labelCls}>اللجنة</label>
-            <MultiSelect options={committeeOptions} selected={committeeKeys} onChange={setCommitteeKeys} placeholder="كل اللجان" />
-          </div>
-          <div>
-            <label className={labelCls}>النادي</label>
-            <MultiSelect options={clubOptions} selected={clubs} onChange={setClubs} placeholder="كل الأندية" />
-          </div>
-          <div>
-            <label className={labelCls}>النتيجة</label>
-            <select className={selectCls} value={result} onChange={(e) => setResult(e.target.value)}>
-              <option value="">الكل</option>
-              <option value="accepted">Accepted</option>
-              <option value="rejected">Rejected</option>
-              <option value="pending">Pending</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>مدة الاشتراك</label>
-            <select className={selectCls} value={duration} onChange={(e) => setDuration(e.target.value)}>
-              <option value="">الكل</option>
-              <option value="lt1m">{DURATION_LABELS.lt1m}</option>
-              <option value="1to3m">{DURATION_LABELS['1to3m']}</option>
-              <option value="gt3m">{DURATION_LABELS.gt3m}</option>
-            </select>
-          </div>
-          <div>
-            <label className={labelCls}>الحالة</label>
-            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" groups={[{ label: 'كل الـ Pending', values: statusOptions.filter((o) => o.startsWith('Pending')) }]} wide />
-          </div>
-          <div>
-            <label className={labelCls}>تاريخ الطلب من</label>
-            <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-          </div>
-          <div>
-            <label className={labelCls}>تاريخ الطلب إلى</label>
-            <input type="date" className={inputCls} value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-          </div>
-          <div className="flex items-end">
+      {/* ================= Filters ================= */}
+      {showFilters && (
+        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs space-y-4">
+          <FilterGroup title="اللجنة والفترة">
+            <div><label className={labelCls}>سنة اللجنة</label>
+              <MultiSelect options={yearOptions} selected={years} onChange={(v) => { setYears(v); setCommitteeKeys([]); }} placeholder="كل السنوات" /></div>
+            <div><label className={labelCls}>اللجنة</label>
+              <MultiSelect options={committeeOptions} selected={committeeKeys} onChange={setCommitteeKeys} placeholder="كل اللجان" /></div>
+            <div><label className={labelCls}>تاريخ الطلب من</label>
+              <input type="date" className={inputCls} value={startDate} onChange={(e) => setStartDate(e.target.value)} /></div>
+            <div><label className={labelCls}>تاريخ الطلب إلى</label>
+              <input type="date" className={inputCls} value={endDate} onChange={(e) => setEndDate(e.target.value)} /></div>
+          </FilterGroup>
+
+          <FilterGroup title="العضوية">
+            <div><label className={labelCls}>النادي</label>
+              <MultiSelect options={clubOptions} selected={clubs} onChange={setClubs} placeholder="كل الأندية" /></div>
+            <div><label className={labelCls}>طريقة الدفع</label>
+              <MultiSelect options={paymentOptions} selected={payments} onChange={setPayments} placeholder="كل الطرق" /></div>
+            <div><label className={labelCls}>نوع العضوية</label>
+              <MultiSelect options={membershipOptions} selected={membershipTypes} onChange={setMembershipTypes} placeholder="كل الأنواع" /></div>
+            <div><label className={labelCls}>العضويات الدولية</label>
+              <select className={selectCls} value={intl} onChange={(e) => setIntl(e.target.value as IntlMode)}>
+                <option value="all">الكل</option>
+                <option value="only">الدولية فقط</option>
+                <option value="exclude">بدون الدولية</option>
+              </select></div>
+            <div className="sm:col-span-2"><label className={labelCls}>سبب الإلغاء</label>
+              <MultiSelect options={reasonOptions} selected={reasons} onChange={setReasons} placeholder="كل الأسباب" wide /></div>
+          </FilterGroup>
+
+          <FilterGroup title="الحالة والمدة">
+            <div className="sm:col-span-2"><label className={labelCls}>الحالة</label>
+              <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات"
+                groups={[{ label: 'كل الـ Pending', values: statusOptions.filter((o) => o.startsWith('Pending')) }]} wide /></div>
+            <div><label className={labelCls}>النتيجة</label>
+              <select className={selectCls} value={result} onChange={(e) => setResult(e.target.value)}>
+                <option value="">الكل</option>
+                <option value="accepted">Accepted</option>
+                <option value="rejected">Rejected</option>
+                <option value="pending">Pending</option>
+              </select></div>
+            <div><label className={labelCls}>مدة الاشتراك</label>
+              <select className={selectCls} value={duration} onChange={(e) => setDuration(e.target.value)}>
+                <option value="">الكل</option>
+                <option value="lt1m">{DURATION_LABELS.lt1m}</option>
+                <option value="1to3m">{DURATION_LABELS['1to3m']}</option>
+                <option value="gt3m">{DURATION_LABELS.gt3m}</option>
+              </select></div>
+          </FilterGroup>
+
+          <div className="flex flex-wrap items-end justify-between gap-3 pt-3 border-t border-slate-100">
             <button type="button" onClick={reset}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer">
-              <FilterX className="w-3.5 h-3.5" /> مسح الفلاتر
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 cursor-pointer">
+              <FilterX className="w-3.5 h-3.5" /> مسح كل الفلاتر
             </button>
+            <div className="min-w-[260px]">
+              <label className={labelCls}>المبالغ (الاسترداد / الانتفاع / المصاريف) تُحسب على</label>
+              <select className={selectCls} value={amountScope} onChange={(e) => setAmountScope(e.target.value as AmountScope)}>
+                <option value="finance">الحالات المالية فقط (Cancelled + أُرسلت للمالية + الشيك جاهز)</option>
+                <option value="all">كل الطلبات بعد الفلاتر</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-        <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="neutral" />
-        <KpiCard icon={Users} label="إجمالي الطلبات" value={totals.total} tone="amber" />
-        <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="amber" />
-        <KpiCard icon={CheckCircle2} label="Accepted" value={totals.accepted} tone="green" />
-        <KpiCard icon={XCircle} label="Rejected" value={totals.rejected} tone="red" />
-        <KpiCard icon={Clock} label="Pending" value={totals.pending} tone="gray" />
-      </div>
-
-      {/* Duration cards + pies */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-          <h3 className="text-sm font-black text-slate-800 text-right mb-3">التصنيف بمدة الاشتراك</h3>
-          <div className="grid grid-cols-3 gap-2 mb-2">
-            {(['lt1m', '1to3m', 'gt3m'] as DurationKey[]).map((k) => {
-              const v = k === 'lt1m' ? totals.lt1m : k === '1to3m' ? totals.m1to3 : totals.gt3m;
-              return (
-                <div key={k} className="rounded-xl border border-slate-200 p-2 text-center">
-                  <p className="text-[10px] font-bold text-slate-500 leading-tight">{DURATION_LABELS[k]}</p>
-                  <p className="text-xl font-black" style={{ color: k === 'gt3m' ? '#171717' : DURATION_COLORS[k] }}>{v}</p>
-                </div>
-              );
-            })}
-          </div>
-          <div className="h-44">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={durationPie} dataKey="value" nameKey="name" innerRadius={40} outerRadius={65} paddingAngle={2}>
-                  {durationPie.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <p className="text-[10px] text-slate-400 text-center">
-            إجمالي ≤ 3 شهور: {totals.lt1m + totals.m1to3} • أكثر من 3 شهور: {totals.gt3m}
-          </p>
+      {/* ================= 1. Counts ================= */}
+      <Section title="1) الطلبات واللجان" subtitle={`${totals.total} طلب بعد الفلاتر${totals.total - withCommittee.length > 0 ? ` — منها ${totals.total - withCommittee.length} بدون لجنة` : ''}`}>
+        <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="neutral" />
+          <KpiCard icon={Users} label="إجمالي الطلبات" value={totals.total} tone="amber" />
+          <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="amber" hint="للطلبات التي لها لجنة" />
+          <KpiCard icon={CheckCircle2} label="Accepted" value={totals.accepted} tone="green" />
+          <KpiCard icon={XCircle} label="Rejected" value={totals.rejected} tone="red" />
+          <KpiCard icon={Clock} label="Pending" value={totals.pending} tone="gray" />
         </div>
+      </Section>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-          <h3 className="text-sm font-black text-slate-800 text-right mb-3">Accepted / Rejected</h3>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={resultPie} dataKey="value" nameKey="name" outerRadius={75} label>
-                  {resultPie.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
+      {/* ================= 2. Money ================= */}
+      <Section
+        title="2) المبالغ — العضويات المحلية (EGP)"
+        subtitle={amountScope === 'finance'
+          ? `محسوبة على ${money.localCount} طلب: Cancelled + Pending (تم الارسال للإدارة المالية) + Pending (الشيك جاهز) — بدون العضويات الدولية`
+          : `محسوبة على ${money.localCount} طلب (كل الحالات) — بدون العضويات الدولية`}
+      >
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+          <MoneyCard icon={Banknote} label="مبلغ الاسترداد" amount={money.refund} currency="EGP" tone="bg-neutral-900 text-amber-400" />
+          <MoneyCard icon={Banknote} label="مبلغ حق الانتفاع" amount={money.usage} currency="EGP" tone="bg-amber-50 text-amber-600" />
+          <MoneyCard icon={Banknote} label="المصاريف الإدارية" amount={money.admin} currency="EGP" tone="bg-sky-50 text-sky-600" />
+          <MoneyCard icon={Banknote} label="مصاريف الفيزا 2%" amount={money.visa} currency="EGP" tone="bg-emerald-50 text-emerald-600" />
         </div>
+      </Section>
 
-        <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-          <h3 className="text-sm font-black text-slate-800 text-right mb-3">عدد الطلبات بكل لجنة</h3>
-          <div className="h-56">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tick={{ fontSize: 10 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
-                <Tooltip />
-                <Legend />
-                <Bar dataKey="Accepted" stackId="a" fill={RESULT_COLORS.accepted} />
-                <Bar dataKey="Rejected" stackId="a" fill={RESULT_COLORS.rejected} />
-                <Bar dataKey="Pending" stackId="a" fill={RESULT_COLORS.pending} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {/* ================= 3. International ================= */}
+      <Section title="3) العضويات الدولية (SAR)" subtitle="منفصلة عن العضويات المحلية ولا تدخل في مبالغ الجنيه">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-3xl">
+          <KpiCard icon={Globe} label="عدد العضويات الدولية" value={money.intlCount} tone="neutral"
+            hint={`منها ${money.intlScopeCount} ${amountScope === 'finance' ? 'في حالات مالية' : 'محسوبة'}`} />
+          <MoneyCard icon={Banknote} label="مبلغ الاسترداد (دولي)" amount={money.intlRefundSar} currency="SAR" tone="bg-neutral-900 text-amber-400"
+            hint={money.intlOtherCurrency > 0 ? `${money.intlOtherCurrency} طلب بعملة غير SAR غير محسوب` : undefined} />
         </div>
-      </div>
+      </Section>
 
-      {/* Committees table */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-          <p className="text-[11px] text-slate-400">اضغط "عرض الطلبات" لفتح أي لجنة</p>
-          <h3 className="text-sm font-black text-slate-800">تفاصيل اللجان</h3>
+      {/* ================= 4. Duration ================= */}
+      <Section title="4) مدة الاشتراك">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {(['lt1m', '1to3m', 'gt3m'] as DurationKey[]).map((k) => {
+            const v = k === 'lt1m' ? totals.lt1m : k === '1to3m' ? totals.m1to3 : totals.gt3m;
+            return (
+              <div key={k}>
+                <KpiCard icon={Clock} label={DURATION_LABELS[k]} value={v} tone={k === 'gt3m' ? 'neutral' : k === 'lt1m' ? 'green' : 'amber'}
+                  hint={totals.total ? `${((v / totals.total) * 100).toFixed(0)}% من الطلبات` : undefined} />
+              </div>
+            );
+          })}
         </div>
-        <TableScrollWrapper>
-          <table className="w-full text-xs text-right">
-            <thead className="bg-slate-50 text-slate-500 font-black">
-              <tr>
-                <th className="px-3 py-2.5">اللجنة</th>
-                <th className="px-3 py-2.5">السنة</th>
-                <th className="px-3 py-2.5">عدد الطلبات</th>
-                <th className="px-3 py-2.5">Accepted</th>
-                <th className="px-3 py-2.5">Rejected</th>
-                <th className="px-3 py-2.5">Pending</th>
-                <th className="px-3 py-2.5">أقل من شهر</th>
-                <th className="px-3 py-2.5">شهر - 3 شهور</th>
-                <th className="px-3 py-2.5">أكثر من 3 شهور</th>
-                <th className="px-3 py-2.5"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.length === 0 && (
-                <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد لجان مطابقة</td></tr>
-              )}
-              {stats.map((s) => (
-                <tr key={s.key} className="border-t border-slate-100 hover:bg-amber-50/40">
-                  <td className="px-3 py-2.5 font-black text-slate-800">لجنة {s.no}</td>
-                  <td className="px-3 py-2.5 font-mono">{s.year}</td>
-                  <td className="px-3 py-2.5 font-black">{s.total}</td>
-                  <td className="px-3 py-2.5 text-emerald-600 font-bold">{s.accepted}</td>
-                  <td className="px-3 py-2.5 text-rose-600 font-bold">{s.rejected}</td>
-                  <td className="px-3 py-2.5 text-slate-500 font-bold">{s.pending}</td>
-                  <td className="px-3 py-2.5">{s.lt1m}</td>
-                  <td className="px-3 py-2.5">{s.m1to3}</td>
-                  <td className="px-3 py-2.5">{s.gt3m}</td>
-                  <td className="px-3 py-2.5">
-                    <button type="button" onClick={() => onOpenCommittee(s.key)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-900 text-amber-400 text-[10px] font-black hover:bg-neutral-800 cursor-pointer">
-                      <Eye className="w-3 h-3" /> عرض الطلبات
-                    </button>
-                  </td>
+      </Section>
+
+      {/* ================= 5. Charts ================= */}
+      <Section title="5) الرسومات البيانية" subtitle="اضغط على أيقونة التكبير في أي رسم لعرضه بملء الشاشة">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+          <ChartCard title="عدد الطلبات بكل لجنة" className="xl:col-span-2">
+            {() => barData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={barData} margin={{ top: 18, right: 10, left: -15, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} {...tickAngle(barData.length)} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+                  <Tooltip />
+                  <Legend />
+                  <Bar dataKey="Accepted" stackId="a" fill={RESULT_COLORS.accepted}><LabelList dataKey="Accepted" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
+                  <Bar dataKey="Rejected" stackId="a" fill={RESULT_COLORS.rejected}><LabelList dataKey="Rejected" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
+                  <Bar dataKey="Pending" stackId="a" fill={RESULT_COLORS.pending}><LabelList dataKey="Pending" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="Accepted / Rejected / Pending">{() => <PieBlock data={resultPie} />}</ChartCard>
+
+          <ChartCard title="مدة الاشتراك">{() => <PieBlock data={durationPie} />}</ChartCard>
+
+          <ChartCard title="معدل تدفق الطلبات شهرياً" className="xl:col-span-2">
+            {() => (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={monthlyData} margin={{ top: 20, right: 15, left: -15, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="sectorReq" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#eab308" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#eab308" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" fontSize={11} stroke="#94a3b8" />
+                  <YAxis allowDecimals={false} fontSize={11} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Legend />
+                  <Area type="monotone" dataKey="الطلبات المقدمة" stroke="#eab308" strokeWidth={2} fill="url(#sectorReq)" dot>
+                    <LabelList dataKey="الطلبات المقدمة" position="top" formatter={hideZero} style={labelStyle} />
+                  </Area>
+                  <Area type="monotone" dataKey="تم إلغاؤها" stroke="#171717" strokeWidth={1.5} fillOpacity={0} dot>
+                    <LabelList dataKey="تم إلغاؤها" position="bottom" formatter={hideZero} style={{ ...labelStyle, fill: '#171717' }} />
+                  </Area>
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="طريقة دفع الاشتراكات">{() => <PieBlock data={paymentData} />}</ChartCard>
+
+          <ChartCard title="حجم الإلغاء حسب الفروع" className="xl:col-span-2">
+            {() => clubData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={clubData} margin={{ top: 18, right: 10, left: -15, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                  <XAxis dataKey="name" fontSize={11} stroke="#94a3b8" interval={0} {...tickAngle(clubData.length)} />
+                  <YAxis allowDecimals={false} fontSize={11} stroke="#94a3b8" />
+                  <Tooltip />
+                  <Bar dataKey="value" name="الطلبات" fill="#ca8a04" radius={[4, 4, 0, 0]}><LabelList dataKey="value" position="top" style={labelStyle} /></Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="الحالات (Pending مفصّلة)">
+            {() => statusData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={statusData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" allowDecimals={false} fontSize={11} stroke="#94a3b8" />
+                  <YAxis type="category" dataKey="name" fontSize={10} stroke="#94a3b8" width={150} tickLine={false} />
+                  <Tooltip />
+                  <Bar dataKey="value" name="الطلبات" fill="#6366f1" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" style={labelStyle} /></Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+
+          <ChartCard title="الأسباب الأكثر شيوعاً لطلب الإلغاء" className="xl:col-span-2">
+            {() => reasonData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={reasonData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                  <XAxis type="number" allowDecimals={false} fontSize={11} stroke="#94a3b8" />
+                  <YAxis type="category" dataKey="name" fontSize={10} stroke="#94a3b8" width={150} tickLine={false} />
+                  <Tooltip />
+                  <Bar dataKey="value" name="الطلبات" fill="#171717" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" style={labelStyle} /></Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </ChartCard>
+        </div>
+      </Section>
+
+      {/* ================= 6. Committees table ================= */}
+      <Section title="6) تفاصيل اللجان">
+        <div className="bg-white border border-slate-200 rounded-2xl shadow-2xs overflow-hidden">
+          <TableScrollWrapper>
+            <table className="w-full text-xs text-right">
+              <thead className="bg-slate-50 text-slate-500 font-black">
+                <tr>
+                  <th className="px-3 py-2.5">اللجنة</th>
+                  <th className="px-3 py-2.5">السنة</th>
+                  <th className="px-3 py-2.5">عدد الطلبات</th>
+                  <th className="px-3 py-2.5">Accepted</th>
+                  <th className="px-3 py-2.5">Rejected</th>
+                  <th className="px-3 py-2.5">Pending</th>
+                  <th className="px-3 py-2.5">أقل من شهر</th>
+                  <th className="px-3 py-2.5">شهر - 3 شهور</th>
+                  <th className="px-3 py-2.5">أكثر من 3 شهور</th>
+                  <th className="px-3 py-2.5"></th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableScrollWrapper>
-      </div>
+              </thead>
+              <tbody>
+                {stats.length === 0 && (
+                  <tr><td colSpan={10} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد لجان مطابقة</td></tr>
+                )}
+                {stats.map((s) => (
+                  <tr key={s.key} className="border-t border-slate-100 hover:bg-amber-50/40">
+                    <td className="px-3 py-2.5 font-black text-slate-800">لجنة {s.no}</td>
+                    <td className="px-3 py-2.5 font-mono">{s.year}</td>
+                    <td className="px-3 py-2.5 font-black">{s.total}</td>
+                    <td className="px-3 py-2.5 text-emerald-600 font-bold">{s.accepted}</td>
+                    <td className="px-3 py-2.5 text-rose-600 font-bold">{s.rejected}</td>
+                    <td className="px-3 py-2.5 text-slate-500 font-bold">{s.pending}</td>
+                    <td className="px-3 py-2.5">{s.lt1m}</td>
+                    <td className="px-3 py-2.5">{s.m1to3}</td>
+                    <td className="px-3 py-2.5">{s.gt3m}</td>
+                    <td className="px-3 py-2.5">
+                      <button type="button" onClick={() => onOpenCommittee(s.key)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-neutral-900 text-amber-400 text-[10px] font-black hover:bg-neutral-800 cursor-pointer">
+                        <Eye className="w-3 h-3" /> عرض الطلبات
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableScrollWrapper>
+        </div>
+      </Section>
     </>
   );
 }
