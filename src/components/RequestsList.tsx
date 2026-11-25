@@ -3,7 +3,7 @@ import {
   Search, Eye, Edit3, Trash2, Calendar, CreditCard, Layers, Tag, Plus, CheckSquare, AlertTriangle, RotateCcw, RefreshCw, Upload, Download, FileText, Check,
   CheckCircle2, XCircle, ShieldCheck, Clock, FileCheck, FileUp, X, Paperclip, Filter, Pin
 } from 'lucide-react';
-import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode } from '../utils';
+import { translateStatus, formatCommitteeYear, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, formatDateCustom, toInputDateStr, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, isReservedMembershipCode, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -69,6 +69,18 @@ export default function RequestsList({
   const [search, setSearch] = useState('');
   const [selectedClubs, setSelectedClubs] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
+
+  // Status filter options: Pending is split into its sub-statuses
+  // (e.g. "Pending (الشيك جاهز للاستلام)"); other statuses stay as they are.
+  const statusFilterOptions = useMemo(() => {
+    const present = new Set<string>(requests.map((r) => getDetailedStatus(r)));
+    const configured: string[] = (dropdowns?.cancellationStatuses || ['Pending', 'Cancelled', 'Revoked', 'Deletion'])
+      .filter((st: string) => st !== 'Pending');
+    const pendingKnown = DETAILED_STATUS_ORDER.filter((x) => present.has(x));
+    const pendingOther = Array.from(present).filter((x) => x.startsWith('Pending') && !DETAILED_STATUS_ORDER.includes(x)).sort();
+    const others = Array.from(new Set([...configured, ...Array.from(present).filter((x) => !x.startsWith('Pending'))]));
+    return [...pendingKnown, ...pendingOther, ...others].map((v) => ({ label: v, value: v }));
+  }, [requests, dropdowns?.cancellationStatuses]);
   const [selectedPayments, setSelectedPayments] = useState<string[]>([]);
   const [selectedSubscriptionTypes, setSelectedSubscriptionTypes] = useState<string[]>([]);
 
@@ -293,7 +305,7 @@ export default function RequestsList({
         const isEmptyClub = !r.club || !String(r.club).trim();
         if (!(wantsEmpty && isEmptyClub) && !selectedClubs.includes(r.club)) return false;
       }
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(r.status)) return false;
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(getDetailedStatus(r))) return false;
       if (selectedPayments.length > 0 && !selectedPayments.includes(r.paymentMethod)) return false;
       if (selectedCommittees.length > 0 && !selectedCommittees.includes(r.committeeNo)) return false;
       if (selectedCommitteeYears.length > 0) {
@@ -450,10 +462,7 @@ export default function RequestsList({
           <div>
             <label className="block text-xs text-slate-400 mb-1">حالة الطلب</label>
             <MultiSelect
-              options={(dropdowns?.cancellationStatuses || ["Pending", "Cancelled", "Revoked", "Deletion"]).map((st: string) => ({
-                label: translateStatus(st) || st,
-                value: st
-              }))}
+              options={statusFilterOptions}
               selected={selectedStatuses}
               onChange={setSelectedStatuses}
               placeholder="كل الحالات"

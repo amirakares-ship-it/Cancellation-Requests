@@ -6,7 +6,7 @@ import {
 import {
   Layers, Users, CheckCircle2, XCircle, Clock, Gauge, FilterX, Search, Download, Eye, CalendarRange
 } from 'lucide-react';
-import { formatCommitteeYear, formatDateCustom, isSameClub } from '../utils';
+import { formatCommitteeYear, formatDateCustom, isSameClub, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 
@@ -53,6 +53,15 @@ const getResultKey = (r: any): ResultKey => {
 
 const getYear = (r: any): string =>
   formatCommitteeYear(r.committeeYear || r.approvalDate || r.requestDate || r.createdAt);
+
+// Distinct detailed statuses present in the data (Pending split into sub-statuses)
+const buildStatusOptions = (requests: any[]): string[] => {
+  const present = new Set<string>();
+  requests.forEach((r) => present.add(getDetailedStatus(r)));
+  const known = DETAILED_STATUS_ORDER.filter((s) => present.has(s));
+  const rest = Array.from(present).filter((s) => !DETAILED_STATUS_ORDER.includes(s)).sort();
+  return [...known, ...rest];
+};
 
 const committeeKey = (no: any, year: any) => `${String(no).trim()}|${year}`;
 
@@ -192,8 +201,10 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
   const [endDate, setEndDate] = useState('');
   const [result, setResult] = useState('');
   const [duration, setDuration] = useState('');
+  const [statuses, setStatuses] = useState<string[]>([]);
 
   const allStats = useMemo(() => buildCommitteeStats(requests, committees), [requests, committees]);
+  const statusOptions = useMemo(() => buildStatusOptions(requests), [requests]);
   const yearOptions = useMemo(
     () => Array.from(new Set(allStats.map((s) => s.year))).sort((a, b) => Number(b) - Number(a)),
     [allStats]
@@ -216,12 +227,13 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
     if (endDate && (r.requestDate || '') > endDate) return false;
     if (result && getResultKey(r) !== result) return false;
     if (duration && getDurationKey(r) !== duration) return false;
+    if (statuses.length && !statuses.includes(getDetailedStatus(r))) return false;
     return true;
-  }), [requests, years, committeeKeys, clubs, startDate, endDate, result, duration]);
+  }), [requests, years, committeeKeys, clubs, startDate, endDate, result, duration, statuses]);
 
   // Per-committee stats, computed from the filtered requests. Committees with
   // no matching requests are dropped when any filter is active.
-  const anyFilter = !!(years.length || committeeKeys.length || clubs.length || startDate || endDate || result || duration);
+  const anyFilter = !!(years.length || committeeKeys.length || clubs.length || startDate || endDate || result || duration || statuses.length);
   const stats = useMemo(() => {
     const s = buildCommitteeStats(filtered, anyFilter ? [] : committees);
     return s.filter((x) => (years.length === 0 || years.includes(x.year)) && (committeeKeys.length === 0 || committeeKeys.includes(x.key)));
@@ -241,7 +253,7 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
   const average = committeeCount ? totals.total / committeeCount : 0;
 
   const reset = () => {
-    setYears([]); setCommitteeKeys([]); setClubs([]); setStartDate(''); setEndDate(''); setResult(''); setDuration('');
+    setYears([]); setCommitteeKeys([]); setClubs([]); setStartDate(''); setEndDate(''); setResult(''); setDuration(''); setStatuses([]);
   };
 
   const barData = stats.slice().reverse().map((s) => ({
@@ -297,6 +309,10 @@ function OverviewView({ requests, committees, dropdowns, onOpenCommittee }: Prop
               <option value="1to3m">{DURATION_LABELS['1to3m']}</option>
               <option value="gt3m">{DURATION_LABELS.gt3m}</option>
             </select>
+          </div>
+          <div>
+            <label className={labelCls}>الحالة</label>
+            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" />
           </div>
           <div>
             <label className={labelCls}>تاريخ الطلب من</label>
@@ -561,6 +577,7 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
   const [result, setResult] = useState('');
   const [duration, setDuration] = useState('');
   const [clubs, setClubs] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[]>([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -572,6 +589,8 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
     return requests.filter((r) => r.committeeNo && committeeKey(r.committeeNo, getYear(r)) === selectedCommittee);
   }, [requests, selectedCommittee]);
 
+  const statusOptions = useMemo(() => buildStatusOptions(committeeRequests), [committeeRequests]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return committeeRequests.filter((r) => {
@@ -582,11 +601,12 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
       if (clubs.length && !clubs.some((c) => isSameClub(c, r.club))) return false;
       if (result && getResultKey(r) !== result) return false;
       if (duration && getDurationKey(r) !== duration) return false;
+      if (statuses.length && !statuses.includes(getDetailedStatus(r))) return false;
       if (startDate && (r.requestDate || '') < startDate) return false;
       if (endDate && (r.requestDate || '') > endDate) return false;
       return true;
     });
-  }, [committeeRequests, search, clubs, result, duration, startDate, endDate]);
+  }, [committeeRequests, search, clubs, result, duration, statuses, startDate, endDate]);
 
   const counts = useMemo(() => {
     const t = { accepted: 0, rejected: 0, pending: 0, lt1m: 0, m1to3: 0, gt3m: 0 };
@@ -598,7 +618,7 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
     return t;
   }, [filtered]);
 
-  const reset = () => { setSearch(''); setResult(''); setDuration(''); setClubs([]); setStartDate(''); setEndDate(''); };
+  const reset = () => { setSearch(''); setResult(''); setDuration(''); setClubs([]); setStatuses([]); setStartDate(''); setEndDate(''); };
 
   const fmtMoney = (v: any) => (typeof v === 'number' ? v.toLocaleString('en-US') : v || '—');
 
@@ -648,6 +668,10 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
               <option value="1to3m">{DURATION_LABELS['1to3m']}</option>
               <option value="gt3m">{DURATION_LABELS.gt3m}</option>
             </select>
+          </div>
+          <div>
+            <label className={labelCls}>الحالة</label>
+            <MultiSelect options={statusOptions} selected={statuses} onChange={setStatuses} placeholder="كل الحالات" />
           </div>
           <div>
             <label className={labelCls}>تاريخ الطلب من</label>
@@ -704,11 +728,12 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
                     <th className="px-3 py-2.5">سبب الإلغاء</th>
                     <th className="px-3 py-2.5">مبلغ الاسترداد</th>
                     <th className="px-3 py-2.5">النتيجة</th>
+                    <th className="px-3 py-2.5">الحالة</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 && (
-                    <tr><td colSpan={11} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد طلبات مطابقة</td></tr>
+                    <tr><td colSpan={12} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد طلبات مطابقة</td></tr>
                   )}
                   {filtered.map((r, i) => (
                     <tr key={r.id} className="border-t border-slate-100 hover:bg-amber-50/40">
@@ -723,6 +748,7 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
                       <td className="px-3 py-2.5">{r.cancellationReason || '—'}</td>
                       <td className="px-3 py-2.5 font-mono">{fmtMoney(r.refundAmount)}</td>
                       <td className="px-3 py-2.5"><ResultBadge r={r} /></td>
+                      <td className="px-3 py-2.5 font-bold text-slate-700 whitespace-nowrap">{getDetailedStatus(r)}</td>
                     </tr>
                   ))}
                 </tbody>

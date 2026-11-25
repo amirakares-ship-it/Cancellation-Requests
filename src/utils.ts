@@ -1319,6 +1319,33 @@ export function getStatusDateText(r: any): string {
     : (r.requestDate ? formatDateCustom(r.requestDate) : '—'));
 }
 
+/**
+ * Detailed status text used in filters and Excel exports.
+ * Pending requests are expanded with their sub-status, e.g.
+ *   "Pending (تم ارسال المذكرة الى الادارة المالية)" / "Pending (الشيك جاهز للاستلام)".
+ * Any other status is returned as-is (Cancelled, Revoked, Deletion, Rejected...).
+ */
+export function getDetailedStatus(r: any): string {
+  const display = getStatusDisplay(r);
+  if (display.raw) {
+    const text = (display.main || display.raw).replace(/^\(+/, '').replace(/\)+$/, '').trim();
+    return text ? `Pending (${text})` : 'Pending';
+  }
+  return translateStatus(r.status) || 'Pending';
+}
+
+/** Display order for the detailed Pending sub-statuses in filter lists. */
+export const DETAILED_STATUS_ORDER: string[] = [
+  'Pending (قيد المراجعة)',
+  'Pending (فى انتظار الموافقة المبدئية)',
+  'Pending (فى انتظار انعقاد اللجنة)',
+  'Pending (فى انتظار اصل الايصال)',
+  'Pending (فى انتظار المديونية)',
+  'Pending (جارى تجهيز المذكرة)',
+  'Pending (تم ارسال المذكرة الى الادارة المالية)',
+  'Pending (الشيك جاهز للاستلام)',
+];
+
 export function evaluateCustomFormula(expression: string, vars: Record<string, number>): number {
   if (!expression || typeof expression !== 'string') return 0;
   try {

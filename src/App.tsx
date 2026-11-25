@@ -35,7 +35,7 @@ import SendToFirstManagerModal from './components/SendToFirstManagerModal';
 import SectorManagerDashboard, { SectorView } from './components/SectorManagerDashboard';
 
 import { CustomField } from './types';
-import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig } from './utils';
+import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig, getDetailedStatus } from './utils';
 
 type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports' | 'sector_years' | 'sector_committee';
 
@@ -1367,7 +1367,7 @@ export default function App() {
         'مبلغ الاسترداد الكلي': r.refundAmount ?? 0,
         'رد للعميل (Companies)': r.refundToClient ?? 'Not Required',
         'فرق مديونية ABK': r.abkDebtDifference ?? 'Not Required',
-        'حالة الإلغاء': translateStatus(r.status),
+        'حالة الإلغاء': getDetailedStatus(r),
         'تاريخ حالة الإلغاء': r.statusDate ? formatDateCustom(r.statusDate) : (r.approvalDate ? formatDateCustom(r.approvalDate) : '—'),
         'المراجعة': r.reviewed ? 'تم المراجعة' : 'لم يتم',
         'تم الارسال': r.approvalSentToFirstManager ? 'تم' : 'لم يتم',
