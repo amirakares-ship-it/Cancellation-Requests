@@ -32,11 +32,12 @@ import SettlementStatementModal from './components/SettlementStatementModal';
 import FirstManagerPDFModal from './components/FirstManagerPDFModal';
 import FirstManagerHub from './components/FirstManagerHub';
 import SendToFirstManagerModal from './components/SendToFirstManagerModal';
+import SectorManagerDashboard, { SectorView } from './components/SectorManagerDashboard';
 
 import { CustomField } from './types';
-import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig } from './utils';
+import { translateStatus, translateRole, calculateAllFields, formatCommitteeYear, formatCommitteeWithYear, isSameClub, parseDebtWorkbook, parseSmartNumber, isInternationalRequest, formatDateCustom, getRejectionReason, setActiveFormulasConfig, getDetailedStatus } from './utils';
 
-type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports';
+type TabKey = 'dashboard' | 'requests' | 'first_manager_hub' | 'first_manager_decided' | 'first_manager_pending' | 'print' | 'memo' | 'emails' | 'reconcile' | 'settings' | 'receipts' | 'cancellation_status' | 'formulas' | 'dropdowns_lists' | 'committees' | 'attachments' | 'ready_checks' | 'reports' | 'sector_years' | 'sector_committee';
 
 export default function App() {
 
@@ -107,6 +108,8 @@ export default function App() {
 
   // UI Control states
   const [activeTab, setActiveTab] = useState<TabKey>('dashboard');
+  // Sector manager (رئيس القطاع): currently selected committee, as "no|year"
+  const [sectorCommittee, setSectorCommittee] = useState<string>('');
   const [showLoginCommitteePrompt, setShowLoginCommitteePrompt] = useState(false);
   
   // Delete Request Confirm Modal State
@@ -403,6 +406,13 @@ export default function App() {
       }
     }
   }, [currentUser]);
+
+  // رئيس القطاع يشوف 3 صفحات بس: الداشبورد، اللجان لكل سنة، طلبات اللجنة
+  useEffect(() => {
+    if (currentUser?.role === 'sector_manager' && !['dashboard', 'sector_years', 'sector_committee'].includes(activeTab)) {
+      setActiveTab('dashboard');
+    }
+  }, [currentUser, activeTab]);
 
   useEffect(() => {
     (window as any).refreshLabelNames = () => {
@@ -1357,7 +1367,7 @@ export default function App() {
         'مبلغ الاسترداد الكلي': r.refundAmount ?? 0,
         'رد للعميل (Companies)': r.refundToClient ?? 'Not Required',
         'فرق مديونية ABK': r.abkDebtDifference ?? 'Not Required',
-        'حالة الإلغاء': translateStatus(r.status),
+        'حالة الإلغاء': getDetailedStatus(r),
         'تاريخ حالة الإلغاء': r.statusDate ? formatDateCustom(r.statusDate) : (r.approvalDate ? formatDateCustom(r.approvalDate) : '—'),
         'المراجعة': r.reviewed ? 'تم المراجعة' : 'لم يتم',
         'تم الارسال': r.approvalSentToFirstManager ? 'تم' : 'لم يتم',
@@ -1454,8 +1464,41 @@ export default function App() {
             {!isSidebarCollapsed && <span>لوحة المراقبة والإحصائيات</span>}
           </button>
 
+          {/* رئيس القطاع: عدد اللجان لكل سنة */}
+          {currentUser.role === 'sector_manager' && (
+            <button type="button"
+              onClick={() => setActiveTab('sector_years')}
+              title="عدد اللجان لكل سنة"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'sector_years'
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <BarChart3 className={`w-4 h-4 shrink-0 ${activeTab === 'sector_years' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>عدد اللجان لكل سنة</span>}
+            </button>
+          )}
+
+          {/* رئيس القطاع: طلبات أي لجنة */}
+          {currentUser.role === 'sector_manager' && (
+            <button type="button"
+              onClick={() => setActiveTab('sector_committee')}
+              title="طلبات اللجنة"
+              className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                activeTab === 'sector_committee'
+                  ? 'bg-amber-400 text-neutral-950 font-black shadow-md shadow-amber-400/10'
+                  : 'text-neutral-300 hover:bg-neutral-900 hover:text-amber-400'
+              }`}
+            >
+              <Layers className={`w-4 h-4 shrink-0 ${activeTab === 'sector_committee' ? 'text-neutral-950' : 'text-amber-400/80'}`} />
+              {!isSidebarCollapsed && <span>طلبات اللجنة</span>}
+            </button>
+          )}
+
           {/* 2. متابعة طلبات الإلغاء (متاح لجميع المستخدمين بما في ذلك المدير الأول للاطلاع على كافة الطلبات لجميع الأندية) */}
           <button type="button"
+            style={currentUser.role === 'sector_manager' ? { display: 'none' } : undefined}
             onClick={() => { setRequestViewMode('list'); setActiveTab('requests'); }}
             title="متابعة طلبات الإلغاء"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -1529,6 +1572,7 @@ export default function App() {
 
           {/* طلب إلغاء جديد (متاح لجميع المستخدمين والمدير الأول) */}
           <button type="button"
+            style={currentUser.role === 'sector_manager' ? { display: 'none' } : undefined}
             onClick={() => { setRequestViewMode('create'); setActiveTab('requests'); }}
             title="تسجيل طلب إلغاء جديد"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -1542,7 +1586,7 @@ export default function App() {
           </button>
 
           {/* 4. إيصال المقدم */}
-          {currentUser.role !== 'first_manager' && currentUser.username !== 'manager1' && (
+          {currentUser.role !== 'first_manager' && currentUser.role !== 'sector_manager' && currentUser.username !== 'manager1' && (
             <button type="button" onClick={() => setActiveTab('receipts')}
                             title="إيصال المقدم"
               className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
@@ -1557,7 +1601,7 @@ export default function App() {
           )}
 
           {/* 4.5 أرشيف المستندات والمرفقات */}
-          <button type="button" onClick={() => setActiveTab('attachments')}
+          <button type="button" style={currentUser.role === 'sector_manager' ? { display: 'none' } : undefined} onClick={() => setActiveTab('attachments')}
                         title="أرشيف المستندات والمرفقات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0' : 'gap-3 px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'attachments' 
@@ -1570,7 +1614,7 @@ export default function App() {
           </button>
 
           {/* 4.6 الشيكات (شيك المقدم / الشيكات البنكية / استفسار شيكات) */}
-          <button type="button" onClick={() => setActiveTab('ready_checks')}
+          <button type="button" style={currentUser.role === 'sector_manager' ? { display: 'none' } : undefined} onClick={() => setActiveTab('ready_checks')}
                         title="الشيكات"
             className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center px-0 relative' : 'justify-between px-3.5'} py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
               activeTab === 'ready_checks' 
@@ -1840,8 +1884,23 @@ export default function App() {
         
         {/* TAB WORKFLOW INJECTION */}
 
+        {/* رئيس القطاع: الداشبورد + اللجان لكل سنة + طلبات اللجنة */}
+        {currentUser.role === 'sector_manager' && ['dashboard', 'sector_years', 'sector_committee'].includes(activeTab) && (
+          <SectorManagerDashboard
+            view={(activeTab === 'sector_years' ? 'years' : activeTab === 'sector_committee' ? 'committee' : 'overview') as SectorView}
+            requests={requests}
+            committees={committees}
+            dropdowns={dropdowns}
+            user={currentUser}
+            selectedCommittee={sectorCommittee}
+            onSelectCommittee={setSectorCommittee}
+            onOpenCommittee={(key) => { setSectorCommittee(key); setActiveTab('sector_committee'); }}
+            onExportExcel={handleExportExcelReport}
+          />
+        )}
+
         {/* Tab 1: Dashboard View */}
-        {activeTab === 'dashboard' && (
+        {activeTab === 'dashboard' && currentUser.role !== 'sector_manager' && (
           <div className="space-y-6">
             {currentUser?.role === 'admin' && (
               <CommitteeManager 

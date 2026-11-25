@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Search, Download, CheckCircle2, Clock, FileSpreadsheet, Receipt, Calendar, CheckSquare, Paperclip, Filter, Pin, FilterX } from 'lucide-react';
 import { CancellationRequest, User } from '../types';
-import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason } from '../utils';
+import { translateStatus, formatDateCustom, formatCommitteeWithYear, getPendingSubStatus, getStatusDisplay, getStatusDateText, isSameClub, containsSearchQuery, isInternationalRequest, getRejectionReason, getDetailedStatus } from '../utils';
 import { useFilterVisibility } from '../hooks/useFilterVisibility';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
@@ -245,7 +245,7 @@ export default function AdvanceReceipts({ requests, user, onUpdateReceiptStatus,
         'حالة استلام أصل الإيصال': r.receiptReceived ? '✓ تم الاستلام' : '✗ لم يتم الاستلام',
         'تاريخ استلام الأصل': r.receiptReceivedDate || 'بانتظار الاستلام',
         'سبب الرفض': (r.result === 'Rejected' || r.status === 'Rejected' || r.firstManagerApproved === false || r.sectorManagerApproved === false) ? (getRejectionReason(r) || '—') : '—',
-        'حالة الإلغاء': translateStatus(r.status || 'Pending'),
+        'حالة الإلغاء': getDetailedStatus(r),
         'تاريخ حالة الإلغاء': r.statusDate || '—',
         'المراجعة': r.reviewed ? 'تم المراجعة' : 'لم يتم',
         'تم الارسال': r.approvalSentToFirstManager ? 'تم' : 'لم يتم',
