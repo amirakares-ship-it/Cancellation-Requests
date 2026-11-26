@@ -122,25 +122,35 @@ function buildCommitteeStats(requests: any[], knownCommittees: any[] = []): Comm
   return Array.from(map.values()).sort((a, b) => sortCommitteeKeys(a.key, b.key));
 }
 
+type Tone = 'neutral' | 'amber' | 'green' | 'red' | 'gray' | 'indigo' | 'sky' | 'violet' | 'teal' | 'orange';
+
+// card = background + border, icon = icon chip, value = number color
+const TONES: Record<Tone, { card: string; icon: string; value: string }> = {
+  neutral: { card: 'bg-neutral-50 border-neutral-300', icon: 'bg-neutral-900 text-amber-400', value: 'text-neutral-900' },
+  amber:   { card: 'bg-amber-50 border-amber-200',     icon: 'bg-amber-400 text-white',       value: 'text-amber-700' },
+  green:   { card: 'bg-emerald-50 border-emerald-200', icon: 'bg-emerald-500 text-white',     value: 'text-emerald-700' },
+  red:     { card: 'bg-rose-50 border-rose-200',       icon: 'bg-rose-500 text-white',        value: 'text-rose-700' },
+  gray:    { card: 'bg-slate-50 border-slate-200',     icon: 'bg-slate-500 text-white',       value: 'text-slate-700' },
+  indigo:  { card: 'bg-indigo-50 border-indigo-200',   icon: 'bg-indigo-500 text-white',      value: 'text-indigo-700' },
+  sky:     { card: 'bg-sky-50 border-sky-200',         icon: 'bg-sky-500 text-white',         value: 'text-sky-700' },
+  violet:  { card: 'bg-violet-50 border-violet-200',   icon: 'bg-violet-500 text-white',      value: 'text-violet-700' },
+  teal:    { card: 'bg-teal-50 border-teal-200',       icon: 'bg-teal-500 text-white',        value: 'text-teal-700' },
+  orange:  { card: 'bg-orange-50 border-orange-200',   icon: 'bg-orange-500 text-white',      value: 'text-orange-700' },
+};
+
 const KpiCard = ({ icon: Icon, label, value, tone = 'neutral', hint }: {
-  icon: any; label: string; value: React.ReactNode; tone?: 'neutral' | 'amber' | 'green' | 'red' | 'gray'; hint?: string;
+  icon: any; label: string; value: React.ReactNode; tone?: Tone; hint?: string;
 }) => {
-  const tones: Record<string, string> = {
-    neutral: 'bg-neutral-900 text-amber-400',
-    amber: 'bg-amber-50 text-amber-600',
-    green: 'bg-emerald-50 text-emerald-600',
-    red: 'bg-rose-50 text-rose-600',
-    gray: 'bg-slate-100 text-slate-500',
-  };
+  const t = TONES[tone];
   return (
-    <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs flex items-center gap-3">
-      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${tones[tone]}`}>
+    <div className={`border rounded-2xl p-4 shadow-2xs flex items-center gap-3 ${t.card}`}>
+      <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 shadow-sm ${t.icon}`}>
         <Icon className="w-5 h-5" />
       </div>
       <div className="min-w-0 text-right">
-        <p className="text-[11px] font-bold text-slate-500 truncate">{label}</p>
-        <p className="text-2xl font-black text-slate-900 leading-tight">{value}</p>
-        {hint && <p className="text-[10px] text-slate-400 mt-0.5">{hint}</p>}
+        <p className="text-[11px] font-bold text-slate-600 truncate">{label}</p>
+        <p className={`text-2xl font-black leading-tight ${t.value}`}>{value}</p>
+        {hint && <p className="text-[10px] text-slate-500 mt-0.5">{hint}</p>}
       </div>
     </div>
   );
@@ -278,19 +288,22 @@ const Section = ({ title, subtitle, children }: { title: string; subtitle?: stri
 );
 
 const MoneyCard = ({ icon: Icon, label, amount, currency, tone, hint }: {
-  icon: any; label: string; amount: number; currency: string; tone: string; hint?: string;
-}) => (
-  <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
-    <div className="flex items-center justify-between">
-      <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${tone}`}><Icon className="w-4 h-4" /></div>
-      <p className="text-[11px] font-bold text-slate-500 text-right">{label}</p>
+  icon: any; label: string; amount: number; currency: string; tone: Tone; hint?: string;
+}) => {
+  const t = TONES[tone];
+  return (
+    <div className={`border rounded-2xl p-4 shadow-2xs ${t.card}`}>
+      <div className="flex items-center justify-between">
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center shadow-sm ${t.icon}`}><Icon className="w-4 h-4" /></div>
+        <p className="text-[11px] font-bold text-slate-600 text-right">{label}</p>
+      </div>
+      <p className={`mt-3 text-right text-xl font-black leading-tight ${t.value}`}>
+        {fmtNum(amount)} <span className="text-xs font-bold opacity-70">{currency}</span>
+      </p>
+      {hint && <p className="text-[10px] text-slate-500 mt-1 text-right">{hint}</p>}
     </div>
-    <p className="mt-3 text-right text-xl font-black text-slate-900 leading-tight">
-      {fmtNum(amount)} <span className="text-xs font-bold text-slate-400">{currency}</span>
-    </p>
-    {hint && <p className="text-[10px] text-slate-400 mt-1 text-right">{hint}</p>}
-  </div>
-);
+  );
+};
 
 const FilterGroup = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <div>
@@ -308,8 +321,52 @@ const countBy = (list: any[], pick: (r: any) => string) => {
   return Object.entries(m).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
 };
 
-const hideZero = (v: any) => (v ? v : '');
-const labelStyle = { fontSize: 11, fontWeight: 700, fill: '#334155' } as const;
+// ---- Chart value labels: bold, dark text with a white halo so numbers stay readable on any background ----
+type LabelPos = 'top' | 'bottom' | 'center' | 'right';
+const valueLabel = (pos: LabelPos, color = '#0f172a', size = 12, minSize = 0) => (props: any) => {
+  const { x, y, width, height, value } = props;
+  const v = Number(value);
+  if (!v) return null; // hide zeros
+  const X = Number(x), Y = Number(y), W = Number(width) || 0, H = Number(height) || 0;
+  if (minSize && ((pos === 'center' && H < minSize))) return null; // too small a segment to hold a number
+  let tx = X + W / 2, ty = Y - 7, anchor: 'middle' | 'start' = 'middle';
+  if (pos === 'bottom') ty = Y + 18;
+  if (pos === 'center') ty = Y + H / 2 + size / 3;
+  if (pos === 'right') { tx = X + W + 8; ty = Y + H / 2 + size / 3; anchor = 'start'; }
+  return (
+    <text x={tx} y={ty} textAnchor={anchor} fontSize={size} fontWeight={800} fill={color} style={{ direction: 'ltr' }}
+      stroke={pos === 'center' ? 'none' : '#fff'} strokeWidth={pos === 'center' ? 0 : 3} paintOrder="stroke">
+      {fmtNum(v)}
+    </text>
+  );
+};
+
+// Y-axis category label for horizontal bars (kept LTR so it sits to the left of the axis, never over the bars)
+const CatTick = (props: any) => {
+  const { x, y, payload } = props;
+  const t = String(payload?.value ?? '');
+  const short = t.length > 48 ? `${t.slice(0, 47)}…` : t;
+  return (
+    <text x={Number(x) - 8} y={Number(y)} dy={4} textAnchor="end" fontSize={11} fontWeight={600} fill="#475569" style={{ direction: 'ltr' }}>
+      <title>{t}</title>{short}
+    </text>
+  );
+};
+
+const RAD = Math.PI / 180;
+// Pie labels sit outside the ring: "value (percent)"
+const pieLabel = (props: any) => {
+  const { cx, cy, midAngle, outerRadius, value, percent } = props;
+  const r = Number(outerRadius) + 16;
+  const x = Number(cx) + r * Math.cos(-midAngle * RAD);
+  const y = Number(cy) + r * Math.sin(-midAngle * RAD);
+  return (
+    <text x={x} y={y} textAnchor={x > Number(cx) ? 'start' : 'end'} dominantBaseline="central" fontSize={12} fontWeight={800} fill="#0f172a" style={{ direction: 'ltr' }}>
+      {value} <tspan fontSize={10} fontWeight={600} fill="#64748b">({(percent * 100).toFixed(0)}%)</tspan>
+    </text>
+  );
+};
+
 
 function PieBlock({ data }: { data: { name: string; value: number; color?: string }[] }) {
   const rows = data.filter((d) => d.value > 0);
@@ -320,8 +377,8 @@ function PieBlock({ data }: { data: { name: string; value: number; color?: strin
       <div className="flex-1 min-h-0">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={rows} dataKey="value" nameKey="name" innerRadius="35%" outerRadius="68%" paddingAngle={2}
-              label={(p: any) => `${p.value}`} labelLine={false}>
+            <Pie data={rows} dataKey="value" nameKey="name" innerRadius="30%" outerRadius="55%" paddingAngle={2}
+              label={pieLabel} labelLine={{ stroke: '#cbd5e1' }}>
               {rows.map((d, i) => <Cell key={i} fill={d.color || CHART_COLORS[i % CHART_COLORS.length]} />)}
             </Pie>
             <Tooltip />
@@ -362,7 +419,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
   const [result, setResult] = useState('');
   const [duration, setDuration] = useState('');
   const [amountScope, setAmountScope] = useState<AmountScope>('finance');
-  const [showFilters, setShowFilters] = useState(true);
+  const [showFilters, setShowFilters] = useState(false);
 
   const hasCommittee = (r: any) => !!r.committeeNo && r.committeeNo !== '—';
 
@@ -570,12 +627,12 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
       {/* ================= 1. Counts ================= */}
       <Section title="1) الطلبات واللجان" subtitle={`${totals.total} طلب بعد الفلاتر${totals.total - withCommittee.length > 0 ? ` — منها ${totals.total - withCommittee.length} بدون لجنة` : ''}`}>
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="neutral" />
+          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="indigo" />
           <KpiCard icon={Users} label="إجمالي الطلبات" value={totals.total} tone="amber" />
-          <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="amber" hint="للطلبات التي لها لجنة" />
+          <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="sky" hint="للطلبات التي لها لجنة" />
           <KpiCard icon={CheckCircle2} label="Accepted" value={totals.accepted} tone="green" />
           <KpiCard icon={XCircle} label="Rejected" value={totals.rejected} tone="red" />
-          <KpiCard icon={Clock} label="Pending" value={totals.pending} tone="gray" />
+          <KpiCard icon={Clock} label="Pending" value={totals.pending} tone="orange" />
         </div>
       </Section>
 
@@ -587,19 +644,19 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
           : `محسوبة على ${money.localCount} طلب (كل الحالات) — بدون العضويات الدولية`}
       >
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
-          <MoneyCard icon={Banknote} label="مبلغ الاسترداد" amount={money.refund} currency="EGP" tone="bg-neutral-900 text-amber-400" />
-          <MoneyCard icon={Banknote} label="مبلغ حق الانتفاع" amount={money.usage} currency="EGP" tone="bg-amber-50 text-amber-600" />
-          <MoneyCard icon={Banknote} label="المصاريف الإدارية" amount={money.admin} currency="EGP" tone="bg-sky-50 text-sky-600" />
-          <MoneyCard icon={Banknote} label="مصاريف الفيزا 2%" amount={money.visa} currency="EGP" tone="bg-emerald-50 text-emerald-600" />
+          <MoneyCard icon={Banknote} label="مبلغ الاسترداد" amount={money.refund} currency="EGP" tone="green" />
+          <MoneyCard icon={Banknote} label="مبلغ حق الانتفاع" amount={money.usage} currency="EGP" tone="amber" />
+          <MoneyCard icon={Banknote} label="المصاريف الإدارية" amount={money.admin} currency="EGP" tone="sky" />
+          <MoneyCard icon={Banknote} label="مصاريف الفيزا 2%" amount={money.visa} currency="EGP" tone="violet" />
         </div>
       </Section>
 
       {/* ================= 3. International ================= */}
       <Section title="3) العضويات الدولية (SAR)" subtitle="منفصلة عن العضويات المحلية ولا تدخل في مبالغ الجنيه">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-3xl">
-          <KpiCard icon={Globe} label="عدد العضويات الدولية" value={money.intlCount} tone="neutral"
+          <KpiCard icon={Globe} label="عدد العضويات الدولية" value={money.intlCount} tone="indigo"
             hint={`منها ${money.intlScopeCount} ${amountScope === 'finance' ? 'في حالات مالية' : 'محسوبة'}`} />
-          <MoneyCard icon={Banknote} label="مبلغ الاسترداد (دولي)" amount={money.intlRefundSar} currency="SAR" tone="bg-neutral-900 text-amber-400"
+          <MoneyCard icon={Banknote} label="مبلغ الاسترداد (دولي)" amount={money.intlRefundSar} currency="SAR" tone="teal"
             hint={money.intlOtherCurrency > 0 ? `${money.intlOtherCurrency} طلب بعملة غير SAR غير محسوب` : undefined} />
         </div>
       </Section>
@@ -611,7 +668,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
             const v = k === 'lt1m' ? totals.lt1m : k === '1to3m' ? totals.m1to3 : totals.gt3m;
             return (
               <div key={k}>
-                <KpiCard icon={Clock} label={DURATION_LABELS[k]} value={v} tone={k === 'gt3m' ? 'neutral' : k === 'lt1m' ? 'green' : 'amber'}
+                <KpiCard icon={Clock} label={DURATION_LABELS[k]} value={v} tone={k === 'gt3m' ? 'violet' : k === 'lt1m' ? 'green' : 'amber'}
                   hint={totals.total ? `${((v / totals.total) * 100).toFixed(0)}% من الطلبات` : undefined} />
               </div>
             );
@@ -625,15 +682,15 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
           <ChartCard title="عدد الطلبات بكل لجنة" className="xl:col-span-2">
             {() => barData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={barData} margin={{ top: 18, right: 10, left: -15, bottom: 0 }}>
+                <BarChart data={barData} margin={{ top: 28, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} />
                   <XAxis dataKey="name" tick={{ fontSize: 10 }} interval={0} {...tickAngle(barData.length)} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
                   <Tooltip />
-                  <Legend />
-                  <Bar dataKey="Accepted" stackId="a" fill={RESULT_COLORS.accepted}><LabelList dataKey="Accepted" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
-                  <Bar dataKey="Rejected" stackId="a" fill={RESULT_COLORS.rejected}><LabelList dataKey="Rejected" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
-                  <Bar dataKey="Pending" stackId="a" fill={RESULT_COLORS.pending}><LabelList dataKey="Pending" formatter={hideZero} style={{ ...labelStyle, fill: '#fff' }} /></Bar>
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
+                  <Bar dataKey="Accepted" stackId="a" fill={RESULT_COLORS.accepted}><LabelList dataKey="Accepted" content={valueLabel('center', '#ffffff', 12, 16)} /></Bar>
+                  <Bar dataKey="Rejected" stackId="a" fill={RESULT_COLORS.rejected}><LabelList dataKey="Rejected" content={valueLabel('center', '#ffffff', 12, 16)} /></Bar>
+                  <Bar dataKey="Pending" stackId="a" fill={RESULT_COLORS.pending}><LabelList dataKey="Pending" content={valueLabel('center', '#ffffff', 12, 16)} /></Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -646,7 +703,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
           <ChartCard title="معدل تدفق الطلبات شهرياً" className="xl:col-span-2">
             {() => (
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={monthlyData} margin={{ top: 20, right: 15, left: -15, bottom: 0 }}>
+                <AreaChart data={monthlyData} margin={{ top: 32, right: 20, left: -15, bottom: 14 }}>
                   <defs>
                     <linearGradient id="sectorReq" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#eab308" stopOpacity={0.25} />
@@ -657,12 +714,12 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
                   <XAxis dataKey="name" fontSize={11} stroke="#94a3b8" />
                   <YAxis allowDecimals={false} fontSize={11} stroke="#94a3b8" />
                   <Tooltip />
-                  <Legend />
+                  <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Area type="monotone" dataKey="الطلبات المقدمة" stroke="#eab308" strokeWidth={2} fill="url(#sectorReq)" dot>
-                    <LabelList dataKey="الطلبات المقدمة" position="top" formatter={hideZero} style={labelStyle} />
+                    <LabelList dataKey="الطلبات المقدمة" content={valueLabel('top', '#a16207', 12)} />
                   </Area>
                   <Area type="monotone" dataKey="تم إلغاؤها" stroke="#171717" strokeWidth={1.5} fillOpacity={0} dot>
-                    <LabelList dataKey="تم إلغاؤها" position="bottom" formatter={hideZero} style={{ ...labelStyle, fill: '#171717' }} />
+                    <LabelList dataKey="تم إلغاؤها" content={valueLabel('bottom', '#171717', 12)} />
                   </Area>
                 </AreaChart>
               </ResponsiveContainer>
@@ -674,40 +731,40 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
           <ChartCard title="حجم الإلغاء حسب الفروع" className="xl:col-span-2">
             {() => clubData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={clubData} margin={{ top: 18, right: 10, left: -15, bottom: 0 }}>
+                <BarChart data={clubData} margin={{ top: 28, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                   <XAxis dataKey="name" fontSize={11} stroke="#94a3b8" interval={0} {...tickAngle(clubData.length)} />
                   <YAxis allowDecimals={false} fontSize={11} stroke="#94a3b8" />
                   <Tooltip />
-                  <Bar dataKey="value" name="الطلبات" fill="#ca8a04" radius={[4, 4, 0, 0]}><LabelList dataKey="value" position="top" style={labelStyle} /></Bar>
+                  <Bar dataKey="value" name="الطلبات" fill="#ca8a04" radius={[4, 4, 0, 0]}><LabelList dataKey="value" content={valueLabel('top', '#713f12', 13)} /></Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
 
-          <ChartCard title="الحالات (Pending مفصّلة)">
+          <ChartCard title="الحالات (Pending مفصّلة)" className="xl:col-span-2">
             {() => statusData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={statusData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+                <BarChart data={statusData} layout="vertical" margin={{ top: 5, right: 50, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                   <XAxis type="number" allowDecimals={false} fontSize={11} stroke="#94a3b8" />
-                  <YAxis type="category" dataKey="name" fontSize={10} stroke="#94a3b8" width={150} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={<CatTick />} stroke="#94a3b8" width={300} tickLine={false} />
                   <Tooltip />
-                  <Bar dataKey="value" name="الطلبات" fill="#6366f1" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" style={labelStyle} /></Bar>
+                  <Bar dataKey="value" name="الطلبات" fill="#6366f1" radius={[0, 4, 4, 0]} barSize={20}><LabelList dataKey="value" content={valueLabel('right', '#3730a3', 13)} /></Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
 
-          <ChartCard title="الأسباب الأكثر شيوعاً لطلب الإلغاء" className="xl:col-span-2">
+          <ChartCard title="الأسباب الأكثر شيوعاً لطلب الإلغاء">
             {() => reasonData.length === 0 ? <div className="h-full flex items-center justify-center text-slate-400 text-xs">لا يوجد بيانات للرسم</div> : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={reasonData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 0 }}>
+                <BarChart data={reasonData} layout="vertical" margin={{ top: 5, right: 50, left: 10, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                   <XAxis type="number" allowDecimals={false} fontSize={11} stroke="#94a3b8" />
-                  <YAxis type="category" dataKey="name" fontSize={10} stroke="#94a3b8" width={150} tickLine={false} />
+                  <YAxis type="category" dataKey="name" tick={<CatTick />} stroke="#94a3b8" width={190} tickLine={false} />
                   <Tooltip />
-                  <Bar dataKey="value" name="الطلبات" fill="#171717" radius={[0, 4, 4, 0]}><LabelList dataKey="value" position="right" style={labelStyle} /></Bar>
+                  <Bar dataKey="value" name="الطلبات" fill="#171717" radius={[0, 4, 4, 0]} barSize={20}><LabelList dataKey="value" content={valueLabel('right', '#171717', 13)} /></Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}
@@ -805,14 +862,14 @@ function YearsView({ requests, committees, onOpenCommittee }: Props) {
       <div className="bg-white border border-slate-200 rounded-2xl p-4 shadow-2xs">
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData}>
+            <BarChart data={chartData} margin={{ top: 28, right: 10, left: -15, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Legend />
-              <Bar dataKey="عدد اللجان" fill="#eab308" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="عدد الطلبات" fill="#171717" radius={[6, 6, 0, 0]} />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="عدد اللجان" fill="#eab308" radius={[6, 6, 0, 0]}><LabelList dataKey="عدد اللجان" content={valueLabel('top', '#a16207', 13)} /></Bar>
+              <Bar dataKey="عدد الطلبات" fill="#171717" radius={[6, 6, 0, 0]}><LabelList dataKey="عدد الطلبات" content={valueLabel('top', '#171717', 13)} /></Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

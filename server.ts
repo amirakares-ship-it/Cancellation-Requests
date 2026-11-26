@@ -4312,6 +4312,22 @@ app.post("/api/requests/:id/status-date", requireAuth, async (req, res) => {
 });
 
 // --- Excel Bulk Import Endpoints ---
+// Imported legacy rows: "sent to the first manager" + a final result already
+// means the first manager decided (Accepted -> approved, Rejected -> rejected).
+// Without this they stay in the first manager's pending list forever.
+// An explicit decision column in the sheet always wins (only fills null/undefined).
+function inferFirstManagerDecisionFromResult(r: any) {
+  if (!r || !r.approvalSentToFirstManager) return;
+  if (r.firstManagerApproved !== null && r.firstManagerApproved !== undefined) return;
+  const isRejected = r.result === "Rejected" || r.status === "Rejected";
+  const isAccepted = r.result === "Accepted";
+  if (!isAccepted && !isRejected) return;
+  r.firstManagerApproved = isRejected ? false : true;
+  if (!r.firstManagerDecisionDate) {
+    r.firstManagerDecisionDate = r.approvalDate || r.statusDate || new Date().toISOString().split("T")[0];
+  }
+}
+
 app.post("/api/requests/import", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "admin") {
@@ -4397,6 +4413,7 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
 
       const recalculated = calculateRequestFields(existingActive, db.formulas);
       Object.assign(existingActive, recalculated);
+      inferFirstManagerDecisionFromResult(existingActive);
       updatedCount++;
       return;
     }
@@ -4444,6 +4461,7 @@ app.post("/api/requests/import", requireAuth, async (req, res) => {
       debtABKCompanies: row.debtABKCompanies ?? 0,
     });
 
+    inferFirstManagerDecisionFromResult(processed);
     db.requests.push(processed);
     importedCount++;
   });
