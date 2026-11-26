@@ -38,13 +38,21 @@ export default function FirstManagerDecisionModal({
 
   const currentDecision = request.firstManagerApproved;
 
-  const handleAction = async (approve: boolean) => {
+  const handleAction = (approve: boolean) => {
     if (!approve && !comments.trim()) {
       setError('يرجى كتابة سبب الرفض في خانة الملاحظات أدناه');
       return;
     }
     setError('');
-    await onDecision(request.id, approve, comments.trim(), approve ? undefined : rejectionDate);
+    const reqId = request.id;
+    const text = comments.trim();
+    const rejDate = approve ? undefined : rejectionDate;
+    // Close the reply window right away: saving + refreshing the lists takes a while,
+    // so it continues in the background and reports its result when done.
+    onClose();
+    Promise.resolve(onDecision(reqId, approve, text, rejDate)).catch((err: any) => {
+      alert(err?.message || 'حدث خطأ أثناء حفظ القرار');
+    });
   };
 
   return (
@@ -250,7 +258,7 @@ export default function FirstManagerDecisionModal({
           <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
           <div className="leading-relaxed">
             <ul className="list-disc list-inside space-y-0.5 text-xxs">
-              <li><strong>في حالة الموافقة (Accept)</strong>: يتم تحويل الطلب تلقائياً لملف رئيس قطاع المالية للاعتماد النهائي.</li>
+              <li><strong>في حالة الموافقة (Accept)</strong>: يتم تحويل الطلب تلقائياً لملف Director للاعتماد النهائي.</li>
               <li><strong>في حالة الرفض (Reject)</strong>: يتم تحويل حالة الطلب إلى <span className="font-bold text-rose-600">Rejected</span> وتثبيت تاريخ الحالة إلى التاريخ المحدد أعلاه (<span className="font-mono">{rejectionDate}</span>).</li>
             </ul>
           </div>
