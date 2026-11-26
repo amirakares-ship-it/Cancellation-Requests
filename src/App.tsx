@@ -805,10 +805,10 @@ export default function App() {
       if (!res.ok || data.error) {
         throw new Error(data.error || 'تعذر حفظ قرار المدير المالي الأول');
       }
-      alert(approve ? 'تم اعتماد الطلب بنجاح وتحويله لرئيس قطاع المالية!' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
-      await fetchAllData();
       setSelectedRequest(null);
       setFirstManagerModalRequest(null);
+      fetchAllData(); // refresh in the background, don't keep the user waiting
+      alert(approve ? 'تم اعتماد الطلب بنجاح' : 'تم تسجيل رفض الطلب وتغيير حالة الإلغاء إلى Rejected');
     } catch (err: any) {
       alert(err.message || 'حدث خطأ أثناء حفظ قرار المدير المالي الأول');
       console.error(err);
@@ -824,7 +824,7 @@ export default function App() {
         headers: { 'Authorization': `Bearer ${authToken}` }
       });
       if (res.ok) {
-        alert('تم تحويل الطلب لملف الاعتماد الفوري والختم الإلكتروني لرئيس قطاع المالية!');
+        alert('تم تحويل الطلب لملف الاعتماد الفوري والختم الإلكتروني لـ Director!');
         fetchAllData();
         setSelectedRequest(null);
       }

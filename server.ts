@@ -114,7 +114,7 @@ const DEFAULT_DB = {
     {
       id: "sector_mgr",
       username: "sector_mgr",
-      name: "رئيس قطاع الإدارة المالية",
+      name: "Director",
       role: "sector_manager",
       firstLogin: true,
       passwordChanged: false,
@@ -1053,7 +1053,7 @@ function trackActionLabel(method: string, path: string): string {
   if (path.includes("/attachments")) return "تعديل المرفقات";
   if (path.includes("/status-date")) return "تعديل تاريخ الحالة";
   if (path.includes("first-manager")) return "إجراء المدير الأول";
-  if (path.includes("sector-manager")) return "إجراء رئيس القطاع";
+  if (path.includes("sector-manager")) return "إجراء Director";
   if (path.includes("/committees")) return "تعديل لجنة (أثر على الطلب)";
   if (path.includes("/formulas")) return "تعديل معادلات الحساب (أثر على الطلب)";
   if (path.includes("/cancellation-settlements")) return "تعديل كشف تسوية";
@@ -3507,7 +3507,7 @@ app.post("/api/requests/:id/send-sector-manager", requireAuth, async (req, res) 
   request.result = "Pending";
   await saveDb();
 
-  logAudit(user.username, user.name, user.role, "إرسال لرئيس القطاع", `تم تحويل الطلب رقم ${request.membershipNumber} مباشرة لرئيس قطاع الشؤون المالية للاعتماد النهائي`, request.id);
+  logAudit(user.username, user.name, user.role, "إرسال لـ Director", `تم تحويل الطلب رقم ${request.membershipNumber} مباشرة لـ Director للاعتماد النهائي`, request.id);
   res.json({ success: true, request });
 });
 
@@ -3515,7 +3515,7 @@ app.post("/api/requests/:id/send-sector-manager", requireAuth, async (req, res) 
 app.post("/api/requests/:id/sector-manager-action", requireAuth, async (req, res) => {
   const user = (req as any).user;
   if (user.role !== "sector_manager" && user.role !== "admin") {
-    return res.status(403).json({ error: "صلاحية رئيس القطاع المالي مطلوبة للاعتماد النهائي" });
+    return res.status(403).json({ error: "صلاحية Director مطلوبة للاعتماد النهائي" });
   }
 
   const request = findRequestById(req.params.id);
@@ -3548,7 +3548,7 @@ app.post("/api/requests/:id/sector-manager-action", requireAuth, async (req, res
 
   await saveDb();
 
-  logAudit(user.username, user.name, user.role, approve ? "اعتماد رئيس قطاع المالية" : "رفض رئيس قطاع المالية", `تم الاعتماد النهائي للطلب ${request.membershipNumber} مع وضع الختم الإلكتروني وتاريخ المراجعة`, request.id);
+  logAudit(user.username, user.name, user.role, approve ? "اعتماد Director" : "رفض Director", `تم الاعتماد النهائي للطلب ${request.membershipNumber} مع وضع الختم الإلكتروني وتاريخ المراجعة`, request.id);
   res.json({ success: true, request });
 });
 

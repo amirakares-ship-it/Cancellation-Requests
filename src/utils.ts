@@ -1190,7 +1190,7 @@ export function translateRole(role: string): string {
     case 'club': return 'مسؤول النادي الفرعي';
     case 'international_user': return 'مسؤول العضويات الدولية';
     case 'first_manager': return 'Manager';
-    case 'sector_manager': return 'رئيس قطاع الإدارة المالية';
+    case 'sector_manager': return 'Director';
     default: return role ? role.charAt(0).toUpperCase() + role.slice(1) : '';
   }
 }

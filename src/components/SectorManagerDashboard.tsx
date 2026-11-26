@@ -4,9 +4,10 @@ import {
   PieChart, Pie, Cell, AreaChart, Area, LabelList
 } from 'recharts';
 import {
-  Layers, Users, CheckCircle2, XCircle, Clock, Gauge, FilterX, Search, Download, Eye, CalendarRange, Maximize2, X, Banknote, Globe, Filter
+  Layers, Users, CheckCircle2, XCircle, Clock, Gauge, FilterX, Search, Download, Eye, CalendarRange, Maximize2, X, Banknote, Globe, Filter, Paperclip, FileText, MessageSquareWarning
 } from 'lucide-react';
-import { formatCommitteeYear, formatDateCustom, isSameClub, isInternationalRequest, getDetailedStatus, DETAILED_STATUS_ORDER } from '../utils';
+import { formatCommitteeYear, formatDateCustom, isSameClub, isInternationalRequest, getDetailedStatus, DETAILED_STATUS_ORDER, getRejectionReason } from '../utils';
+import DocumentViewerModal from './DocumentViewerModal';
 import MultiSelect from './MultiSelect';
 import TableScrollWrapper from './TableScrollWrapper';
 
@@ -546,7 +547,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
     <>
       <div className="flex items-start justify-between gap-3">
         <div className="text-right">
-          <h2 className="text-xl font-black text-slate-900">لوحة رئيس القطاع</h2>
+          <h2 className="text-xl font-black text-slate-900">لوحة Director</h2>
           <p className="text-xs text-slate-500 mt-1">كل الأرقام والرسومات تتغير حسب الفلاتر المختارة.</p>
         </div>
         <button type="button" onClick={() => setShowFilters(!showFilters)}
@@ -934,6 +935,63 @@ function YearsView({ requests, committees, onOpenCommittee }: Props) {
 }
 
 // ---------------------------------------------------------------------------
+// Popups used by the committee requests table
+// ---------------------------------------------------------------------------
+
+const fmtSize = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
+
+function DocumentsPopup({ request, onClose, onOpen }: { request: any; onClose: () => void; onOpen: (a: any) => void }) {
+  const docs: any[] = request.attachments || [];
+  return (
+    <div className="fixed inset-0 z-40 bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose} dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between p-4 border-b border-slate-100">
+          <div className="text-right">
+            <h3 className="text-sm font-black text-slate-900">مستندات الطلب ({docs.length})</h3>
+            <p className="text-[11px] text-slate-500">{request.memberName} — {request.membershipNumber}</p>
+          </div>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="p-3 overflow-y-auto space-y-2">
+          {docs.map((a, i) => (
+            <button key={a.id || i} type="button" onClick={() => onOpen({ ...a, requestId: request.id, membershipNumber: request.membershipNumber, memberName: request.memberName, club: request.club })}
+              className="w-full flex items-center justify-between gap-3 p-3 rounded-xl border border-slate-200 hover:border-amber-300 hover:bg-amber-50/50 text-right cursor-pointer">
+              <span dir="ltr" className="text-[10px] text-slate-400 shrink-0">{a.fileSize ? fmtSize(a.fileSize) : ''}</span>
+              <span className="flex-1 min-w-0">
+                <span className="block text-xs font-bold text-slate-800 truncate">{a.fileName || `مستند ${i + 1}`}</span>
+                <span className="block text-[10px] text-slate-500 truncate">{[a.category, a.uploadedAt ? formatDateCustom(a.uploadedAt) : ''].filter(Boolean).join(' • ')}</span>
+              </span>
+              <FileText className="w-5 h-5 text-amber-500 shrink-0" />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RejectionPopup({ request, onClose }: { request: any; onClose: () => void }) {
+  const reason = getRejectionReason(request);
+  return (
+    <div className="fixed inset-0 z-40 bg-slate-900/60 flex items-center justify-center p-4" onClick={onClose} dir="rtl">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 text-rose-700">
+          <MessageSquareWarning className="w-5 h-5" />
+          <h3 className="text-sm font-black">سبب رفض الطلب</h3>
+        </div>
+        <div className="text-[11px] text-slate-500">{request.memberName} — {request.membershipNumber}</div>
+        <div className="bg-rose-50 border border-rose-100 rounded-xl p-3.5 text-xs font-bold text-slate-800 leading-relaxed whitespace-pre-wrap min-h-[48px]">
+          {reason || <span className="text-slate-400 font-normal italic">لم يتم تسجيل سبب محدد للرفض بعد.</span>}
+        </div>
+        <div className="flex justify-end">
+          <button type="button" onClick={onClose} className="px-5 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-xs rounded-xl cursor-pointer">إغلاق</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // View 3: Single committee requests (pick any committee + filters)
 // ---------------------------------------------------------------------------
 
@@ -945,6 +1003,9 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
   const [statuses, setStatuses] = useState<string[]>([]);
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [docsTarget, setDocsTarget] = useState<any | null>(null);
+  const [rejectionTarget, setRejectionTarget] = useState<any | null>(null);
+  const [viewerAttachment, setViewerAttachment] = useState<any | null>(null);
 
   const allStats = useMemo(() => buildCommitteeStats(requests, committees), [requests, committees]);
   const clubOptions: string[] = dropdowns?.clubs || [];
@@ -1094,11 +1155,12 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
                     <th className="px-3 py-2.5">مبلغ الاسترداد</th>
                     <th className="px-3 py-2.5">النتيجة</th>
                     <th className="px-3 py-2.5">الحالة</th>
+                    <th className="px-3 py-2.5">المستندات</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filtered.length === 0 && (
-                    <tr><td colSpan={12} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد طلبات مطابقة</td></tr>
+                    <tr><td colSpan={13} className="px-3 py-8 text-center text-slate-400 font-bold">لا توجد طلبات مطابقة</td></tr>
                   )}
                   {filtered.map((r, i) => (
                     <tr key={r.id} className="border-t border-slate-100 hover:bg-amber-50/40">
@@ -1112,8 +1174,25 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
                       <td className="px-3 py-2.5">{DURATION_LABELS[getDurationKey(r)]}</td>
                       <td className="px-3 py-2.5">{r.cancellationReason || '—'}</td>
                       <td className="px-3 py-2.5 font-mono">{fmtMoney(r.refundAmount)}</td>
-                      <td className="px-3 py-2.5"><ResultBadge r={r} /></td>
+                      <td className="px-3 py-2.5">
+                        {getResultKey(r) === 'rejected' ? (
+                          <button type="button" onClick={() => setRejectionTarget(r)} title="اضغط لعرض سبب الرفض"
+                            className="px-2 py-0.5 rounded-md border bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-100 text-[10px] font-black cursor-pointer underline decoration-dotted">
+                            Rejected
+                          </button>
+                        ) : <ResultBadge r={r} />}
+                      </td>
                       <td className="px-3 py-2.5 font-bold text-slate-700 whitespace-nowrap">{getDetailedStatus(r)}</td>
+                      <td className="px-3 py-2.5">
+                        {(r.attachments || []).length === 0 ? <span className="text-slate-300">—</span> : (
+                          <button type="button" onClick={() => setDocsTarget(r)} title="عرض كل المستندات"
+                            className="inline-flex items-center gap-1.5 max-w-[190px] px-2 py-1 rounded-lg border border-slate-200 hover:border-amber-300 hover:bg-amber-50 text-[11px] font-bold text-slate-700 cursor-pointer">
+                            <Paperclip className="w-3 h-3 text-amber-500 shrink-0" />
+                            <span className="truncate">{r.attachments[0].fileName || 'مستند 1'}</span>
+                            {r.attachments.length > 1 && <span dir="ltr" className="bg-amber-400 text-neutral-950 text-[9px] font-black rounded px-1 shrink-0">+{r.attachments.length - 1}</span>}
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1122,6 +1201,10 @@ function CommitteeView({ requests, committees, dropdowns, selectedCommittee, onS
           </div>
         </>
       )}
+
+      {docsTarget && <DocumentsPopup request={docsTarget} onClose={() => setDocsTarget(null)} onOpen={(a) => setViewerAttachment(a)} />}
+      {rejectionTarget && <RejectionPopup request={rejectionTarget} onClose={() => setRejectionTarget(null)} />}
+      {viewerAttachment && <DocumentViewerModal attachment={viewerAttachment} onClose={() => setViewerAttachment(null)} canDelete={false} />}
     </>
   );
 }

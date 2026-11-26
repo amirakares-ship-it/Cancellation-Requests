@@ -842,7 +842,7 @@ export default function SettingsPanel({ user, dropdowns, dropdownLabels = {}, on
                         <option value="club">مسؤول الفرع (إدخال وبحث وتعديل)</option>
                         <option value="international_user">مسؤول العضويات الدولية (International)</option>
                         <option value="first_manager">Manager (مراجعة اللجان)</option>
-                        <option value="sector_manager">رئيس قطاع الإدارة المالية (اعتماد وختم)</option>
+                        <option value="sector_manager">Director (اعتماد وختم)</option>
                         <option value="admin">سوبر أدمن مركزي (كامل الصلاحيات)</option>
                       </select>
                     </div>
