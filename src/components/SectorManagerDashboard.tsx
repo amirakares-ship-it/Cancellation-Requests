@@ -52,8 +52,48 @@ const getResultKey = (r: any): ResultKey => {
   return 'pending';
 };
 
-const getYear = (r: any): string =>
-  formatCommitteeYear(r.committeeYear || r.approvalDate || r.requestDate || r.createdAt);
+// Committee number as one canonical string, so "03", "٣", "لجنة 3" and "3" are the same committee.
+const normNo = (v: any): string => {
+  let t = String(v ?? '').trim().replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  t = t.replace(/^لجنة\s*(رقم)?\s*/, '').trim();
+  if (/^\d+$/.test(t)) t = String(parseInt(t, 10));
+  return t;
+};
+
+// Committees defined in Settings (number + year). Used to place requests that have no committee year.
+let KNOWN_COMMITTEES: any[] = [];
+const setKnownCommittees = (c: any[]) => { KNOWN_COMMITTEES = Array.isArray(c) ? c : []; };
+
+const yearOf = (v: any): string => {
+  const m = String(v ?? '').match(/(19|20)\d{2}/);
+  if (m) return m[0];
+  const d = v ? new Date(v) : null;
+  return d && !isNaN(d.getTime()) ? String(d.getFullYear()) : '';
+};
+
+/**
+ * The year of the committee a request belongs to.
+ * 1) the request's own committeeYear;
+ * 2) otherwise the Settings committee with the same number (if several: the one whose approval year
+ *    matches the request, else the open one, else the latest);
+ * 3) otherwise the year of the approval / request date.
+ * This stops one committee from being split into two because some requests lack a committee year.
+ */
+const getYear = (r: any): string => {
+  const own = yearOf(r.committeeYear);
+  if (own) return own;
+  const no = normNo(r.committeeNo);
+  const cands = KNOWN_COMMITTEES.filter((c) => normNo(c.number) === no && yearOf(c.year || c.approvalDate));
+  if (cands.length === 1) return yearOf(cands[0].year || cands[0].approvalDate);
+  if (cands.length > 1) {
+    const reqYear = yearOf(r.approvalDate);
+    const byApproval = cands.find((c) => reqYear && yearOf(c.approvalDate) === reqYear);
+    const latest = cands.slice().sort((a, b) => Number(yearOf(b.year || b.approvalDate)) - Number(yearOf(a.year || a.approvalDate)))[0];
+    const pick = byApproval || cands.find((c) => c.status === 'open') || latest;
+    return yearOf(pick.year || pick.approvalDate);
+  }
+  return yearOf(r.approvalDate) || yearOf(r.requestDate) || yearOf(r.createdAt) || formatCommitteeYear(undefined);
+};
 
 // Distinct detailed statuses present in the data (Pending split into sub-statuses)
 const buildStatusOptions = (requests: any[]): string[] => {
@@ -64,7 +104,7 @@ const buildStatusOptions = (requests: any[]): string[] => {
   return [...known, ...rest];
 };
 
-const committeeKey = (no: any, year: any) => `${String(no).trim()}|${year}`;
+const committeeKey = (no: any, year: any) => `${normNo(no)}|${year}`;
 
 const committeeLabel = (key: string) => {
   const [no, year] = key.split('|');
@@ -97,7 +137,7 @@ function buildCommitteeStats(requests: any[], knownCommittees: any[] = []): Comm
     const key = committeeKey(no, year);
     if (!map.has(key)) {
       map.set(key, {
-        key, no: String(no).trim(), year, total: 0, accepted: 0, rejected: 0, pending: 0, lt1m: 0, m1to3: 0, gt3m: 0,
+        key, no: normNo(no), year, total: 0, accepted: 0, rejected: 0, pending: 0, lt1m: 0, m1to3: 0, gt3m: 0,
       });
     }
     return map.get(key)!;
@@ -106,7 +146,7 @@ function buildCommitteeStats(requests: any[], knownCommittees: any[] = []): Comm
   // Committees that exist in the system even if they have no requests yet
   knownCommittees.forEach((c) => {
     if (c?.number === undefined || c?.number === null || c?.number === '') return;
-    ensure(c.number, formatCommitteeYear(c.year || c.approvalDate));
+    ensure(c.number, yearOf(c.year || c.approvalDate) || formatCommitteeYear(c.year || c.approvalDate));
   });
 
   requests.forEach((r) => {
@@ -191,6 +231,7 @@ interface Props {
 
 export default function SectorManagerDashboard(props: Props) {
   const { view } = props;
+  setKnownCommittees(props.committees);
   return (
     <div className="space-y-6">
       {view === 'overview' && <OverviewView {...props} />}
@@ -473,6 +514,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
     return s.filter((x) => (years.length === 0 || years.includes(x.year)) && (committeeKeys.length === 0 || committeeKeys.includes(x.key)));
   }, [withCommittee, committees, activeFilters, years, committeeKeys]);
   const committeeCount = stats.length;
+  const committeesWithRequests = stats.filter((x) => x.total > 0).length;
   const average = committeeCount ? withCommittee.length / committeeCount : 0;
 
   // ---- counts ----
@@ -497,7 +539,26 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
     const intlAll = filtered.filter((r) => isInternationalRequest(r));
     const intlScope = intlAll.filter(inScope);
     const intlSar = intlScope.filter((r) => isSarCurrency(r.currency));
+    // Where every request's money went (so the card can be audited line by line)
+    const rowsMap = new Map<string, { label: string; intl: boolean; included: boolean; count: number; refund: number; client: number }>();
+    let nonNumeric = 0;
+    filtered.forEach((r) => {
+      const intlReq = isInternationalRequest(r);
+      const st = getDetailedStatus(r);
+      const included = inScope(r) && !intlReq;
+      const label = intlReq ? `دولية (SAR) — ${st}` : st;
+      const row = rowsMap.get(label) || { label, intl: intlReq, included, count: 0, refund: 0, client: 0 };
+      row.count++;
+      row.refund += toNum(r.refundAmount);
+      row.client += toNum(r.refundToClient);
+      rowsMap.set(label, row);
+      if (!intlReq && typeof r.refundAmount === 'string' && r.refundAmount.trim() !== '' && !Number.isFinite(Number(r.refundAmount.replace(/,/g, '')))) nonNumeric++;
+    });
+    const breakdown = Array.from(rowsMap.values()).sort((a, b) => Number(b.included) - Number(a.included) || Number(a.intl) - Number(b.intl) || (b.refund + b.client) - (a.refund + a.client));
+    const allLocalRefund = breakdown.filter((x) => !x.intl).reduce((a, x) => a + x.refund + x.client, 0);
+
     return {
+      breakdown, nonNumeric, allLocalRefund,
       localCount: local.length,
       refund: sum(local, refundOf),
       usage: sum(local, (r) => r.usageFee),
@@ -628,7 +689,7 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
       {/* ================= 1. Counts ================= */}
       <Section title="1) الطلبات واللجان" subtitle={`${totals.total} طلب بعد الفلاتر${totals.total - withCommittee.length > 0 ? ` — منها ${totals.total - withCommittee.length} بدون لجنة` : ''}`}>
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="indigo" />
+          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="indigo" hint={committeesWithRequests !== committeeCount ? `منها ${committeesWithRequests} لها طلبات` : 'اللجنة = رقم + سنة'} />
           <KpiCard icon={Users} label="إجمالي الطلبات" value={totals.total} tone="amber" />
           <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="sky" hint="للطلبات التي لها لجنة" />
           <KpiCard icon={CheckCircle2} label="Accepted" value={totals.accepted} tone="green" />
@@ -651,6 +712,57 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
           <MoneyCard icon={Banknote} label="مصاريف الفيزا 2%" amount={money.visa} currency="EGP" tone="violet" />
         </div>
       </Section>
+
+      <details className="bg-white border border-slate-200 rounded-2xl shadow-2xs group">
+        <summary className="cursor-pointer select-none px-4 py-3 text-xs font-black text-slate-700 flex items-center justify-between">
+          <span className="text-[10px] font-bold text-amber-600">اضغط للعرض / الإخفاء</span>
+          <span>كيف تم حساب مبلغ الاسترداد؟ (تفصيل حسب الحالة)</span>
+        </summary>
+        <div className="px-4 pb-4 space-y-2">
+          <p className="text-[11px] text-slate-500 text-right">
+            الإجمالي = Refund Amount + رد للعميل. الصفوف المعلّمة بـ ✓ هي اللي دخلت في الكارت، والباقي مستبعد. العضويات الدولية بالـ SAR ومنفصلة.
+          </p>
+          <TableScrollWrapper>
+            <table className="w-full text-xs text-right">
+              <thead className="bg-slate-50 text-slate-500 font-black">
+                <tr>
+                  <th className="px-3 py-2">الحالة</th>
+                  <th className="px-3 py-2">عدد الطلبات</th>
+                  <th className="px-3 py-2">Refund Amount</th>
+                  <th className="px-3 py-2">رد للعميل</th>
+                  <th className="px-3 py-2">الإجمالي</th>
+                  <th className="px-3 py-2">داخل الكارت؟</th>
+                </tr>
+              </thead>
+              <tbody>
+                {money.breakdown.map((row) => (
+                  <tr key={row.label} className={`border-t border-slate-100 ${row.included ? 'bg-emerald-50/40' : ''}`}>
+                    <td className="px-3 py-2 font-bold text-slate-800">{row.label}</td>
+                    <td className="px-3 py-2">{row.count}</td>
+                    <td className="px-3 py-2 font-mono">{fmtNum(row.refund)}</td>
+                    <td className="px-3 py-2 font-mono">{fmtNum(row.client)}</td>
+                    <td className="px-3 py-2 font-mono font-black">{fmtNum(row.refund + row.client)}</td>
+                    <td className="px-3 py-2 font-black">{row.included ? <span className="text-emerald-600">✓</span> : <span className="text-slate-300">—</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-50 font-black">
+                <tr className="border-t border-slate-200">
+                  <td className="px-3 py-2" colSpan={4}>المحسوب في الكارت (EGP)</td>
+                  <td className="px-3 py-2 font-mono text-emerald-700" colSpan={2}>{fmtNum(money.refund)}</td>
+                </tr>
+                <tr>
+                  <td className="px-3 py-2" colSpan={4}>إجمالي كل الطلبات المحلية بكل الحالات (EGP)</td>
+                  <td className="px-3 py-2 font-mono" colSpan={2}>{fmtNum(money.allLocalRefund)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </TableScrollWrapper>
+          {money.nonNumeric > 0 && (
+            <p className="text-[11px] font-bold text-rose-600 text-right">تنبيه: {money.nonNumeric} طلب مبلغ الاسترداد فيه نص مش رقم، واتحسب صفر.</p>
+          )}
+        </div>
+      </details>
 
       {/* ================= 3. International ================= */}
       <Section title="3) العضويات الدولية (SAR)" subtitle="منفصلة عن العضويات المحلية ولا تدخل في مبالغ الجنيه">
