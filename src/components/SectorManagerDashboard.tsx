@@ -143,11 +143,8 @@ function buildCommitteeStats(requests: any[], knownCommittees: any[] = []): Comm
     return map.get(key)!;
   };
 
-  // Committees that exist in the system even if they have no requests yet
-  knownCommittees.forEach((c) => {
-    if (c?.number === undefined || c?.number === null || c?.number === '') return;
-    ensure(c.number, yearOf(c.year || c.approvalDate) || formatCommitteeYear(c.year || c.approvalDate));
-  });
+  // Only committees that actually have requests are counted (empty committees defined in Settings are ignored).
+  void knownCommittees;
 
   requests.forEach((r) => {
     if (!r.committeeNo || r.committeeNo === '—') return;
@@ -514,7 +511,6 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
     return s.filter((x) => (years.length === 0 || years.includes(x.year)) && (committeeKeys.length === 0 || committeeKeys.includes(x.key)));
   }, [withCommittee, committees, activeFilters, years, committeeKeys]);
   const committeeCount = stats.length;
-  const committeesWithRequests = stats.filter((x) => x.total > 0).length;
   const average = committeeCount ? withCommittee.length / committeeCount : 0;
 
   // ---- counts ----
@@ -530,7 +526,10 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
 
   // ---- money ----
   const money = useMemo(() => {
-    const inScope = (r: any) => amountScope === 'all' || MONEY_STATUSES.includes(getDetailedStatus(r));
+    // Cancelled (any casing / stray spaces) + the two Pending stages that mean the memo reached Finance
+    const inScope = (r: any) => amountScope === 'all'
+      || String(r.status || '').trim().toLowerCase() === 'cancelled'
+      || MONEY_STATUSES.includes(getDetailedStatus(r));
     const local = filtered.filter((r) => !isInternationalRequest(r) && inScope(r));
     const sum = (list: any[], pick: (r: any) => any) => list.reduce((a, r) => a + toNum(pick(r)), 0);
     // مبلغ الاسترداد = Refund Amount + رد للعميل (الشركات)
@@ -689,9 +688,9 @@ function OverviewView({ requests, committees, onOpenCommittee }: Props) {
       {/* ================= 1. Counts ================= */}
       <Section title="1) الطلبات واللجان" subtitle={`${totals.total} طلب بعد الفلاتر${totals.total - withCommittee.length > 0 ? ` — منها ${totals.total - withCommittee.length} بدون لجنة` : ''}`}>
         <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="indigo" hint={committeesWithRequests !== committeeCount ? `منها ${committeesWithRequests} لها طلبات` : 'اللجنة = رقم + سنة'} />
+          <KpiCard icon={Layers} label="عدد اللجان" value={committeeCount} tone="indigo" hint="اللجان التي لها طلبات" />
           <KpiCard icon={Users} label="إجمالي الطلبات" value={totals.total} tone="amber" />
-          <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="sky" hint="للطلبات التي لها لجنة" />
+          <KpiCard icon={Gauge} label="متوسط الطلبات / لجنة" value={average.toFixed(1)} tone="sky" />
           <KpiCard icon={CheckCircle2} label="Accepted" value={totals.accepted} tone="green" />
           <KpiCard icon={XCircle} label="Rejected" value={totals.rejected} tone="red" />
           <KpiCard icon={Clock} label="Pending" value={totals.pending} tone="orange" />
